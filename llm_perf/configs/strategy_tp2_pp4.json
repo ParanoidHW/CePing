@@ -1,0 +1,14 @@
+{
+  "tp": 2,
+  "pp": 4,
+  "dp": 1,
+  "ep": 1,
+  "sp": 1,
+  "cp": 1,
+  "pipeline_schedule": "1f1b",
+  "micro_batch_size": 1,
+  "activation_checkpointing": true,
+  "sequence_parallel": true,
+  "use_megatron": true,
+  "zero_stage": 0
+}

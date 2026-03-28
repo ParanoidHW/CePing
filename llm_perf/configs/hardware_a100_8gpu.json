@@ -1,0 +1,11 @@
+{
+  "device_preset": "A100-SXM-80GB",
+  "num_devices": 8,
+  "devices_per_node": 8,
+  "intra_node_bw_gbps": 600,
+  "intra_node_latency_us": 1.5,
+  "inter_node_bw_gbps": 200,
+  "inter_node_latency_us": 3.0,
+  "topology": "full_mesh",
+  "oversubscription_ratio": 1.0
+}

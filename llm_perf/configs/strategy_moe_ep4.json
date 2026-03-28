@@ -1,0 +1,12 @@
+{
+  "tp": 2,
+  "pp": 1,
+  "dp": 1,
+  "ep": 4,
+  "sp": 1,
+  "cp": 1,
+  "activation_checkpointing": true,
+  "sequence_parallel": true,
+  "use_megatron": true,
+  "zero_stage": 0
+}

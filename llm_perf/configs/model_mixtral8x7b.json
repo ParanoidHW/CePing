@@ -1,0 +1,15 @@
+{
+  "type": "moe",
+  "name": "mixtral-8x7b",
+  "vocab_size": 32000,
+  "hidden_size": 4096,
+  "num_layers": 32,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 8,
+  "intermediate_size": 14336,
+  "max_seq_len": 32768,
+  "dtype": "fp16",
+  "num_experts": 8,
+  "num_experts_per_token": 2,
+  "expert_intermediate_size": 14336
+}
