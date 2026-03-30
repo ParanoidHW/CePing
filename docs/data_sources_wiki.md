@@ -240,6 +240,24 @@ Reference: FlashAttention paper, Section 3.1
 
 **注**: 比例越高，矩阵运算相对元素级运算的优势越大。
 
+### 4.3 精度支持说明
+
+| 计算单元 | 支持的精度 | 说明 |
+|----------|-----------|------|
+| **CUBE/Tensor Core** | FP32, FP16, BF16, FP8, INT8, INT4 | 支持低精度加速矩阵运算 |
+| **VECTOR/CUDA Core** | FP32, FP16, BF16 | **不支持 INT8/FP8 用于激活/归一化** |
+
+**为什么 VECTOR 核心不使用 INT8/FP8？**
+
+1. **数值稳定性**: 激活函数 (GELU, SiLU, Softmax) 和归一化 (LayerNorm) 涉及指数、除法等操作，需要足够动态范围
+2. **业界实践**:
+   - TensorRT-LLM: 激活值保持 FP16，即使权重使用 FP8
+   - DeepSpeed: 激活值使用 FP16/BF16
+   - vLLM: 不对激活值进行量化
+3. **学术研究**: "FP8-LM" (2023)、"LLM.int8()" (2022) 等论文建议激活值保持高精度
+
+**结论**: 在本框架中，VECTOR/CUDA Core 的 INT8/FP8 查询会回退到 FP16 值，因为激活/归一化 kernel 不使用低精度。
+
 ### 4.2 算力比例说明
 
 对于华为昇腾 NPU，CUBE 与 VECTOR 算力比例约为 **10:1**，这是基于：

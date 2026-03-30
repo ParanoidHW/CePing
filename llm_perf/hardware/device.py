@@ -29,11 +29,13 @@ class DeviceConfig:
     
     # ========== VECTOR / CUDA Core Compute (Element-wise Operations) ==========
     # Used for: Activation, LayerNorm, Softmax, element-wise ops
+    # Note: Vector/CUDA cores typically only use FP32/FP16/BF16 for element-wise ops
+    #       INT8/FP8 are not used for activations/normalization due to numerical stability
     fp32_tflops_vector: float = 0.0
     fp16_tflops_vector: float = 0.0
     bf16_tflops_vector: float = 0.0
-    fp8_tflops_vector: Optional[float] = None
-    int8_tflops_vector: Optional[float] = None
+    # INT8/FP8 on Vector/CUDA cores are not used for activation/normalization
+    # They may exist for data preprocessing, but not for compute kernels in this framework
     
     # Backward compatibility: if only *_tflops is set, use it for both
     fp32_tflops: float = 0.0
@@ -91,11 +93,10 @@ class Device:
             bf16_tflops_cube=312.0,
             fp32_tflops_cube=156.0,  # Tensor Core FP32 is half of FP16 on A100
             int8_tflops_cube=624.0,
-            # CUDA Core (VECTOR) - for element-wise operations
+            # CUDA Core (VECTOR) - for element-wise operations (FP32/FP16 only)
             fp32_tflops_vector=19.5,
             fp16_tflops_vector=39.0,  # 2x FP32 for CUDA cores on Ampere
             bf16_tflops_vector=39.0,
-            int8_tflops_vector=78.0,
             # Legacy fields for backward compatibility
             fp32_tflops=19.5,
             fp16_tflops=312.0,
@@ -118,7 +119,6 @@ class Device:
             fp32_tflops_vector=19.5,
             fp16_tflops_vector=39.0,
             bf16_tflops_vector=39.0,
-            int8_tflops_vector=78.0,
             # Legacy fields
             fp32_tflops=19.5,
             fp16_tflops=312.0,
@@ -142,7 +142,6 @@ class Device:
             fp32_tflops_vector=67.0,
             fp16_tflops_vector=134.0,  # 2x FP32 on Hopper CUDA cores
             bf16_tflops_vector=134.0,
-            int8_tflops_vector=268.0,
             # Legacy fields
             fp32_tflops=67.0,
             fp16_tflops=989.0,
@@ -167,7 +166,6 @@ class Device:
             fp32_tflops_vector=67.0,
             fp16_tflops_vector=134.0,
             bf16_tflops_vector=134.0,
-            int8_tflops_vector=268.0,
             # Legacy fields
             fp32_tflops=67.0,
             fp16_tflops=989.0,
@@ -192,7 +190,6 @@ class Device:
             fp32_tflops_vector=67.0,
             fp16_tflops_vector=134.0,
             bf16_tflops_vector=134.0,
-            int8_tflops_vector=268.0,
             # Legacy fields
             fp32_tflops=67.0,
             fp16_tflops=989.0,
@@ -219,7 +216,6 @@ class Device:
             fp32_tflops_vector=163.0,
             fp16_tflops_vector=326.0,
             bf16_tflops_vector=326.0,
-            int8_tflops_vector=652.0,
             # Legacy fields
             fp32_tflops=163.0,
             fp16_tflops=1307.0,
@@ -248,7 +244,6 @@ class Device:
             fp32_tflops_vector=91.6,
             fp16_tflops_vector=183.2,
             bf16_tflops_vector=183.2,
-            int8_tflops_vector=366.4,
             # Legacy fields
             fp32_tflops=91.6,
             fp16_tflops=183.0,
@@ -274,7 +269,6 @@ class Device:
             int8_tflops_cube=512.0,
             # VECTOR core (element-wise operations) - roughly 1/10 of CUBE for Ascend
             fp16_tflops_vector=25.6,
-            int8_tflops_vector=51.2,
             memory_gb=32.0,
             memory_bandwidth_gbps=1500.0,
             hccs_bandwidth_gbps=100.0,  # HCCS (Huawei Cache Coherence System)
@@ -288,7 +282,6 @@ class Device:
             int8_tflops_cube=828.0,
             # VECTOR core
             fp16_tflops_vector=41.4,
-            int8_tflops_vector=82.8,
             memory_gb=64.0,
             memory_bandwidth_gbps=392.0,
             hccs_bandwidth_gbps=200.0,
@@ -304,7 +297,6 @@ class Device:
             # VECTOR core
             fp16_tflops_vector=37.6,
             fp32_tflops_vector=9.4,
-            int8_tflops_vector=75.2,
             memory_gb=64.0,
             memory_bandwidth_gbps=392.0,
             hccs_bandwidth_gbps=200.0,
@@ -318,7 +310,6 @@ class Device:
             int8_tflops_cube=626.0,
             # VECTOR core
             fp16_tflops_vector=31.3,
-            int8_tflops_vector=62.6,
             memory_gb=64.0,
             memory_bandwidth_gbps=392.0,
             hccs_bandwidth_gbps=200.0,
@@ -332,7 +323,6 @@ class Device:
             int8_tflops_cube=560.0,
             # VECTOR core
             fp16_tflops_vector=28.0,
-            int8_tflops_vector=56.0,
             memory_gb=32.0,
             memory_bandwidth_gbps=392.0,
             hccs_bandwidth_gbps=200.0,
@@ -346,7 +336,6 @@ class Device:
             int8_tflops_cube=1600.0,
             # VECTOR core
             fp16_tflops_vector=80.0,
-            int8_tflops_vector=160.0,
             memory_gb=128.0,
             memory_bandwidth_gbps=784.0,
             hccs_bandwidth_gbps=400.0,
@@ -362,8 +351,6 @@ class Device:
             int8_tflops_cube=1000.0,
             # VECTOR core
             fp16_tflops_vector=50.0,
-            fp8_tflops_vector=100.0,
-            int8_tflops_vector=100.0,
             memory_gb=144.0,
             memory_bandwidth_gbps=4000.0,  # 4 TB/s HiZQ 2.0
             hccs_bandwidth_gbps=500.0,
@@ -379,8 +366,6 @@ class Device:
             int8_tflops_cube=1000.0,
             # VECTOR core
             fp16_tflops_vector=50.0,
-            fp8_tflops_vector=100.0,
-            int8_tflops_vector=100.0,
             memory_gb=128.0,
             memory_bandwidth_gbps=1600.0,  # 1.6 TB/s HiBL 1.0
             hccs_bandwidth_gbps=500.0,
@@ -395,8 +380,6 @@ class Device:
             int8_tflops_cube=2000.0,
             # VECTOR core
             fp16_tflops_vector=100.0,
-            fp8_tflops_vector=200.0,
-            int8_tflops_vector=200.0,
             memory_gb=144.0,
             memory_bandwidth_gbps=2400.0,
             hccs_bandwidth_gbps=600.0,
@@ -412,9 +395,7 @@ class Device:
             int8_tflops_cube=4000.0,
             # VECTOR core
             fp16_tflops_vector=200.0,
-            fp8_tflops_vector=400.0,
             fp4_tflops_vector=800.0,
-            int8_tflops_vector=400.0,
             memory_gb=288.0,
             memory_bandwidth_gbps=4800.0,
             hccs_bandwidth_gbps=800.0,
@@ -428,7 +409,6 @@ class Device:
             int8_tflops_cube=140.0,
             # VECTOR core
             fp16_tflops_vector=14.0,
-            int8_tflops_vector=28.0,
             memory_gb=24.0,
             memory_bandwidth_gbps=204.8,
             l2_cache_mb=24.0,
@@ -474,13 +454,16 @@ class Device:
                 "int4": self.config.int8_tflops_cube or self.config.int8_tflops or self.config.fp16_tflops_cube,
             }
         else:  # VECTOR_CUDA_CORE
+            # Note: Vector/CUDA cores don't use INT8/FP8 for activations/normalization
+            # due to numerical stability requirements. These dtypes fall back to FP16.
             dtype_map = {
                 "fp32": self.config.fp32_tflops_vector or self.config.fp32_tflops,
                 "fp16": self.config.fp16_tflops_vector or self.config.fp16_tflops,
                 "bf16": self.config.bf16_tflops_vector or self.config.bf16_tflops,
-                "fp8": self.config.fp8_tflops_vector or self.config.fp8_tflops or self.config.fp16_tflops_vector,
-                "int8": self.config.int8_tflops_vector or self.config.int8_tflops or self.config.fp16_tflops_vector,
-                "int4": self.config.int8_tflops_vector or self.config.int8_tflops or self.config.fp16_tflops_vector,
+                # INT8/FP8 on VECTOR cores fall back to FP16 (not used for compute kernels)
+                "fp8": self.config.fp16_tflops_vector or self.config.fp16_tflops,
+                "int8": self.config.fp16_tflops_vector or self.config.fp16_tflops,
+                "int4": self.config.fp16_tflops_vector or self.config.fp16_tflops,
             }
         return dtype_map.get(dtype, self.config.fp16_tflops_cube or self.config.fp16_tflops)
     
@@ -542,8 +525,6 @@ class Device:
             "fp32_tflops_vector": self.config.fp32_tflops_vector,
             "fp16_tflops_vector": self.config.fp16_tflops_vector,
             "bf16_tflops_vector": self.config.bf16_tflops_vector,
-            "fp8_tflops_vector": self.config.fp8_tflops_vector,
-            "int8_tflops_vector": self.config.int8_tflops_vector,
             "memory_gb": self.config.memory_gb,
             "memory_bandwidth_gbps": self.config.memory_bandwidth_gbps,
             "nvlink_bandwidth_gbps": self.config.nvlink_bandwidth_gbps,

@@ -85,6 +85,29 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(a100_vector, 39.0)
         self.assertGreater(a100_cube / a100_vector, 7)
     
+    def test_vector_int8_fp8_fallback_to_fp16(self):
+        """Test that VECTOR cores fallback to FP16 for INT8/FP8 (not used for activations)."""
+        device = Device.from_preset("H100-SXM-80GB")
+        
+        # For VECTOR cores, INT8/FP8 should fallback to FP16 value
+        # because activation/normalization don't use low-precision
+        vector_fp16 = device.get_compute_tflops("fp16", ComputeUnitType.VECTOR_CUDA_CORE)
+        vector_fp8 = device.get_compute_tflops("fp8", ComputeUnitType.VECTOR_CUDA_CORE)
+        vector_int8 = device.get_compute_tflops("int8", ComputeUnitType.VECTOR_CUDA_CORE)
+        vector_int4 = device.get_compute_tflops("int4", ComputeUnitType.VECTOR_CUDA_CORE)
+        
+        # All should equal FP16 value for VECTOR cores
+        self.assertEqual(vector_fp8, vector_fp16)
+        self.assertEqual(vector_int8, vector_fp16)
+        self.assertEqual(vector_int4, vector_fp16)
+        
+        # But CUBE cores should have different values
+        cube_fp16 = device.get_compute_tflops("fp16", ComputeUnitType.CUBE_TENSOR_CORE)
+        cube_fp8 = device.get_compute_tflops("fp8", ComputeUnitType.CUBE_TENSOR_CORE)
+        
+        # H100 Tensor Core: FP8 should be 2x FP16
+        self.assertEqual(cube_fp8, 2 * cube_fp16)
+    
     def test_backward_compatibility(self):
         """Test that legacy code without CUBE/VECTOR still works."""
         # Create device with only legacy fields
