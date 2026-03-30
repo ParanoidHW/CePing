@@ -60,16 +60,30 @@ class TestDevice(unittest.TestCase):
             self.assertAlmostEqual(vector, expected_vector, places=1,
                                  msg=f"{preset} VECTOR {dtype} mismatch")
     
-    def test_nvidia_same_cube_vector(self):
-        """Test that NVIDIA GPUs use same values for CUBE and VECTOR (backward compatibility)."""
-        device = Device.from_preset("H100-SXM-80GB")
+    def test_nvidia_cube_vector_separation(self):
+        """Test that NVIDIA GPUs have proper CUBE/VECTOR separation."""
+        # Test H100 - should have significant difference
+        h100 = Device.from_preset("H100-SXM-80GB")
         
-        cube_fp16 = device.get_compute_tflops("fp16", ComputeUnitType.CUBE_TENSOR_CORE)
-        vector_fp16 = device.get_compute_tflops("fp16", ComputeUnitType.VECTOR_CUDA_CORE)
+        cube_fp16 = h100.get_compute_tflops("fp16", ComputeUnitType.CUBE_TENSOR_CORE)
+        vector_fp16 = h100.get_compute_tflops("fp16", ComputeUnitType.VECTOR_CUDA_CORE)
         
-        # For NVIDIA, both should return the same value (989 TFLOPS for H100)
-        self.assertEqual(cube_fp16, vector_fp16)
+        # Tensor Core should be much faster than CUDA Core
+        # H100: Tensor Core 989T vs CUDA Core 134T (~7.4x difference)
+        self.assertGreater(cube_fp16, vector_fp16)
+        self.assertGreater(cube_fp16 / vector_fp16, 5)  # At least 5x difference
         self.assertEqual(cube_fp16, 989.0)
+        self.assertEqual(vector_fp16, 134.0)
+        
+        # Test A100
+        a100 = Device.from_preset("A100-SXM-80GB")
+        a100_cube = a100.get_compute_tflops("fp16", ComputeUnitType.CUBE_TENSOR_CORE)
+        a100_vector = a100.get_compute_tflops("fp16", ComputeUnitType.VECTOR_CUDA_CORE)
+        
+        # A100: Tensor Core 312T vs CUDA Core 39T (~8x difference)
+        self.assertEqual(a100_cube, 312.0)
+        self.assertEqual(a100_vector, 39.0)
+        self.assertGreater(a100_cube / a100_vector, 7)
     
     def test_backward_compatibility(self):
         """Test that legacy code without CUBE/VECTOR still works."""

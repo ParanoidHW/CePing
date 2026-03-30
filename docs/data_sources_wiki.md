@@ -8,15 +8,24 @@
 
 ### 1.1 NVIDIA GPUs
 
-| 设备 | 数据来源 | 链接/参考 |
-|------|----------|-----------|
-| A100-SXM-40GB | NVIDIA 官方白皮书 | https://www.nvidia.com/en-us/data-center/a100/ |
-| A100-SXM-80GB | NVIDIA 官方白皮书 | https://www.nvidia.com/en-us/data-center/a100/ |
-| H100-SXM-80GB | NVIDIA H100 白皮书 | https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet |
-| H100-NVL-94GB | NVIDIA 官方文档 | https://www.nvidia.com/en-us/data-center/h100/ |
-| H200-SXM-141GB | NVIDIA H200 白皮书 | https://www.nvidia.com/en-us/data-center/h200/ |
-| MI300X | AMD Instinct 文档 | https://www.amd.com/en/products/accelerators/instinct/mi300/ |
-| L40S | NVIDIA L40S 白皮书 | https://www.nvidia.com/en-us/data-center/l40s/ |
+| 设备 | 数据来源 | 链接/参考 | Tensor Core FP16 | CUDA Core FP32 | CUDA Core FP16 |
+|------|----------|-----------|------------------|----------------|----------------|
+| A100-SXM-40GB | NVIDIA 官方白皮书 | https://www.nvidia.com/en-us/data-center/a100/ | 312 T | 19.5 T | 39 T |
+| A100-SXM-80GB | NVIDIA 官方白皮书 | https://www.nvidia.com/en-us/data-center/a100/ | 312 T | 19.5 T | 39 T |
+| H100-SXM-80GB | NVIDIA H100 白皮书 | https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet | 989 T | 67 T | 134 T |
+| H100-NVL-94GB | NVIDIA 官方文档 | https://www.nvidia.com/en-us/data-center/h100/ | 989 T | 67 T | 134 T |
+| H200-SXM-141GB | NVIDIA H200 白皮书 | https://www.nvidia.com/en-us/data-center/h200/ | 989 T | 67 T | 134 T |
+| L40S | NVIDIA L40S 白皮书 | https://www.nvidia.com/en-us/data-center/l40s/ | 183 T | 91.6 T | 183.2 T |
+| MI300X | AMD Instinct 文档 | https://www.amd.com/en/products/accelerators/instinct/mi300/ | 1307 T | 163 T | 326 T |
+
+**计算单元说明**:
+- **Tensor Core (CUBE)**: 专门用于矩阵运算 (GEMM, Attention)，支持 FP16/BF16/FP8 高吞吐
+- **CUDA Core (VECTOR)**: 用于元素级运算 (Activation, Normalization)，FP32 为主，FP16 为 FP32 的 2 倍
+
+**数据来源**:
+- Tensor Core 数据来自 NVIDIA 官方白皮书峰值性能
+- CUDA Core FP32 来自 NVIDIA 官方规格
+- CUDA Core FP16 = 2 × FP32 (Ampere/Hopper 架构 CUDA Core 支持 FP16 原生)
 
 ### 1.2 Huawei Ascend NPUs
 
@@ -213,11 +222,23 @@ Reference: FlashAttention paper, Section 3.1
 
 ### 4.1 计算单元对应关系
 
-| 厂商 | 矩阵运算单元 | 向量/元素运算单元 | 说明 |
-|------|-------------|-------------------|------|
-| NVIDIA | Tensor Core | CUDA Core | Volta+ 架构引入 Tensor Core |
-| Huawei | CUBE Core | VECTOR Core | 达芬奇架构，CUBE 专门用于矩阵乘 |
-| AMD | Matrix Core | Stream Processor | CDNA 架构 Matrix Core |
+| 厂商 | 矩阵运算单元<br>(CUBE) | 向量/元素运算单元<br>(VECTOR) | 说明 |
+|------|------------------------|------------------------------|------|
+| NVIDIA | Tensor Core | CUDA Core | Volta+ 架构引入 Tensor Core<br>Tensor Core FP16 通常是 CUDA Core FP16 的 5-8 倍 |
+| Huawei | CUBE Core | VECTOR Core | 达芬奇架构，CUBE 专门用于矩阵乘<br>CUBE 与 VECTOR 比例约 10:1 |
+| AMD | Matrix Core | Stream Processor | CDNA 架构 Matrix Core<br>Matrix Core FP16 通常是 Stream Processor 的 4-8 倍 |
+
+### 4.2 各 GPU 计算单元性能比例
+
+| GPU | Tensor/Matrix : CUDA/Stream<br>(FP16) | 说明 |
+|-----|--------------------------------------|------|
+| A100 | 312 : 39 = **8:1** | Ampere 架构 Tensor Core 显著提升 |
+| H100/H200 | 989 : 134 ≈ **7.4:1** | Hopper 架构 FP8 Tensor Core 更强 |
+| L40S | 183 : 183 ≈ **1:1** | Ada Lovelace 架构 Tensor Core 相对较弱<br>CUDA Core 较强，适合图形和推理 |
+| MI300X | 1307 : 326 ≈ **4:1** | CDNA 3 架构，相对均衡 |
+| Ascend 910B | 376 : 37.6 = **10:1** | 达芬奇架构，CUBE 专门优化矩阵运算 |
+
+**注**: 比例越高，矩阵运算相对元素级运算的优势越大。
 
 ### 4.2 算力比例说明
 

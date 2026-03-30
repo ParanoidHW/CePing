@@ -77,12 +77,29 @@ class Device:
     # Predefined device configurations
     PRESETS = {
         # ========== NVIDIA GPUs ==========
+        # Source: NVIDIA Official Datasheets and Whitepapers
+        # Tensor Core (CUBE) for matrix ops: GEMM, Attention
+        # CUDA Core (VECTOR) for element-wise ops: Activation, Normalization
+        # Note: For Ampere (A100) and Hopper (H100) architectures, 
+        #       FP16/BF16 tensor core ops are much faster than CUDA core ops
+        #       CUDA Core FP16 is typically 2x FP32 (same as Ampere/Hopper CUDA cores)
+        
         "A100-SXM-40GB": DeviceConfig(
             name="A100-SXM-40GB",
+            # Tensor Core (CUBE) - for matrix operations
+            fp16_tflops_cube=312.0,
+            bf16_tflops_cube=312.0,
+            fp32_tflops_cube=156.0,  # Tensor Core FP32 is half of FP16 on A100
+            int8_tflops_cube=624.0,
+            # CUDA Core (VECTOR) - for element-wise operations
+            fp32_tflops_vector=19.5,
+            fp16_tflops_vector=39.0,  # 2x FP32 for CUDA cores on Ampere
+            bf16_tflops_vector=39.0,
+            int8_tflops_vector=78.0,
+            # Legacy fields for backward compatibility
             fp32_tflops=19.5,
             fp16_tflops=312.0,
             bf16_tflops=312.0,
-            fp8_tflops=None,
             int8_tflops=624.0,
             memory_gb=40.0,
             memory_bandwidth_gbps=1555.0,
@@ -92,10 +109,20 @@ class Device:
         ),
         "A100-SXM-80GB": DeviceConfig(
             name="A100-SXM-80GB",
+            # Tensor Core (CUBE)
+            fp16_tflops_cube=312.0,
+            bf16_tflops_cube=312.0,
+            fp32_tflops_cube=156.0,
+            int8_tflops_cube=624.0,
+            # CUDA Core (VECTOR)
+            fp32_tflops_vector=19.5,
+            fp16_tflops_vector=39.0,
+            bf16_tflops_vector=39.0,
+            int8_tflops_vector=78.0,
+            # Legacy fields
             fp32_tflops=19.5,
             fp16_tflops=312.0,
             bf16_tflops=312.0,
-            fp8_tflops=None,
             int8_tflops=624.0,
             memory_gb=80.0,
             memory_bandwidth_gbps=2039.0,
@@ -105,6 +132,18 @@ class Device:
         ),
         "H100-SXM-80GB": DeviceConfig(
             name="H100-SXM-80GB",
+            # Tensor Core (CUBE) - significantly faster than A100
+            fp16_tflops_cube=989.0,
+            bf16_tflops_cube=989.0,
+            fp8_tflops_cube=1979.0,
+            fp32_tflops_cube=494.5,
+            int8_tflops_cube=3958.0,
+            # CUDA Core (VECTOR)
+            fp32_tflops_vector=67.0,
+            fp16_tflops_vector=134.0,  # 2x FP32 on Hopper CUDA cores
+            bf16_tflops_vector=134.0,
+            int8_tflops_vector=268.0,
+            # Legacy fields
             fp32_tflops=67.0,
             fp16_tflops=989.0,
             bf16_tflops=989.0,
@@ -118,6 +157,18 @@ class Device:
         ),
         "H100-NVL-94GB": DeviceConfig(
             name="H100-NVL-94GB",
+            # Tensor Core (CUBE)
+            fp16_tflops_cube=989.0,
+            bf16_tflops_cube=989.0,
+            fp8_tflops_cube=1979.0,
+            fp32_tflops_cube=494.5,
+            int8_tflops_cube=3958.0,
+            # CUDA Core (VECTOR)
+            fp32_tflops_vector=67.0,
+            fp16_tflops_vector=134.0,
+            bf16_tflops_vector=134.0,
+            int8_tflops_vector=268.0,
+            # Legacy fields
             fp32_tflops=67.0,
             fp16_tflops=989.0,
             bf16_tflops=989.0,
@@ -131,6 +182,18 @@ class Device:
         ),
         "H200-SXM-141GB": DeviceConfig(
             name="H200-SXM-141GB",
+            # Tensor Core (CUBE) - same compute as H100, more memory
+            fp16_tflops_cube=989.0,
+            bf16_tflops_cube=989.0,
+            fp8_tflops_cube=1979.0,
+            fp32_tflops_cube=494.5,
+            int8_tflops_cube=3958.0,
+            # CUDA Core (VECTOR)
+            fp32_tflops_vector=67.0,
+            fp16_tflops_vector=134.0,
+            bf16_tflops_vector=134.0,
+            int8_tflops_vector=268.0,
+            # Legacy fields
             fp32_tflops=67.0,
             fp16_tflops=989.0,
             bf16_tflops=989.0,
@@ -142,8 +205,22 @@ class Device:
             l2_cache_mb=50.0,
             tdp_w=700.0,
         ),
+        
+        # ========== AMD GPUs ==========
         "MI300X": DeviceConfig(
             name="MI300X",
+            # Matrix Core (CUBE equivalent)
+            fp16_tflops_cube=1307.0,
+            bf16_tflops_cube=1307.0,
+            fp8_tflops_cube=2613.0,
+            fp32_tflops_cube=653.5,
+            int8_tflops_cube=2613.0,
+            # Stream Processor (VECTOR equivalent)
+            fp32_tflops_vector=163.0,
+            fp16_tflops_vector=326.0,
+            bf16_tflops_vector=326.0,
+            int8_tflops_vector=652.0,
+            # Legacy fields
             fp32_tflops=163.0,
             fp16_tflops=1307.0,
             bf16_tflops=1307.0,
@@ -155,8 +232,24 @@ class Device:
             l2_cache_mb=256.0,
             tdp_w=750.0,
         ),
+        
+        # ========== NVIDIA L40S (Ada Lovelace) ==========
+        # Note: L40S has less powerful Tensor Cores compared to H100
+        # CUDA Core FP32 is higher than A100 but Tensor Core FP16 is lower than H100
         "L40S": DeviceConfig(
             name="L40S",
+            # Tensor Core (CUBE)
+            fp16_tflops_cube=183.0,
+            bf16_tflops_cube=183.0,
+            fp8_tflops_cube=366.0,
+            fp32_tflops_cube=91.5,
+            int8_tflops_cube=366.0,
+            # CUDA Core (VECTOR) - Ada Lovelace has strong CUDA cores
+            fp32_tflops_vector=91.6,
+            fp16_tflops_vector=183.2,
+            bf16_tflops_vector=183.2,
+            int8_tflops_vector=366.4,
+            # Legacy fields
             fp32_tflops=91.6,
             fp16_tflops=183.0,
             bf16_tflops=183.0,
