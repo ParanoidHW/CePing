@@ -1,0 +1,36 @@
+{
+  "_comment": "256 GPU cluster with 3-tier Clos topology",
+  "device_preset": "H100-SXM-80GB",
+  "num_devices": 256,
+  "devices_per_node": 8,
+  "topology": {
+    "name": "clos_3tier_256gpu",
+    "topology_type": "clos",
+    "levels": [
+      {
+        "name": "node",
+        "level": 0,
+        "bandwidth_gbps": 900,
+        "latency_us": 1.0,
+        "oversubscription_ratio": 1.0,
+        "devices_per_group": 8
+      },
+      {
+        "name": "rack",
+        "level": 1,
+        "bandwidth_gbps": 200,
+        "latency_us": 2.0,
+        "oversubscription_ratio": 4.0,
+        "devices_per_group": 128
+      },
+      {
+        "name": "cluster",
+        "level": 2,
+        "bandwidth_gbps": 100,
+        "latency_us": 5.0,
+        "oversubscription_ratio": 1.0,
+        "devices_per_group": 256
+      }
+    ]
+  }
+}

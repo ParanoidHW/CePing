@@ -1,14 +1,15 @@
 """Communication kernel evaluation."""
 
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Union
 import math
 
 from .base import Kernel, KernelConfig, KernelType
 from ..hardware.cluster import Cluster
+from ..hardware.topology import NetworkTopology
 
 
 class CommKernel(Kernel):
-    """Communication kernel for collective operations."""
+    """Communication kernel for collective operations with hierarchical topology support."""
     
     def __init__(
         self,
@@ -24,6 +25,40 @@ class CommKernel(Kernel):
         self.num_bytes = num_bytes
         self.participating_ranks = participating_ranks
     
+    def _get_average_bandwidth(self) -> float:
+        """
+        Get average bandwidth across topology levels.
+        
+        For hierarchical topologies (Clos), returns weighted average
+        considering how many ranks communicate at each level.
+        """
+        n = len(self.participating_ranks)
+        if n <= 1:
+            return float('inf')
+        
+        # Check if using new hierarchical topology
+        topology = self.cluster.topology
+        
+        # Count communications at each level
+        level_bandwidths = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                bw = self.cluster.get_bandwidth_between(
+                    self.participating_ranks[i],
+                    self.participating_ranks[j]
+                )
+                level_bandwidths.append(bw)
+        
+        if level_bandwidths:
+            # Use harmonic mean for bandwidth (more accurate for bottlenecks)
+            return len(level_bandwidths) / sum(1.0 / bw for bw in level_bandwidths if bw > 0)
+        
+        # Fallback: use topology levels
+        if topology.levels:
+            return sum(l.bandwidth_gbps for l in topology.levels) / len(topology.levels)
+        
+        return 100.0  # Default fallback
+    
     def estimate_time(
         self,
         input_shape: tuple = None,
@@ -34,6 +69,9 @@ class CommKernel(Kernel):
         """
         Estimate communication time for collective operation.
         
+        Uses topology-aware estimation from Cluster class for
+        hierarchical topologies (Clos, Fat-Tree).
+        
         Returns:
             Time in seconds
         """
@@ -41,7 +79,7 @@ class CommKernel(Kernel):
             # Use measured bandwidth if available
             return self.num_bytes / self.config.measured_bw
         
-        # Use cluster's estimation methods
+        # Use cluster's topology-aware estimation methods
         if self.collective_type == "allreduce":
             return self.cluster.estimate_allreduce_time(
                 self.num_bytes,
@@ -64,10 +102,7 @@ class CommKernel(Kernel):
                 return 0.0
             # Tree-based broadcast: log2(n) steps
             steps = math.ceil(math.log2(n))
-            avg_bw = (
-                self.cluster.network.intra_node_bandwidth_gbps * 0.5 +
-                self.cluster.network.inter_node_bandwidth_gbps * 0.5
-            ) * 1e9  # Convert to bytes/s
+            avg_bw = self._get_average_bandwidth() * 1e9  # Convert to bytes/s
             return steps * self.num_bytes / avg_bw
         elif self.collective_type == "reduce_scatter":
             # Similar to allreduce but in opposite direction
@@ -77,10 +112,7 @@ class CommKernel(Kernel):
             ) / 2
         else:
             # Default: simple bandwidth model
-            avg_bw = (
-                self.cluster.network.intra_node_bandwidth_gbps * 0.5 +
-                self.cluster.network.inter_node_bandwidth_gbps * 0.5
-            ) * 1e9
+            avg_bw = self._get_average_bandwidth() * 1e9
             return self.num_bytes / avg_bw
     
     def estimate_memory(

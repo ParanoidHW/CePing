@@ -10,8 +10,10 @@
 | [kernel_modeling.md](./kernel_modeling.md) | Kernel 评估与建模方法 |
 | [roofline_model.md](./roofline_model.md) | Roofline 性能模型详解 |
 | [communication.md](./communication.md) | 通信建模与并行策略 |
+| [topology.md](./topology.md) | 网络拓扑与分层带宽模型 (Clos/Fat-Tree) |
 | [workflow.md](./workflow.md) | 工作流程与数据流 |
 | [examples.md](./examples.md) | 典型使用场景示例 |
+| [data_sources_wiki.md](./data_sources_wiki.md) | 数据来源汇总与参考 |
 
 ## 快速导航
 
