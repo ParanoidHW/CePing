@@ -4,13 +4,53 @@
 
 ## 功能特性
 
-- **模型支持**: Llama、MoE (Mixture of Experts) 等基于 Transformer 的模型
-- **硬件建模**: 支持 H100、A100、MI300X 等 GPU 的预设配置
-- **并行策略**: 支持 TP、PP、DP、EP、SP、CP 等并行方式的灵活组合
-- **性能评估**: 
-  - 训练: 吞吐量 (tokens/sec)、显存占用、通信开销占比
-  - 推理: TTFT (首token延迟)、TPOT (单token生成延迟)、TPS (吞吐)
-- **详细分解**: 计算开销、通信开销、内存占用的时延分解
+### 🧠 模型支持
+- **Dense 模型**: Llama、LLaMA-2、LLaMA-3 等 Transformer 架构
+- **MoE 模型**: Mixtral 8x7B、DeepSeek-V3、Qwen-MoE 等专家混合模型
+- **自定义配置**: 灵活调整 hidden size、layers、attention heads、experts 等参数
+
+### 🖥️ 硬件建模
+- **NVIDIA GPU**: H100/H200、A100、L40S（支持 Tensor Core / CUDA Core 分离）
+- **AMD GPU**: MI300X（支持 Matrix Core / Stream Processor 分离）
+- **华为昇腾 NPU**: Ascend 910A/B/C、950/960/970（支持 CUBE Core / VECTOR Core 分离）
+- **精确算力建模**: 基于 Roofline 模型，区分矩阵运算和向量运算单元
+
+### 🌐 网络拓扑（新特性）
+- **2-Tier Simple**: 机内 NVLink + 机间 IB/Ethernet
+- **3-Tier Clos**: Leaf-Spine-Core 三级交换架构
+- **Fat-Tree**: 数据中心级胖树拓扑，支持超配配置
+- **CloudMatrix 超节点**: 华为 384 NPU 全对等超节点（arXiv:2506.12708）
+- **分层带宽建模**: 支持带宽随拓扑层级递减的真实场景
+
+### ⚡ 并行策略
+- **TP (Tensor Parallelism)**: 张量并行，支持 Megatron 风格
+- **PP (Pipeline Parallelism)**: 流水线并行，支持 1F1B 调度
+- **DP (Data Parallelism)**: 数据并行，支持 ZeRO-1/2/3
+- **EP (Expert Parallelism)**: 专家并行，针对 MoE 模型优化
+- **SP/CP**: 序列并行、上下文并行支持
+
+### 📊 性能评估
+- **训练评估**: 
+  - 吞吐量: samples/sec、tokens/sec
+  - 显存占用: 参数、梯度、优化器状态、激活值
+  - 通信开销: AllReduce/AllToAll 时间分解
+- **推理评估**:
+  - TTFT (Time To First Token): 首 token 延迟
+  - TPOT (Time Per Output Token): 每 token 生成时间
+  - TPS (Tokens Per Second): 吞吐率
+  - KV Cache 显存占用分析
+
+### 🌟 交互式 Web 界面（新特性）
+- **可视化配置**: 通过网页交互式选择模型、硬件、拓扑、策略
+- **实时评估**: 即时获取性能评估结果和分解
+- **HTTPS 支持**: 本地安全服务，支持自签名证书
+- **扁平化设计**: 简约现代的 UI 风格
+
+### 📚 完整文档
+- **架构文档**: 系统设计和模块说明
+- **数据来源 Wiki**: 硬件参数、FLOPs 计算、参考资料汇总
+- **拓扑文档**: Clos/Fat-Tree/CloudMatrix 网络建模详解
+- **示例代码**: 多种使用场景的示例配置
 
 ## 架构设计
 
