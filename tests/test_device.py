@@ -19,8 +19,8 @@ class TestDevice(unittest.TestCase):
         """Test that Ascend NPU presets are available."""
         presets = [
             "Ascend-910A", "Ascend-910B1", "Ascend-910B2", "Ascend-910B3",
-            "Ascend-910B4", "Ascend-910C", "Ascend-950", "Ascend-960",
-            "Ascend-970", "Ascend-310P"
+            "Ascend-910B4", "Ascend-910C", "Ascend-950-DT", "Ascend-950-PR",
+            "Ascend-960", "Ascend-970", "Ascend-310P"
         ]
         for preset in presets:
             device = Device.from_preset(preset)
@@ -148,6 +148,27 @@ class TestDevice(unittest.TestCase):
         # NVIDIA should not have HCCS
         nvidia = Device.from_preset("H100-SXM-80GB")
         self.assertIsNone(nvidia.config.hccs_bandwidth_gbps)
+    
+    def test_ascend_950_dt_vs_pr(self):
+        """Test differences between Ascend 950-DT and 950-PR."""
+        dt = Device.from_preset("Ascend-950-DT")
+        pr = Device.from_preset("Ascend-950-PR")
+        
+        # Same compute power
+        self.assertEqual(dt.get_compute_tflops("fp16", ComputeUnitType.CUBE_TENSOR_CORE),
+                        pr.get_compute_tflops("fp16", ComputeUnitType.CUBE_TENSOR_CORE))
+        self.assertEqual(dt.config.fp16_tflops_cube, 500.0)
+        
+        # Different memory capacity
+        self.assertEqual(dt.config.memory_gb, 144.0)
+        self.assertEqual(pr.config.memory_gb, 128.0)
+        
+        # Different memory bandwidth
+        self.assertEqual(dt.config.memory_bandwidth_gbps, 4000.0)  # 4 TB/s HiZQ 2.0
+        self.assertEqual(pr.config.memory_bandwidth_gbps, 1600.0)  # 1.6 TB/s HiBL 1.0
+        
+        # DT should have higher memory bandwidth
+        self.assertGreater(dt.config.memory_bandwidth_gbps, pr.config.memory_bandwidth_gbps)
     
     def test_to_dict(self):
         """Test device serialization."""

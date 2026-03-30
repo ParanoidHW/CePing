@@ -260,8 +260,26 @@ class Device:
             l2_cache_mb=64.0,
             tdp_w=400.0,
         ),
-        "Ascend-950": DeviceConfig(
-            name="Ascend-950",
+        # Ascend 950 DT (DataCenter Training) - 144GB HBM, higher memory BW
+        "Ascend-950-DT": DeviceConfig(
+            name="Ascend-950-DT",
+            # CUBE core
+            fp16_tflops_cube=500.0,
+            fp8_tflops_cube=1000.0,
+            int8_tflops_cube=1000.0,
+            # VECTOR core
+            fp16_tflops_vector=50.0,
+            fp8_tflops_vector=100.0,
+            int8_tflops_vector=100.0,
+            memory_gb=144.0,
+            memory_bandwidth_gbps=4000.0,  # 4 TB/s HiZQ 2.0
+            hccs_bandwidth_gbps=500.0,
+            l2_cache_mb=96.0,
+            tdp_w=400.0,
+        ),
+        # Ascend 950 PR (Production) - 128GB HBM, standard memory BW
+        "Ascend-950-PR": DeviceConfig(
+            name="Ascend-950-PR",
             # CUBE core
             fp16_tflops_cube=500.0,
             fp8_tflops_cube=1000.0,
@@ -271,7 +289,7 @@ class Device:
             fp8_tflops_vector=100.0,
             int8_tflops_vector=100.0,
             memory_gb=128.0,
-            memory_bandwidth_gbps=1600.0,
+            memory_bandwidth_gbps=1600.0,  # 1.6 TB/s HiBL 1.0
             hccs_bandwidth_gbps=500.0,
             l2_cache_mb=96.0,
             tdp_w=400.0,
