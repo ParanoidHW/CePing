@@ -17,12 +17,16 @@
 ```
 llm_perf/
 ├── models/          # 模型定义 (Llama, MoE)
-├── hardware/        # 硬件抽象 (Device, Cluster)
+├── hardware/        # 硬件抽象 (Device, Cluster, Topology)
 ├── kernels/         # Kernel 评估 (Compute, Communication)
 ├── strategy/        # 切分策略 (TP, PP, DP, EP)
 ├── analyzer/        # 性能分析器 (Training, Inference)
 ├── reporter/        # 报告生成 (Table, JSON, HTML)
-└── cli/             # 命令行接口
+├── cli/             # 命令行接口
+└── web/             # Web 可视化界面 (HTTPS)
+    ├── app.py       # Flask 后端服务
+    ├── static/      # CSS/JS 前端资源
+    └── templates/   # HTML 模板
 ```
 
 ### 核心模块说明
