@@ -1,0 +1,11 @@
+# Web service dependencies for LLM Performance Evaluator
+
+# Web framework
+flask>=2.0.0
+flask-cors>=4.0.0
+
+# SSL certificate generation (optional, for HTTPS)
+cryptography>=41.0.0
+
+# Production WSGI server (optional)
+# gunicorn>=21.0.0

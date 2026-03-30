@@ -66,6 +66,29 @@ llm_perf/
 pip install -e .
 ```
 
+### Web 可视化界面（推荐）
+
+启动本地 HTTPS Web 服务，通过浏览器交互式配置和评估：
+
+```bash
+# 安装依赖
+pip install flask flask-cors cryptography
+
+# 启动 HTTPS 服务（默认 https://localhost:8443）
+cd web
+python app.py
+
+# 或使用 HTTP 模式
+python app.py --http
+```
+
+访问 https://localhost:8443，即可使用可视化界面：
+- 选择模型预设（Llama-7B/70B, Mixtral-8x7B, DeepSeek-V3）
+- 配置硬件（NVIDIA/AMD/Huawei GPU）
+- 设置网络拓扑（2-Tier/3-Tier Clos/Fat-Tree/CloudMatrix）
+- 调整并行策略（TP/PP/DP/EP）
+- 实时获取性能评估结果
+
 ### 运行示例
 
 ```bash
@@ -252,6 +275,127 @@ comm_kernel = comm_registry.create_ep_alltoall(
     token_bytes=8192,
     ep_ranks=[0, 1, 2, 3]
 )
+```
+
+## Web 服务详细说明
+
+### 环境搭建
+
+#### 1. 安装 Python 依赖
+
+```bash
+# 基础依赖
+pip install flask flask-cors
+
+# SSL 证书生成（可选，用于 HTTPS）
+pip install cryptography
+
+# 或使用 requirements.txt
+cd web
+pip install -r requirements.txt
+```
+
+#### 2. 生成 SSL 证书（HTTPS）
+
+首次运行时会自动生成自签名证书，或手动生成：
+
+```bash
+cd web/certs
+
+# 使用 OpenSSL
+openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt -days 365 -nodes
+
+# 或使用 mkcert（推荐，会生成本地信任证书）
+mkcert -install
+mkcert localhost 127.0.0.1
+```
+
+### 启动服务
+
+```bash
+cd web
+
+# HTTPS 模式（默认）
+python app.py
+# 访问 https://localhost:8443
+
+# 指定端口
+python app.py --port 8080
+
+# HTTP 模式（开发调试）
+python app.py --http
+# 访问 http://localhost:8443
+
+# 绑定所有接口
+python app.py --host 0.0.0.0 --port 8080
+```
+
+### 功能特性
+
+#### 支持的配置项
+
+| 类别 | 配置项 |
+|------|--------|
+| **模型** | Llama/Dense, MoE (Mixtral/DeepSeek) |
+| **模型参数** | Hidden size, Layers, Attention heads, Experts (MoE) |
+| **硬件** | NVIDIA (H100/A100/L40S), AMD (MI300X), Huawei (Ascend 910B/C/950/960/970) |
+| **网络拓扑** | 2-Tier Simple, 3-Tier Clos, Fat-Tree, CloudMatrix Supernode |
+| **并行策略** | TP (Tensor), PP (Pipeline), DP (Data), EP (Expert) |
+| **优化选项** | Activation Checkpointing, ZeRO Stage |
+| **训练参数** | Batch size, Sequence length |
+| **推理参数** | Batch size, Prompt length, Generation length |
+
+#### 网络拓扑可视化
+
+Web 界面支持配置和可视化多种网络拓扑：
+
+1. **2-Tier Simple**: 机内 NVLink + 机间 IB
+2. **3-Tier Clos**: Leaf-Spine-Core 三级交换
+3. **Fat-Tree**: 数据中心常用胖树拓扑
+4. **CloudMatrix Supernode**: 华为 384 NPU 全对等超节点
+
+### 架构
+
+```
+web/
+├── app.py              # Flask 后端服务
+├── static/
+│   ├── css/
+│   │   └── style.css   # 扁平化简约样式
+│   └── js/
+│       └── app.js      # 前端交互逻辑
+├── templates/
+│   └── index.html      # 主页面
+└── certs/              # SSL 证书目录
+    ├── server.crt
+    └── server.key
+```
+
+### API 接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | 主页面 |
+| `/api/devices` | GET | 获取设备预设列表 |
+| `/api/model/presets` | GET | 获取模型预设 |
+| `/api/topology/presets` | GET | 获取拓扑预设 |
+| `/api/evaluate/training` | POST | 训练性能评估 |
+| `/api/evaluate/inference` | POST | 推理性能评估 |
+
+### 示例：通过 API 直接调用
+
+```bash
+# 训练评估
+curl -X POST https://localhost:8443/api/evaluate/training \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": {"type": "llama", "hidden_size": 4096, "num_layers": 32, ...},
+    "device": "H100-SXM-80GB",
+    "num_devices": 8,
+    "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 900, ...},
+    "strategy": {"tp": 8, "pp": 1, "dp": 1, ...},
+    "training": {"batch_size": 32, "seq_len": 4096}
+  }'
 ```
 
 ## 算法说明

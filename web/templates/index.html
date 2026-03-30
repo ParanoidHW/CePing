@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Performance Evaluator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>LLM Performance Evaluator</h1>
+            <p class="subtitle">大模型训推性能评估工具</p>
+        </header>
+
+        <main>
+            <!-- Mode Selection -->
+            <section class="card mode-selector">
+                <h2>评估模式</h2>
+                <div class="tabs">
+                    <button class="tab active" data-mode="training">训练 (Training)</button>
+                    <button class="tab" data-mode="inference">推理 (Inference)</button>
+                </div>
+            </section>
+
+            <div class="grid">
+                <!-- Model Configuration -->
+                <section class="card model-config">
+                    <h2>模型配置</h2>
+                    
+                    <div class="form-group">
+                        <label>模型预设</label>
+                        <select id="model-preset">
+                            <option value="">自定义 (Custom)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>模型类型</label>
+                        <select id="model-type">
+                            <option value="llama">Llama (Dense)</option>
+                            <option value="moe">MoE (Mixture of Experts)</option>
+                        </select>
+                    </div>
+
+                    <div class="advanced-toggle">
+                        <button type="button" class="btn-link">展开高级参数 ▼</button>
+                    </div>
+
+                    <div class="advanced-params collapsed">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Hidden Size</label>
+                                <input type="number" id="hidden-size" value="4096">
+                            </div>
+                            <div class="form-group">
+                                <label>Num Layers</label>
+                                <input type="number" id="num-layers" value="32">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Attention Heads</label>
+                                <input type="number" id="num-heads" value="32">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Seq Len</label>
+                                <input type="number" id="max-seq-len" value="4096">
+                            </div>
+                        </div>
+                        <div class="form-group moe-only" style="display: none;">
+                            <label>Experts / Active</label>
+                            <div class="form-row">
+                                <input type="number" id="num-experts" value="8" placeholder="Total">
+                                <input type="number" id="experts-per-token" value="2" placeholder="Active">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Data Type</label>
+                            <select id="dtype">
+                                <option value="fp16">FP16</option>
+                                <option value="bf16">BF16</option>
+                                <option value="fp8">FP8</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Hardware Configuration -->
+                <section class="card hardware-config">
+                    <h2>硬件配置</h2>
+                    
+                    <div class="form-group">
+                        <label>设备类型</label>
+                        <select id="device-vendor">
+                            <option value="NVIDIA">NVIDIA</option>
+                            <option value="AMD">AMD</option>
+                            <option value="Huawei">Huawei Ascend</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>设备型号</label>
+                        <select id="device-model"></select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>总设备数</label>
+                            <input type="number" id="num-devices" value="8" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>每节点设备</label>
+                            <input type="number" id="devices-per-node" value="8" min="1">
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Topology Configuration -->
+                <section class="card topology-config">
+                    <h2>网络拓扑</h2>
+                    
+                    <div class="form-group">
+                        <label>拓扑类型</label>
+                        <select id="topology-type">
+                            <option value="2-Tier Simple">2层简单 (2-Tier)</option>
+                            <option value="3-Tier Clos">3层Clos</option>
+                            <option value="Fat-Tree">胖树 (Fat-Tree)</option>
+                            <option value="CloudMatrix Supernode">CloudMatrix超节点</option>
+                        </select>
+                    </div>
+
+                    <div id="topology-params">
+                        <!-- Dynamic topology parameters -->
+                    </div>
+                </section>
+
+                <!-- Strategy Configuration -->
+                <section class="card strategy-config">
+                    <h2>并行策略</h2>
+                    
+                    <div class="parallel-grid">
+                        <div class="form-group">
+                            <label>TP (Tensor)</label>
+                            <input type="number" id="tp-degree" value="8" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>PP (Pipeline)</label>
+                            <input type="number" id="pp-degree" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>DP (Data)</label>
+                            <input type="number" id="dp-degree" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>EP (Expert)</label>
+                            <input type="number" id="ep-degree" value="1" min="1">
+                        </div>
+                    </div>
+
+                    <div class="form-check">
+                        <input type="checkbox" id="activation-checkpointing">
+                        <label for="activation-checkpointing">Activation Checkpointing</label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>ZeRO Stage</label>
+                        <select id="zero-stage">
+                            <option value="0">Disabled</option>
+                            <option value="1">Stage 1 (Optimizer States)</option>
+                            <option value="2">Stage 2 (Gradients)</option>
+                            <option value="3">Stage 3 (Parameters)</option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- Training/Inference Params -->
+                <section class="card runtime-config">
+                    <h2 id="runtime-title">训练参数</h2>
+                    
+                    <div id="training-params">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="batch-size" value="32">
+                            </div>
+                            <div class="form-group">
+                                <label>Sequence Length</label>
+                                <input type="number" id="seq-len" value="4096">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="inference-params" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="inf-batch-size" value="8">
+                            </div>
+                            <div class="form-group">
+                                <label>Prompt Length</label>
+                                <input type="number" id="prompt-len" value="1024">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Generation Length</label>
+                            <input type="number" id="generation-len" value="128">
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Evaluate Button -->
+            <div class="action-bar">
+                <button id="evaluate-btn" class="btn-primary">
+                    <span class="btn-text">开始评估</span>
+                    <span class="spinner" style="display: none;"></span>
+                </button>
+            </div>
+
+            <!-- Results -->
+            <section id="results" class="card results" style="display: none;">
+                <h2>评估结果</h2>
+                <div id="results-content"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p>LLM Performance Evaluator &copy; 2025</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
