@@ -286,11 +286,12 @@ achievable_flops = min(
 ## 路线图
 
 - [ ] 更精确的 FlashAttention kernel 建模
-- [ ] 支持更多的并行策略 (FSDP, 3D Parallelism)
+- [ ] 支持更多的并行策略 (FSDP, 3D Parallelism，Ulysses-SP，Unified-SP)
 - [ ] 自动策略搜索 (DP + Genetic Algorithm)
 - [ ] 集成实际的 kernel benchmark 数据
-- [ ] 支持更多的模型架构 (GPT-NeoX, Falcon, etc.)
+- [ ] 支持更多的模型架构 (DeepSeek-V3, LongCat-Flash, etc.)
 - [ ] 可视化工具 (roofline plot, timeline)
+- [ ] 支持更多场景（LLM、多模态理解、多模态生成、Agentic、RL训练）
 
 ## License
 

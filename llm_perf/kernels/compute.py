@@ -4,7 +4,7 @@ from typing import Dict, Optional, Any
 import math
 
 from .base import Kernel, KernelConfig, KernelType
-from ..hardware.device import Device
+from ..hardware.device import Device, ComputeUnitType
 from ..utils.constants import DTYPE_SIZES
 
 
@@ -17,11 +17,13 @@ class ComputeKernel(Kernel):
         device: Device,
         flops: int,
         bytes_accessed: int,
+        unit_type: ComputeUnitType = ComputeUnitType.CUBE_TENSOR_CORE,
     ):
         super().__init__(config)
         self.device = device
         self.flops = flops
         self.bytes_accessed = bytes_accessed
+        self.unit_type = unit_type
     
     @property
     def arithmetic_intensity(self) -> float:
@@ -47,10 +49,11 @@ class ComputeKernel(Kernel):
         if self.config.measured_flops:
             return self.flops / self.config.measured_flops
         
-        # Otherwise use theoretical roofline
+        # Otherwise use theoretical roofline with appropriate compute unit
         achievable_flops = self.device.estimate_roofline_flops(
             self.arithmetic_intensity,
-            dtype
+            dtype,
+            self.unit_type
         )
         
         compute_time = self.flops / achievable_flops
@@ -70,6 +73,10 @@ class ComputeKernel(Kernel):
     ) -> int:
         """Estimate memory usage."""
         return self.bytes_accessed
+    
+    def get_unit_type(self) -> ComputeUnitType:
+        """Get the compute unit type used by this kernel."""
+        return self.unit_type
 
 
 class ComputeKernelRegistry:
@@ -82,13 +89,13 @@ class ComputeKernelRegistry:
     
     def _register_default_kernels(self):
         """Register default compute kernels."""
-        # Matmul kernels
+        # Matmul kernels - use CUBE/Tensor Core
         self._register_matmul_kernels()
-        # Attention kernels
+        # Attention kernels - use CUBE/Tensor Core
         self._register_attention_kernels()
-        # Activation kernels
+        # Activation kernels - use VECTOR/CUDA Core
         self._register_activation_kernels()
-        # Normalization kernels
+        # Normalization kernels - use VECTOR/CUDA Core
         self._register_norm_kernels()
     
     def _register_matmul_kernels(self):
@@ -106,7 +113,9 @@ class ComputeKernelRegistry:
                 name=f"gemm_{m}x{n}x{k}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
-            return ComputeKernel(config, self.device, flops, bytes_accessed)
+            # GEMM uses CUBE/Tensor Core
+            return ComputeKernel(config, self.device, flops, bytes_accessed, 
+                               ComputeUnitType.CUBE_TENSOR_CORE)
         
         # Register some common GEMM sizes
         common_sizes = [
@@ -156,7 +165,9 @@ class ComputeKernelRegistry:
                 name=f"flash_attn_b{batch}_s{seq_len}_h{num_heads}_d{head_dim}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
-            return ComputeKernel(config, self.device, flops, bytes_accessed)
+            # Attention uses CUBE/Tensor Core for QK^T and PV matmuls
+            return ComputeKernel(config, self.device, flops, bytes_accessed,
+                               ComputeUnitType.CUBE_TENSOR_CORE)
         
         # Common attention configurations
         configs = [
@@ -183,6 +194,7 @@ class ComputeKernelRegistry:
             Activation function kernel.
             
             These are typically memory-bound (read input, write output).
+            Uses VECTOR/CUDA Core for element-wise operations.
             """
             dtype_size = DTYPE_SIZES.get(dtype, 2)
             
@@ -202,7 +214,9 @@ class ComputeKernelRegistry:
                 name=f"{activation}_{num_elements}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
-            return ComputeKernel(config, self.device, flops, bytes_accessed)
+            # Activations use VECTOR/CUDA Core
+            return ComputeKernel(config, self.device, flops, bytes_accessed,
+                               ComputeUnitType.VECTOR_CUDA_CORE)
         
         # Common sizes
         sizes = [4096, 11008, 32000, 131072]
@@ -234,7 +248,9 @@ class ComputeKernelRegistry:
                 name=f"{norm_type}_{num_elements}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
-            return ComputeKernel(config, self.device, flops, bytes_accessed)
+            # Normalization uses VECTOR/CUDA Core
+            return ComputeKernel(config, self.device, flops, bytes_accessed,
+                               ComputeUnitType.VECTOR_CUDA_CORE)
         
         sizes = [4096, 5120, 6144, 8192]
         norms = ["layernorm", "rmsnorm"]
@@ -270,7 +286,9 @@ class ComputeKernelRegistry:
             name=name,
             kernel_type=KernelType.COMPUTE,
         )
-        kernel = ComputeKernel(config, self.device, flops, bytes_accessed)
+        # GEMM uses CUBE/Tensor Core
+        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
+                             ComputeUnitType.CUBE_TENSOR_CORE)
         self._kernels[name] = kernel
         return kernel
     
