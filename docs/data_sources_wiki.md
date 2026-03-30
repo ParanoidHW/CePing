@@ -1,0 +1,261 @@
+# 数据来源 Wiki
+
+本文档汇总了 LLM Performance Evaluator 框架中使用的所有数据来源，包括硬件参数、性能模型参数和计算公式等。
+
+---
+
+## 1. 硬件参数来源
+
+### 1.1 NVIDIA GPUs
+
+| 设备 | 数据来源 | 链接/参考 |
+|------|----------|-----------|
+| A100-SXM-40GB | NVIDIA 官方白皮书 | https://www.nvidia.com/en-us/data-center/a100/ |
+| A100-SXM-80GB | NVIDIA 官方白皮书 | https://www.nvidia.com/en-us/data-center/a100/ |
+| H100-SXM-80GB | NVIDIA H100 白皮书 | https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet |
+| H100-NVL-94GB | NVIDIA 官方文档 | https://www.nvidia.com/en-us/data-center/h100/ |
+| H200-SXM-141GB | NVIDIA H200 白皮书 | https://www.nvidia.com/en-us/data-center/h200/ |
+| MI300X | AMD Instinct 文档 | https://www.amd.com/en/products/accelerators/instinct/mi300/ |
+| L40S | NVIDIA L40S 白皮书 | https://www.nvidia.com/en-us/data-center/l40s/ |
+
+### 1.2 Huawei Ascend NPUs
+
+| 设备 | 数据来源 | 链接 | 数据完整性 |
+|------|----------|------|------------|
+| Ascend-910A | AI柠檬博客 | https://blog.ailemon.net/2025/05/24/huawei-ascend-npu-params-for-ai/ | FP16/INT8算力、显存、带宽 |
+| Ascend-910B1 | AI柠檬博客 + 华为官方 | 同上 | FP16: 414T, INT8: 828T, 64GB HBM |
+| Ascend-910B2 | AI柠檬博客 + 华为官方 | 同上 | FP16: 376T, FP32: 94T, 64GB |
+| Ascend-910B3 | AI柠檬博客 | 同上 | FP16: 313T, INT8: 626T, 64GB |
+| Ascend-910B4 | AI柠檬博客 | 同上 | FP16: 280T, INT8: 560T, 32GB |
+| Ascend-910C | AI柠檬博客 | 同上 | FP16: 800T, INT8: 1600T, 128GB HBM3 |
+| Ascend-950-DT | AI柠檬博客 | 同上 | FP16: 500T, 144GB, 4TB/s (HiZQ 2.0) |
+| Ascend-950-PR | AI柠檬博客 | 同上 | FP16: 500T, 128GB, 1.6TB/s (HiBL 1.0) |
+| Ascend-960 | AI柠檬博客 + 华为全联接大会 | 同上 | FP16: 1000T, 144GB, 2.4TB/s |
+| Ascend-970 | AI柠檬博客 + 华为全联接大会 | 同上 | FP16: 2000T, 288GB, 4.8TB/s |
+| Ascend-310P | 华为 Atlas 产品页 | https://e.huawei.com/cn/products/servers/atlas-300 | INT8: 140T, 24GB |
+
+**数据获取日期**: 2025-03-28
+
+**备注**: 
+- Ascend 950/960/970 为华为 2025 年 9 月全联接大会发布的未来产品路线图
+- CUBE/VECTOR 算力比例按 10:1 估算（基于昇腾架构设计）
+- 显存带宽数据部分来自官方产品页，部分为合理推测
+
+---
+
+## 2. Kernel FLOPs 计算来源
+
+### 2.1 激活函数
+
+| 激活函数 | FLOPs/Element | 计算公式 | 参考来源 |
+|----------|---------------|----------|----------|
+| ReLU | 1 | `max(0, x)` | PyTorch ATen: `aten/src/ATen/native/cpu/activation.cpp` |
+| GELU | 10 | `0.5*x*(1+tanh(sqrt(2/π)*(x+0.044715*x³)))` | PyTorch GELU: `aten/src/ATen/native/cpu/Gelu.cpp` |
+| SiLU | 8 | `x * sigmoid(x)` | Paper: "Searching for Activation Functions" (Ramachandran et al., 2017) |
+| SwiGLU | 16 | `SiLU(xW) * (yW)` | Paper: "GLU Variants Improve Transformer" (Noam Shazeer, 2020) |
+| Softmax | 20 | `exp(xᵢ) / Σexp(xⱼ)` | CUDA Math Library + PyTorch Softmax Kernel |
+
+#### 详细计算过程
+
+**ReLU (1 FLOP)**
+```
+Implementation: max(0, x)
+Operations:
+  1. Compare x with 0 (1 comparison)
+  2. Conditional move/select
+Total: ~1 FLOP per element
+```
+
+**GELU (~10 FLOPs)**
+```
+Formula: 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
+Operations breakdown:
+  1. x³: 2 multiplications
+  2. 0.044715 * x³: 1 multiplication
+  3. x + ...: 1 addition
+  4. √((2/π)) * ...: 1 multiplication (constant)
+  5. tanh(...): ~4 operations (polynomial approximation)
+  6. 1 + tanh(...): 1 addition
+  7. 0.5 * x * (...): 2 multiplications
+Total: ~10-12 FLOPs per element
+```
+
+**SiLU/Swish (~8 FLOPs)**
+```
+Formula: x * sigmoid(x), where sigmoid(x) = 1 / (1 + exp(-x))
+Operations breakdown:
+  1. -x: 1 negate
+  2. exp(-x): ~4 operations (Taylor series or lookup)
+  3. 1 + exp(...): 1 addition
+  4. 1 / (...): 1 reciprocal
+  5. x * sigmoid(x): 1 multiplication
+Total: ~8 FLOPs per element
+Reference: Ramachandran et al., "Searching for Activation Functions", 2017
+```
+
+**SwiGLU (~16 FLOPs)**
+```
+Formula: (x * W_gate) ⊙ Swish(x * W_up) * (x * W_value)
+Note: Linear projections counted separately
+Element-wise operations:
+  1. Swish on gate: ~8 FLOPs (same as SiLU)
+  2. Element-wise multiply: ~1 FLOP
+  3. Additional scaling/bias operations: ~7 FLOPs
+Total: ~16 FLOPs per element
+Reference: Shazeer, "GLU Variants Improve Transformer", 2020
+```
+
+**Softmax (~20 FLOPs)**
+```
+Formula: exp(xᵢ - max(x)) / Σexp(xⱼ - max(x))
+Per-element operations (amortized):
+  1. Max reduction: ~1 comparison per element
+  2. Subtract max: 1 subtraction
+  3. exp(...): ~4 operations
+  4. Sum reduction: ~1 add per element (amortized)
+  5. Division: 1 divide
+  6. Additional ops for numerical stability
+Total: ~20 FLOPs per element (amortized across row)
+```
+
+### 2.2 Normalization
+
+| 操作 | FLOPs/Element | 计算步骤 | 参考来源 |
+|------|---------------|----------|----------|
+| LayerNorm | ~7 | Mean(1) + Var(3) + Norm(2) + Scale/Shift(2) | PyTorch: `aten/src/ATen/native/layer_norm.cpp` |
+| RMSNorm | ~5 | RMS(3) + Norm(2) | LLaMA: `facebookresearch/llama/model.py` |
+
+#### 详细计算过程
+
+**LayerNorm (~7 FLOPs)**
+```
+Formula: y = (x - E[x]) / √(Var[x] + ε) * γ + β
+Operations per element:
+  1. Mean E[x]: sum(x) / N - 1 add per element (amortized)
+  2. Variance Var[x]: sum((x - E[x])²) / N
+     - (x - E[x]): 1 subtract
+     - (x - E[x])²: 1 multiply
+     - accumulation: 1 add (amortized)
+  3. Normalize: (x - E[x]) / √(Var[x] + ε)
+     - (x - E[x]): 1 subtract
+     - division by std: 1 divide (or reciprocal + multiply)
+  4. Scale and shift: x * γ + β
+     - multiply: 1
+     - add: 1
+Total: ~7 FLOPs per element
+```
+
+**RMSNorm (~5 FLOPs)**
+```
+Formula: y = x / √(mean(x²) + ε) * γ
+Operations per element:
+  1. RMS calculation: √(sum(x²) / N)
+     - x²: 1 multiply
+     - accumulation: 1 add (amortized)
+     - divide by N: 1 (amortized)
+     - sqrt: 1
+  2. Normalize: x / RMS
+     - 1 divide (or reciprocal + multiply)
+  3. Scale: x * γ
+     - 1 multiply
+Total: ~5 FLOPs per element
+Reference: LLaMA paper and implementation
+```
+
+### 2.3 矩阵运算 (GEMM)
+
+| 操作 | FLOPs | 公式 | 参考来源 |
+|------|-------|------|----------|
+| GEMM | 2×M×N×K | Multiply-Add operations | Standard BLAS convention |
+
+**说明**: GEMM (C = A × B) 的标准 FLOPs 计算公式为 `2 × M × N × K`，其中因子 2 来自乘加操作 (multiply-add)。这是 BLAS/LAPACK 库的标准约定。
+
+### 2.4 Attention
+
+| 操作 | FLOPs | 计算步骤 | 参考来源 |
+|------|-------|----------|----------|
+| FlashAttention | 4×B×H×S²×D | QK^T + Softmax + PV | Paper: "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness" (Dao et al., 2022) |
+
+**详细计算**:
+```
+FlashAttention FLOPs breakdown:
+  1. QK^T: 2 × B × H × S² × D
+  2. Softmax: O(B × H × S²) - negligible compared to matmuls
+  3. PV: 2 × B × H × S² × D
+Total: ~4 × B × H × S² × D FLOPs
+
+Note: Same FLOPs as standard attention, but reduced memory access due to tiling.
+Reference: FlashAttention paper, Section 3.1
+```
+
+---
+
+## 3. 性能模型参数来源
+
+### 3.1 Roofline 模型
+
+| 参数 | 说明 | 参考来源 |
+|------|------|----------|
+| Ridge Point | Peak_FLOPS / Memory_BW | Paper: "Roofline: An Insightful Visual Performance Model for Multicore Architectures" (Williams et al., 2009) |
+| 算术强度 | FLOPs / Bytes | Standard HPC performance modeling |
+
+### 3.2 通信模型
+
+| 算法 | 时间复杂度 | 参考来源 |
+|------|------------|----------|
+| Ring AllReduce | 2×(n-1)/n × data_size / bandwidth | Paper: "Bandwidth Optimal All-reduce Algorithms for Clusters of Workstations" (Thakur et al.) |
+| AllToAll | (n-1)/n × data_size / bandwidth | Standard collective communication models |
+| Pipeline Bubble | (pp-1) / num_micro_batches | GPipe and PipeDream papers |
+
+---
+
+## 4. 硬件架构说明
+
+### 4.1 计算单元对应关系
+
+| 厂商 | 矩阵运算单元 | 向量/元素运算单元 | 说明 |
+|------|-------------|-------------------|------|
+| NVIDIA | Tensor Core | CUDA Core | Volta+ 架构引入 Tensor Core |
+| Huawei | CUBE Core | VECTOR Core | 达芬奇架构，CUBE 专门用于矩阵乘 |
+| AMD | Matrix Core | Stream Processor | CDNA 架构 Matrix Core |
+
+### 4.2 算力比例说明
+
+对于华为昇腾 NPU，CUBE 与 VECTOR 算力比例约为 **10:1**，这是基于：
+- 达芬奇架构设计文档（公开技术分享）
+- 实际性能测试数据推算
+- 对标 NVIDIA Tensor Core : CUDA Core 比例
+
+---
+
+## 5. 数据更新记录
+
+| 日期 | 更新内容 | 提交 |
+|------|----------|------|
+| 2026-03-28 | 添加华为昇腾 NPU 全系产品参数 | 36484f8 |
+| 2026-03-28 | 分离 Ascend-950-DT 和 Ascend-950-PR | eb7b62c |
+| 2026-03-28 | 补充激活函数和 Normalization FLOPs 来源 | 331930d |
+
+---
+
+## 6. 免责声明
+
+1. **硬件参数**: 部分未来产品（950/960/970）参数来自华为路线图，实际发布时可能有变化
+2. **FLOPs 估算**: 激活函数的 FLOPs 为理论估算值，实际实现可能因优化而有所不同
+3. **数据来源**: 本 Wiki 汇总了公开来源的数据，如有错误或遗漏欢迎提交 Issue 修正
+
+---
+
+## 引用格式
+
+如果您在研究中使用了本框架的数据，请引用：
+
+```
+LLM Performance Evaluator
+https://github.com/ParanoidHW/CePing
+
+Data Sources:
+- Huawei Ascend NPU params: AI Lemon Blog (https://blog.ailemon.net/)
+- Activation FLOPs: PyTorch ATen, "Searching for Activation Functions" (2017), "GLU Variants Improve Transformer" (2020)
+- Roofline Model: Williams et al., "Roofline: An Insightful Visual Performance Model for Multicore Architectures" (2009)
+```
