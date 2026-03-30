@@ -393,9 +393,8 @@ class Device:
             fp8_tflops_cube=4000.0,
             fp4_tflops_cube=8000.0,
             int8_tflops_cube=4000.0,
-            # VECTOR core
+            # VECTOR core (FP32/FP16 only, no low-precision for activations)
             fp16_tflops_vector=200.0,
-            fp4_tflops_vector=800.0,
             memory_gb=288.0,
             memory_bandwidth_gbps=4800.0,
             hccs_bandwidth_gbps=800.0,
