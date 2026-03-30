@@ -27,6 +27,7 @@ class DeviceConfig:
     fp16_tflops_cube: float = 0.0
     bf16_tflops_cube: float = 0.0
     fp8_tflops_cube: Optional[float] = None
+    fp4_tflops_cube: Optional[float] = None
     int8_tflops_cube: Optional[float] = None
     
     # ========== VECTOR / CUDA Core Compute (Element-wise Operations) ==========
@@ -447,6 +448,7 @@ class Device:
                 "fp16": self.config.fp16_tflops_cube or self.config.fp16_tflops,
                 "bf16": self.config.bf16_tflops_cube or self.config.bf16_tflops,
                 "fp8": self.config.fp8_tflops_cube or self.config.fp8_tflops or self.config.fp16_tflops_cube,
+                "fp4": self.config.fp4_tflops_cube or self.config.fp8_tflops_cube or self.config.fp8_tflops or self.config.fp16_tflops_cube,
                 "int8": self.config.int8_tflops_cube or self.config.int8_tflops or self.config.fp16_tflops_cube,
                 "int4": self.config.int8_tflops_cube or self.config.int8_tflops or self.config.fp16_tflops_cube,
             }
@@ -459,6 +461,7 @@ class Device:
                 "bf16": self.config.bf16_tflops_vector or self.config.bf16_tflops,
                 # INT8/FP8 on VECTOR cores fall back to FP16 (not used for compute kernels)
                 "fp8": self.config.fp16_tflops_vector or self.config.fp16_tflops,
+                "fp4": self.config.fp16_tflops_vector or self.config.fp16_tflops,
                 "int8": self.config.fp16_tflops_vector or self.config.fp16_tflops,
                 "int4": self.config.fp16_tflops_vector or self.config.fp16_tflops,
             }
@@ -518,6 +521,7 @@ class Device:
             "fp16_tflops_cube": self.config.fp16_tflops_cube,
             "bf16_tflops_cube": self.config.bf16_tflops_cube,
             "fp8_tflops_cube": self.config.fp8_tflops_cube,
+            "fp4_tflops_cube": self.config.fp4_tflops_cube,
             "int8_tflops_cube": self.config.int8_tflops_cube,
             "fp32_tflops_vector": self.config.fp32_tflops_vector,
             "fp16_tflops_vector": self.config.fp16_tflops_vector,
