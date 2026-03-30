@@ -84,7 +84,75 @@ topology = NetworkTopology.create_fat_tree(
 )
 ```
 
-### 2.3 简单 2 层拓扑
+### 2.3 超节点（Supernode）拓扑 - CloudMatrix 384
+
+华为 CloudMatrix 384 是一种革命性的**全对等超节点架构**，不同于传统的分层拓扑。
+
+**参考论文**: [Serving Large Language Models on Huawei CloudMatrix384](https://arxiv.org/abs/2506.12708) (arXiv:2506.12708, June 2025)
+
+**架构特点**:
+- **384 Ascend 910C NPUs** + 192 Kunpeng CPUs
+- **全对全非阻塞拓扑** via Unified Bus (UB)
+- 每个 910C 提供 **>392GB/s** 单向 UB 带宽
+- 节点间带宽下降 **<3%**，延迟增加 **<1μs**
+- 三层网络平面：UB（超节点内）、RDMA（跨超节点）、VPC（数据中心）
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CloudMatrix 384 Supernode                     │
+│              Fully Peer-to-Peer Non-Blocking Fabric              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│    ┌─────┐  ┌─────┐  ┌─────┐         ┌─────┐  ┌─────┐          │
+│    │NPU 0│  │NPU 1│  │NPU 2│  ...    │NPU382│  │NPU383│         │
+│    └──┬──┘  └──┬──┘  └──┬──┘         └──┬──┘  └──┬──┘          │
+│       │        │        │               │        │              │
+│       └────────┴────────┴───────────────┴────────┘              │
+│                         │                                        │
+│                  ┌──────┴──────┐                                 │
+│                  │   UB Switch  │  ← Unified Bus                 │
+│                  │   Network    │    (Non-blocking all-to-all)   │
+│                  └──────┬──────┘                                 │
+│                         │                                        │
+│    ┌─────┐  ┌─────┐  ┌─────┐         ┌─────┐  ┌─────┐          │
+│    │CPU 0│  │CPU 1│  │CPU 2│  ...    │CPU190│  │CPU191│         │
+│    └─────┘  └─────┘  └─────┘         └─────┘  └─────┘          │
+│                                                                  │
+│  Bandwidth: 392 GB/s per NPU (uniform across all pairs)          │
+│  Latency:   ~2μs (any-to-any within supernode)                   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**与传统 Clos 的区别**:
+
+| 特性 | CloudMatrix 384 | 传统 Clos 3-Tier |
+|------|-----------------|------------------|
+| 拓扑 | 全对等扁平 | 分层树状 |
+| 跳数 | 1 (via UB switch) | 3-5 hops |
+| 带宽一致性 | 统一高带宽 | 逐层递减 |
+| 超配 | 无 (1:1) | 通常 4:1 |
+| 延迟 | 极低 (<2μs) | 较高 (5-20μs) |
+| 扩展性 | 384-768 设备 | 1000+ 设备 |
+
+**配置示例**:
+```python
+topology = NetworkTopology.create_cloudmatrix_supernode(
+    num_npus=384,
+    num_cpus=192,
+    ub_bw_gbps=3136,      # 392 GB/s per NPU
+    ub_latency_us=2.0,
+    rdma_bw_gbps=400,     # RoCE for scale-out
+    rdma_latency_us=5.0,
+)
+```
+
+**优势场景**:
+- 大规模 MoE 模型（EP 并行度可高达 320）
+- 分布式 KV Cache 访问
+- Tensor Parallelism 跨节点扩展无性能损失
+
+### 2.4 简单 2 层拓扑
 
 适用于小规模集群（< 100 节点）。
 

@@ -1,0 +1,41 @@
+{
+  "_comment": "Huawei CloudMatrix 384 Supernode Configuration",
+  "_paper": "Serving Large Language Models on Huawei CloudMatrix384 (arXiv:2506.12708)",
+  "device_preset": "Ascend-910C",
+  "num_devices": 384,
+  "devices_per_node": 1,
+  "_note": "In CloudMatrix, each NPU is directly connected to UB, so devices_per_node=1",
+  "topology": {
+    "name": "cloudmatrix_384",
+    "topology_type": "supernode",
+    "levels": [
+      {
+        "name": "ub_plane",
+        "level": 0,
+        "bandwidth_gbps": 3136,
+        "latency_us": 2.0,
+        "oversubscription_ratio": 1.0,
+        "devices_per_group": 384,
+        "_comment": "Unified Bus: 392GB/s per NPU, non-blocking all-to-all"
+      },
+      {
+        "name": "rdma_plane",
+        "level": 1,
+        "bandwidth_gbps": 400,
+        "latency_us": 5.0,
+        "oversubscription_ratio": 1.0,
+        "devices_per_group": 999999,
+        "_comment": "RoCE for scale-out to other supernodes"
+      }
+    ],
+    "_architecture": {
+      "npus": 384,
+      "cpus": 192,
+      "topology": "fully peer-to-peer non-blocking all-to-all",
+      "interconnect": "Unified Bus (UB)",
+      "ub_bandwidth_per_npu": "392 GB/s unidirectional",
+      "inter_node_bw_degradation": "<3%",
+      "inter_node_latency_increase": "<1μs"
+    }
+  }
+}

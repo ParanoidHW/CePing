@@ -13,6 +13,7 @@ class TopologyType(Enum):
     DRAGONFLY = "dragonfly"
     TORUS = "torus"
     HYPERCUBE = "hypercube"
+    SUPERNODE = "supernode"  # Fully peer-to-peer supernode (e.g., Huawei CloudMatrix)
     CUSTOM = "custom"
 
 
@@ -193,6 +194,70 @@ class NetworkTopology:
                     bandwidth_gbps=inter_node_bw_gbps,
                     latency_us=2.0,
                     devices_per_group=999999,
+                ),
+            ],
+        )
+    
+    @classmethod
+    def create_cloudmatrix_supernode(
+        cls,
+        num_npus: int = 384,
+        num_cpus: int = 192,
+        ub_bw_gbps: float = 3136.0,  # ~400GB/s x 8 = 3.1TB/s for 910C
+        ub_latency_us: float = 2.0,
+        rdma_bw_gbps: float = 400.0,   # 400Gbps RoCE for scale-out
+        rdma_latency_us: float = 5.0,
+    ) -> "NetworkTopology":
+        """
+        Create Huawei CloudMatrix 384 supernode topology.
+        
+        Based on: "Serving Large Language Models on Huawei CloudMatrix384"
+        arXiv:2506.12708 (June 2025)
+        
+        Architecture:
+        - 384 Ascend 910C NPUs + 192 Kunpeng CPUs
+        - Fully peer-to-peer non-blocking all-to-all topology via Unified Bus (UB)
+        - Each 910C provides >392GB/s unidirectional UB bandwidth
+        - Inter-node bandwidth degradation < 3%, latency increase < 1μs
+        - Three network planes: UB (intra-supernode), RDMA (inter-supernode), VPC (datacenter)
+        
+        This topology treats all 384 NPUs as a single flat fully-connected domain
+        with uniform high bandwidth, unlike hierarchical Clos topologies.
+        
+        Args:
+            num_npus: Number of Ascend 910C NPUs (default 384)
+            num_cpus: Number of Kunpeng CPUs (default 192)
+            ub_bw_gbps: Unified Bus bandwidth per NPU in Gbps (default 3136 Gbps = 392 GB/s)
+            ub_latency_us: UB latency in microseconds (default 2.0)
+            rdma_bw_gbps: RDMA bandwidth for scale-out in Gbps (default 400)
+            rdma_latency_us: RDMA latency in microseconds (default 5.0)
+        
+        Returns:
+            NetworkTopology configured for CloudMatrix supernode
+        """
+        # Calculate aggregate UB bandwidth for the supernode
+        # In CloudMatrix, all NPUs are fully connected via UB switches
+        # Effective bisection bandwidth is maintained via non-blocking topology
+        
+        return cls(
+            name=f"cloudmatrix_{num_npus}npu",
+            topology_type=TopologyType.SUPERNODE,
+            levels=[
+                TopologyLevel(
+                    name="ub_plane",
+                    level=0,
+                    bandwidth_gbps=ub_bw_gbps,  # Per-link bandwidth to UB switch
+                    latency_us=ub_latency_us,
+                    oversubscription_ratio=1.0,  # Non-blocking
+                    devices_per_group=num_npus,  # All NPUs in one UB domain
+                ),
+                TopologyLevel(
+                    name="rdma_plane",
+                    level=1,
+                    bandwidth_gbps=rdma_bw_gbps,  # RoCE for scale-out
+                    latency_us=rdma_latency_us,
+                    oversubscription_ratio=1.0,
+                    devices_per_group=999999,  # External communication
                 ),
             ],
         )
