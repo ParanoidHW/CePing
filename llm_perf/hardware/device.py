@@ -16,8 +16,10 @@ class ComputeUnitType(Enum):
 class DeviceConfig:
     """Hardware device configuration."""
     
-    # Device identification
+    # Device identification (required)
     name: str  # e.g., "A100-SXM-80GB", "H100-SXM-80GB", "Ascend-910B"
+    memory_gb: float
+    memory_bandwidth_gbps: float  # GB/s
     
     # ========== CUBE / Tensor Core Compute (Matrix Operations) ==========
     # Used for: GEMM, Attention QK^T, PV
@@ -43,10 +45,6 @@ class DeviceConfig:
     bf16_tflops: float = 0.0
     fp8_tflops: Optional[float] = None
     int8_tflops: Optional[float] = None
-    
-    # Memory specs
-    memory_gb: float
-    memory_bandwidth_gbps: float  # GB/s
     
     # Interconnect (within node)
     nvlink_bandwidth_gbps: Optional[float] = None  # For NVIDIA
