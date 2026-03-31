@@ -8,7 +8,7 @@ description: 项目开发规范，包括代码风格、测试和依赖管理
 - 使用 Python 3.14+，需保持向后兼容（到3.10版本即可）
 - 使用 ruff 进行代码格式化和 lint
 - 使用 pyright 进行类型检查
-- 测试使用 unittest
+- 测试使用 pytest
 - 依赖管理使用 uv
 - 本地conda环境base可以用于程序调试，每次增加新特性，要求自验证通过
 
@@ -18,8 +18,18 @@ description: 项目开发规范，包括代码风格、测试和依赖管理
 - 公开函数需要 docstring
 - 独立函数尽可能补充独立测试用例，并确保自验证通过
 
+自验证方式：
+```bash
+cd tests
+python run_tests.py
+
+# 或使用 pytest
+pytest tests/
+```
 
 ## Git 提交规范
+
+如果没有特殊申明，你可以在修改并自验证完成后提交到本地（甚至是远程仓库，如果有权限的话），但需要自验证用例（包括新增的）全部通过后才可以提交。
 
 使用 Conventional Commits 格式：
 
