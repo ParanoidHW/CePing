@@ -317,14 +317,18 @@ def evaluate_inference():
             generation_len=data['inference']['generation_len']
         )
         
+        # Calculate overall TPS (total tokens / total time)
+        total_tokens = data.get('batch_size', 1) * (data.get('prompt_len', 512) + data.get('generation_len', 128))
+        overall_tps = total_tokens / result.total_time_sec if result.total_time_sec > 0 else 0
+        
         return jsonify({
             "success": True,
             "result": {
                 "prefill_time_sec": result.prefill_time_sec,
                 "decode_time_per_step_sec": result.decode_time_per_step_sec,
-                "prefill_tokens_per_sec": result.prefill_tokens_per_sec,
                 "decode_tokens_per_sec": result.decode_tokens_per_sec,
                 "total_time_sec": result.total_time_sec,
+                "overall_tps": overall_tps,
                 "memory_per_gpu_gb": result.memory_per_gpu_gb,
                 "kv_cache_memory_gb": result.kv_cache_memory_gb
             }

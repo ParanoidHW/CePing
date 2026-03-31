@@ -395,16 +395,16 @@ function displayResults(result) {
                     <div class="result-label">Decode TPS</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.prefill_tokens_per_sec / 1000).toFixed(1)}K</div>
-                    <div class="result-label">Prefill TPS</div>
-                </div>
-                <div class="result-card">
                     <div class="result-value">${(result.prefill_time_sec * 1000).toFixed(0)}ms</div>
-                    <div class="result-label">TTFT</div>
+                    <div class="result-label">TTFT (Time To First Token)</div>
                 </div>
                 <div class="result-card">
                     <div class="result-value">${(result.decode_time_per_step_sec * 1000).toFixed(1)}ms</div>
-                    <div class="result-label">TPOT</div>
+                    <div class="result-label">TPOT (Time Per Output Token)</div>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${result.overall_tps.toFixed(0)}</div>
+                    <div class="result-label">Overall TPS</div>
                 </div>
             </div>
             <div class="result-grid" style="margin-top: 1rem;">
