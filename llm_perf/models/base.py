@@ -20,11 +20,14 @@ class LayerConfig:
 @dataclass  
 class ModelConfig:
     """Base model configuration."""
+    # Required fields (no defaults)
     name: str
     vocab_size: int
     hidden_size: int
     num_layers: int
     num_attention_heads: int
+    
+    # Optional fields (with defaults)
     num_key_value_heads: Optional[int] = None  # For GQA
     intermediate_size: int = 0  # FFN intermediate size
     max_seq_len: int = 4096

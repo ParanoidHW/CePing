@@ -11,6 +11,7 @@ import ssl
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
+import ipaddress
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -166,10 +167,14 @@ def evaluate_training():
         # Create model
         model_config = data['model']
         if model_config['type'] == 'llama':
-            cfg = LlamaConfig(**{k: v for k, v in model_config.items() if k != 'type'})
+            model_kwargs = {k: v for k, v in model_config.items() if k != 'type'}
+            model_kwargs.setdefault('name', 'Llama')  # Default name
+            cfg = LlamaConfig(**model_kwargs)
             model = LlamaModel(cfg)
         else:
-            cfg = MoEConfig(**{k: v for k, v in model_config.items() if k != 'type'})
+            model_kwargs = {k: v for k, v in model_config.items() if k != 'type'}
+            model_kwargs.setdefault('name', 'MoE')  # Default name
+            cfg = MoEConfig(**model_kwargs)
             model = MoEModel(cfg)
         
         # Create device and cluster
@@ -250,10 +255,14 @@ def evaluate_inference():
         # Create model
         model_config = data['model']
         if model_config['type'] == 'llama':
-            cfg = LlamaConfig(**{k: v for k, v in model_config.items() if k != 'type'})
+            model_kwargs = {k: v for k, v in model_config.items() if k != 'type'}
+            model_kwargs.setdefault('name', 'Llama')  # Default name
+            cfg = LlamaConfig(**model_kwargs)
             model = LlamaModel(cfg)
         else:
-            cfg = MoEConfig(**{k: v for k, v in model_config.items() if k != 'type'})
+            model_kwargs = {k: v for k, v in model_config.items() if k != 'type'}
+            model_kwargs.setdefault('name', 'MoE')  # Default name
+            cfg = MoEConfig(**model_kwargs)
             model = MoEModel(cfg)
         
         # Create device and cluster

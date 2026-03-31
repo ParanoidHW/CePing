@@ -10,7 +10,6 @@ from ..utils.constants import DTYPE_SIZES
 @dataclass
 class LlamaConfig(ModelConfig):
     """Llama-specific configuration with sensible defaults."""
-    name: str = "Llama"  # Default name for Llama models
     
     def __post_init__(self):
         if self.num_key_value_heads is None:

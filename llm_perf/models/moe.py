@@ -10,7 +10,6 @@ from ..utils.constants import DTYPE_SIZES
 @dataclass
 class MoEConfig(ModelConfig):
     """MoE-specific configuration."""
-    name: str = "MoE"  # Default name for MoE models
     num_experts: int = 8
     num_experts_per_token: int = 2
     expert_intermediate_size: int = 0
