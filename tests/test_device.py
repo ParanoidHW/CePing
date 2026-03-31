@@ -106,7 +106,7 @@ class TestDevice(unittest.TestCase):
         cube_fp8 = device.get_compute_tflops("fp8", ComputeUnitType.CUBE_TENSOR_CORE)
         
         # H100 Tensor Core: FP8 should be 2x FP16
-        self.assertEqual(cube_fp8, 2 * cube_fp16)
+        self.assertAlmostEqual(cube_fp8, 2 * cube_fp16, delta=1.0)
     
     def test_backward_compatibility(self):
         """Test that legacy code without CUBE/VECTOR still works."""

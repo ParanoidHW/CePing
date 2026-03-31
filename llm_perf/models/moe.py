@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 from typing import List
 
-from .base import BaseModel, ModelConfig, LayerConfig
+from .base import BaseModel, LayerConfig
+from .llama import LlamaConfig
 from ..utils.constants import DTYPE_SIZES
 
 
 @dataclass
-class MoEConfig(ModelConfig):
+class MoEConfig(LlamaConfig):
     """MoE-specific configuration."""
     num_experts: int = 8
     num_experts_per_token: int = 2

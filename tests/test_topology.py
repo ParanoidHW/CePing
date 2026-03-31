@@ -185,7 +185,7 @@ class TestClosTopologyBuilder(unittest.TestCase):
     def test_create_from_device_count_3tier(self):
         """Test automatic 3-tier Clos creation."""
         topo = ClosTopologyBuilder.create_from_device_count(
-            num_devices=512,
+            num_devices=1024,
             switch_radix=32,
             host_bw_gbps=200.0,
             leaf_bw_gbps=200.0,
