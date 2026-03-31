@@ -1,7 +1,7 @@
 """Cluster and network topology definitions."""
 
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 from .device import Device, DeviceConfig
 from .topology import NetworkTopology, TopologyLevel, TopologyType
 
@@ -16,11 +16,11 @@ class NetworkConfig:
     """
     
     # Intra-node (within server) bandwidth
-    intra_node_bandwidth_gbps: float  # NVLink / Infinity Fabric
+    intra_node_bandwidth_gbps: float = 1.0 # NVLink / Infinity Fabric
     intra_node_latency_us: float = 1.0
     
     # Inter-node (between servers) bandwidth
-    inter_node_bandwidth_gbps: float  # IB / RoCE / etc
+    inter_node_bandwidth_gbps: float = 1.0 # IB / RoCE / etc
     inter_node_latency_us: float = 2.0
     
     # Topology
@@ -43,7 +43,7 @@ class Cluster:
     def __init__(
         self,
         devices: List[Device],
-        topology: NetworkTopology,
+        topology: Union[NetworkTopology, NetworkConfig],
         devices_per_node: int = 8,
         # Hierarchical grouping for multi-tier topologies
         node_grouping: Optional[List[List[int]]] = None,
@@ -54,12 +54,14 @@ class Cluster:
         
         Args:
             devices: List of devices in the cluster
-            topology: NetworkTopology defining hierarchical bandwidth
+            topology: NetworkTopology or NetworkConfig defining hierarchical bandwidth
             devices_per_node: Number of devices per physical node
             node_grouping: Optional explicit node to device mapping
             rack_grouping: Optional rack to node mapping for multi-tier
         """
         self.devices = devices
+        if isinstance(topology, NetworkConfig):
+            topology = topology.to_topology()
         self.topology = topology
         self.devices_per_node = devices_per_node
         
@@ -114,7 +116,7 @@ class Cluster:
         cls,
         device_config: DeviceConfig,
         num_devices: int,
-        topology: NetworkTopology,
+        topology: Union[NetworkTopology, NetworkConfig],
         devices_per_node: int = 8,
     ) -> "Cluster":
         """Create a homogeneous cluster with identical devices."""
@@ -126,7 +128,7 @@ class Cluster:
         cls,
         preset_name: str,
         num_devices: int,
-        topology: NetworkTopology,
+        topology: Union[NetworkTopology, NetworkConfig],
         devices_per_node: int = 8,
     ) -> "Cluster":
         """Create cluster from device preset."""
@@ -215,8 +217,11 @@ class Cluster:
                     distance = abs(group2 - group1) * len(groups[group1])
                     return topo_level, distance
         
-        # Highest level needed
+        # If no crossing found, communication is within the finest grouping (same node)
         if self.topology.levels:
+            if 0 <= rank1 < self.num_devices and 0 <= rank2 < self.num_devices:
+                return min(self.topology.levels, key=lambda l: l.level), 0
+            # Fallback for out-of-bounds ranks to preserve backward compatibility
             return max(self.topology.levels, key=lambda l: l.level), self.num_devices
         return None, self.num_devices
     
