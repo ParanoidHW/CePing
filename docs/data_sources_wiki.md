@@ -267,10 +267,94 @@ Reference: FlashAttention paper, Section 3.1
 
 ---
 
-## 5. 数据更新记录
+## 5. 模型架构数据来源
+
+### 5.1 DeepSeek V2/V3 系列
+
+#### DeepSeek-V2 (2024-05-06)
+
+| 参数 | 值 | 来源 |
+|------|-----|------|
+| vocab_size | 102400 | HuggingFace config.json |
+| hidden_size | 5120 | HuggingFace config.json |
+| num_hidden_layers | 60 | HuggingFace config.json |
+| num_attention_heads | 128 | HuggingFace config.json |
+| intermediate_size | 12288 | HuggingFace config.json |
+| **kv_lora_rank** | **512** | MLA 压缩维度 |
+| **q_lora_rank** | **1536** | Query 压缩维度 |
+| **qk_nope_head_dim** | **128** | 非 RoPE head 维度 |
+| **qk_rope_head_dim** | **64** | RoPE head 维度 |
+| **v_head_dim** | **128** | Value head 维度 |
+| n_routed_experts | 160 | MoE 路由专家数 |
+| n_shared_experts | 2 | MoE 共享专家数 |
+| num_experts_per_tok | 6 | 每 token 激活专家数 |
+| max_position_embeddings | 163840 | 最大上下文长度 |
+
+**参考链接**: https://huggingface.co/deepseek-ai/DeepSeek-V2
+
+#### DeepSeek-V3 (2024-12-27)
+
+| 参数 | 值 | 来源 |
+|------|-----|------|
+| vocab_size | 129280 | HuggingFace config.json |
+| hidden_size | **7168** | HuggingFace config.json |
+| num_hidden_layers | **61** | HuggingFace config.json |
+| num_attention_heads | 128 | HuggingFace config.json |
+| intermediate_size | **18432** | HuggingFace config.json |
+| **kv_lora_rank** | **512** | MLA 压缩维度（与V2相同） |
+| **q_lora_rank** | **1536** | Query 压缩维度 |
+| n_routed_experts | **256** | MoE 路由专家数（扩展） |
+| n_shared_experts | **1** | MoE 共享专家数 |
+| num_experts_per_tok | **8** | 每 token 激活专家数 |
+| max_position_embeddings | 163840 | 最大上下文长度 |
+
+**参考链接**: https://huggingface.co/deepseek-ai/DeepSeek-V3
+
+### 5.2 MLA (Multi-head Latent Attention)
+
+**论文来源**: DeepSeek-V2 Technical Report
+
+**核心创新**:
+- 通过低秩压缩将 KV cache 压缩到 latent 向量
+- 压缩比: (num_heads × head_dim × 2) / kv_lora_rank
+- DeepSeek-V2/V3: 128 heads × (128+64) dims × 2 / 512 = **~96x 压缩**
+
+**公式**:
+```
+latent_kv = W_DKV · hidden_state  # 压缩到 kv_lora_rank 维度
+c_kv = latent_kv · W_UK           # 解压为 Key
+c_v = latent_kv · W_UV            # 解压为 Value
+```
+
+**MLA vs GQA vs MHA 对比**:
+
+| 注意力类型 | KV Cache / Token | 压缩比 (vs MHA) |
+|-----------|------------------|----------------|
+| MHA | 2 × num_heads × head_dim | 1x (baseline) |
+| GQA | 2 × num_kv_heads × head_dim | 4-8x |
+| MLA (DeepSeek) | kv_lora_rank | ~96x |
+
+### 5.3 DeepSeekMoE 架构
+
+**设计特点**:
+- 分离 routed experts 和 shared experts
+- Group-limited routing 减少通信开销
+- 辅助损失 (aux_loss_alpha=0.001) 用于负载均衡
+
+**配置参数**:
+- `first_k_dense_replace`: 前 N 层使用 dense FFN（DeepSeek 为 1）
+- `n_group`: 专家分组数（用于路由优化）
+- `topk_group`: 从多少组中选择专家
+- `topk_method`: "group_limited_greedy"
+- `routed_scaling_factor`: 路由专家输出缩放因子
+
+---
+
+## 6. 数据更新记录
 
 | 日期 | 更新内容 | 提交 |
 |------|----------|------|
+| 2026-04-01 | 添加 DeepSeek V2/V3 官方配置和 MLA 架构参数 | TBD |
 | 2026-03-28 | 添加华为昇腾 NPU 全系产品参数 | 36484f8 |
 | 2026-03-28 | 分离 Ascend-950-DT 和 Ascend-950-PR | eb7b62c |
 | 2026-03-28 | 补充激活函数和 Normalization FLOPs 来源 | 331930d |

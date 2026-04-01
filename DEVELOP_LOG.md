@@ -1,6 +1,56 @@
 # 开发日志
 
 ## 会话时间
+2026-04-01
+
+---
+
+## DeepSeek V2/V3 模型支持
+
+### [feat(models)]: 新增 DeepSeek V2/V3 系列模型评估支持
+
+**功能概述**:
+- 支持 DeepSeek-V2 和 DeepSeek-V3 两种模型变体
+- 实现 MLA (Multi-head Latent Attention) 核心架构评估
+- 集成 DeepSeekMoE 架构支持
+
+**实现内容**:
+
+1. **DeepSeekConfig / DeepSeekV3Config**
+   - 完整的 HuggingFace 官方配置参数映射
+   - MLA 相关参数: `kv_lora_rank`, `q_lora_rank`, `qk_nope_head_dim`, `qk_rope_head_dim`, `v_head_dim`
+   - MoE 相关参数: `n_routed_experts`, `n_shared_experts`, `num_experts_per_tok`, `first_k_dense_replace`
+
+2. **DeepSeekModel 层构建**
+   - MLA Attention: query/kv 压缩与解压投影层
+   - Dense FFN: 前 k 层使用标准 SwiGLU FFN
+   - MoE FFN: 路由专家 + 共享专家混合架构
+   - All-to-all 通信层（支持 EP 并行）
+
+3. **MLA 核心逻辑**
+   - KV cache 压缩: `hidden_size` → `kv_lora_rank` (512)
+   - 压缩比计算: ~96x (vs 标准 MHA)
+   - KV cache 内存计算工具方法
+
+4. **预配置模型**
+   - `DeepSeekV2Model`: 官方 V2 参数 (5120 hidden, 60 layers, 160 experts)
+   - `DeepSeekV3Model`: 官方 V3 参数 (7168 hidden, 61 layers, 256 experts)
+
+**影响文件**:
+- `llm_perf/models/deepseek.py` (新增)
+- `llm_perf/models/__init__.py`
+- `tests/test_deepseek.py` (新增)
+- `docs/data_sources_wiki.md` (更新)
+
+**参考配置来源**:
+- DeepSeek-V2: https://huggingface.co/deepseek-ai/DeepSeek-V2
+- DeepSeek-V3: https://huggingface.co/deepseek-ai/DeepSeek-V3
+
+---
+
+## 历史会话
+
+### 会话时间
 2026-03-31
 
 ---
