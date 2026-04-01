@@ -97,6 +97,8 @@ class ComputeKernelRegistry:
         self._register_activation_kernels()
         # Normalization kernels - use VECTOR/CUDA Core
         self._register_norm_kernels()
+        # Conv kernels - use CUBE/Tensor Core
+        self._register_conv_kernels()
     
     def _register_matmul_kernels(self):
         """Register matrix multiplication kernels."""
@@ -362,6 +364,121 @@ class ComputeKernelRegistry:
         self._kernels[name] = kernel
         return kernel
     
+    def _register_conv_kernels(self):
+        """Register convolution kernels for CNN workloads."""
+
+        def create_conv2d_kernel(
+            batch: int,
+            in_channels: int,
+            out_channels: int,
+            kernel_size: int,
+            input_h: int,
+            input_w: int,
+            stride: int,
+            padding: int,
+            dtype: str
+        ) -> ComputeKernel:
+            """
+            Conv2d kernel estimation.
+
+            FLOPs = 2 * batch * out_h * out_w * out_channels * kernel_size^2 * in_channels
+            Memory = (input + weights + output) * dtype_size
+            """
+            # Calculate output dimensions
+            out_h = (input_h + 2 * padding - kernel_size) // stride + 1
+            out_w = (input_w + 2 * padding - kernel_size) // stride + 1
+
+            # FLOPs calculation
+            # Each output pixel requires: kernel_size^2 * in_channels mults and same number of adds
+            flops = (
+                2 * batch * out_h * out_w *
+                out_channels * kernel_size * kernel_size * in_channels
+            )
+
+            dtype_size = DTYPE_SIZES.get(dtype, 2)
+
+            # Memory access
+            input_bytes = batch * in_channels * input_h * input_w * dtype_size
+            weight_bytes = out_channels * in_channels * kernel_size * kernel_size * dtype_size
+            output_bytes = batch * out_channels * out_h * out_w * dtype_size
+            bytes_accessed = input_bytes + weight_bytes + output_bytes
+
+            config = KernelConfig(
+                name=f"conv2d_b{batch}_ic{in_channels}_oc{out_channels}_"
+                     f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_{dtype}",
+                kernel_type=KernelType.COMPUTE,
+            )
+            # Conv2d uses CUBE/Tensor Core
+            return ComputeKernel(config, self.device, flops, bytes_accessed,
+                               ComputeUnitType.CUBE_TENSOR_CORE)
+
+        # Common Conv2d configurations (ResNet-like)
+        configs = [
+            # ResNet-18/34 early layers
+            (1, 3, 64, 7, 224, 224, 2, 3),      # Initial conv
+            (1, 64, 64, 3, 56, 56, 1, 1),       # Layer 1
+            (1, 64, 128, 3, 56, 56, 2, 1),      # Layer 2 downsample
+            (1, 128, 128, 3, 28, 28, 1, 1),     # Layer 2
+            (1, 128, 256, 3, 28, 28, 2, 1),     # Layer 3 downsample
+            (1, 256, 256, 3, 14, 14, 1, 1),     # Layer 3
+            (1, 256, 512, 3, 14, 14, 2, 1),     # Layer 4 downsample
+            (1, 512, 512, 3, 7, 7, 1, 1),       # Layer 4
+            # ResNet-50/101/152 bottleneck (1x1, 3x3, 1x1)
+            (1, 64, 64, 1, 56, 56, 1, 0),       # Bottleneck 1x1
+            (1, 64, 64, 3, 56, 56, 1, 1),       # Bottleneck 3x3
+            (1, 64, 256, 1, 56, 56, 1, 0),      # Bottleneck 1x1 expand
+            (1, 256, 512, 1, 56, 56, 2, 0),     # Bottleneck downsample
+            # Batch sizes > 1
+            (8, 64, 64, 3, 56, 56, 1, 1),
+            (32, 64, 64, 3, 56, 56, 1, 1),
+        ]
+
+        for config in configs:
+            batch, ic, oc, k, h, w, s, p = config
+            for dtype in ["fp16", "bf16", "fp32"]:
+                kernel = create_conv2d_kernel(batch, ic, oc, k, h, w, s, p, dtype)
+                self._kernels[kernel.name] = kernel
+
+    def get_or_create_conv2d(
+        self,
+        batch: int,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        input_h: int,
+        input_w: int,
+        stride: int = 1,
+        padding: int = 0,
+        dtype: str = "fp16"
+    ) -> ComputeKernel:
+        """Get or create a Conv2d kernel for specific dimensions."""
+        name = f"conv2d_b{batch}_ic{in_channels}_oc{out_channels}_" \
+               f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_{dtype}"
+        if name in self._kernels:
+            return self._kernels[name]
+
+        # Create new kernel
+        out_h = (input_h + 2 * padding - kernel_size) // stride + 1
+        out_w = (input_w + 2 * padding - kernel_size) // stride + 1
+        flops = (
+            2 * batch * out_h * out_w *
+            out_channels * kernel_size * kernel_size * in_channels
+        )
+        dtype_size = DTYPE_SIZES.get(dtype, 2)
+        input_bytes = batch * in_channels * input_h * input_w * dtype_size
+        weight_bytes = out_channels * in_channels * kernel_size * kernel_size * dtype_size
+        output_bytes = batch * out_channels * out_h * out_w * dtype_size
+        bytes_accessed = input_bytes + weight_bytes + output_bytes
+
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMPUTE,
+        )
+        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
+                             ComputeUnitType.CUBE_TENSOR_CORE)
+        self._kernels[name] = kernel
+        return kernel
+
     def list_kernels(self) -> list:
         """List all registered kernel names."""
         return list(self._kernels.keys())
