@@ -183,21 +183,13 @@ class TestConv3dKernelWithVAE(unittest.TestCase):
     def test_get_conv3d_kernel(self):
         """Test getting a specific conv3d kernel."""
         kernel = self.registry.get_or_create_conv3d(
-            batch=1,
             in_channels=128,
             out_channels=256,
-            kernel_size_t=3,
-            kernel_size_h=3,
-            kernel_size_w=3,
-            input_t=16,
-            input_h=64,
-            input_w=64,
-            stride_t=1,
-            stride_h=2,
-            stride_w=2,
-            padding_t=1,
-            padding_h=1,
-            padding_w=1,
+            kernel_size=(3, 3, 3),
+            stride=(1, 2, 2),
+            padding=(1, 1, 1),
+            batch=1,
+            input_size=(16, 64, 64),
             dtype="fp16",
         )
         self.assertIsNotNone(kernel)
@@ -208,21 +200,13 @@ class TestConv3dKernelWithVAE(unittest.TestCase):
     def test_conv3d_flops_calculation(self):
         """Test FLOPs calculation for conv3d kernel."""
         kernel = self.registry.get_or_create_conv3d(
-            batch=1,
             in_channels=64,
             out_channels=128,
-            kernel_size_t=3,
-            kernel_size_h=3,
-            kernel_size_w=3,
-            input_t=16,
-            input_h=32,
-            input_w=32,
-            stride_t=1,
-            stride_h=1,
-            stride_w=1,
-            padding_t=1,
-            padding_h=1,
-            padding_w=1,
+            kernel_size=(3, 3, 3),
+            stride=(1, 1, 1),
+            padding=(1, 1, 1),
+            batch=1,
+            input_size=(16, 32, 32),
             dtype="fp16",
         )
         # FLOPs = 2 * batch * out_t * out_h * out_w * out_c * kt * kh * kw * in_c
@@ -233,21 +217,13 @@ class TestConv3dKernelWithVAE(unittest.TestCase):
     def test_conv3d_memory_calculation(self):
         """Test memory calculation for conv3d kernel."""
         kernel = self.registry.get_or_create_conv3d(
-            batch=1,
             in_channels=3,
             out_channels=128,
-            kernel_size_t=3,
-            kernel_size_h=3,
-            kernel_size_w=3,
-            input_t=16,
-            input_h=256,
-            input_w=256,
-            stride_t=1,
-            stride_h=1,
-            stride_w=1,
-            padding_t=1,
-            padding_h=1,
-            padding_w=1,
+            kernel_size=(3, 3, 3),
+            stride=(1, 1, 1),
+            padding=(1, 1, 1),
+            batch=1,
+            input_size=(16, 256, 256),
             dtype="fp16",
         )
         # Check that memory includes input, weights, output, workspace
@@ -264,21 +240,13 @@ class TestConv3dKernelWithVAE(unittest.TestCase):
     def test_conv3d_temporal_stride(self):
         """Test conv3d with temporal stride."""
         kernel = self.registry.get_or_create_conv3d(
-            batch=1,
             in_channels=512,
             out_channels=512,
-            kernel_size_t=3,
-            kernel_size_h=3,
-            kernel_size_w=3,
-            input_t=16,
-            input_h=32,
-            input_w=32,
-            stride_t=2,  # Temporal downsample
-            stride_h=1,
-            stride_w=1,
-            padding_t=1,
-            padding_h=1,
-            padding_w=1,
+            kernel_size=(3, 3, 3),
+            stride=(2, 1, 1),  # Temporal downsample
+            padding=(1, 1, 1),
+            batch=1,
+            input_size=(16, 32, 32),
             dtype="fp16",
         )
         # out_t = (16 + 2 - 3) // 2 + 1 = 8
@@ -287,21 +255,13 @@ class TestConv3dKernelWithVAE(unittest.TestCase):
     def test_conv3d_estimate_time(self):
         """Test that conv3d kernel can estimate execution time."""
         kernel = self.registry.get_or_create_conv3d(
-            batch=1,
             in_channels=128,
             out_channels=256,
-            kernel_size_t=3,
-            kernel_size_h=3,
-            kernel_size_w=3,
-            input_t=8,
-            input_h=32,
-            input_w=32,
-            stride_t=1,
-            stride_h=1,
-            stride_w=1,
-            padding_t=1,
-            padding_h=1,
-            padding_w=1,
+            kernel_size=(3, 3, 3),
+            stride=(1, 1, 1),
+            padding=(1, 1, 1),
+            batch=1,
+            input_size=(8, 32, 32),
             dtype="fp16",
         )
         time = kernel.estimate_time(

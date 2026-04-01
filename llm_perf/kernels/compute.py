@@ -443,30 +443,51 @@ class ComputeKernelRegistry:
                                ComputeUnitType.CUBE_TENSOR_CORE)
 
         # Common Conv2d configurations (ResNet-like)
+        # Using keyword args similar to torch.nn.Conv2d for better readability
         configs = [
             # ResNet-18/34 early layers
-            (1, 3, 64, 7, 224, 224, 2, 3),      # Initial conv
-            (1, 64, 64, 3, 56, 56, 1, 1),       # Layer 1
-            (1, 64, 128, 3, 56, 56, 2, 1),      # Layer 2 downsample
-            (1, 128, 128, 3, 28, 28, 1, 1),     # Layer 2
-            (1, 128, 256, 3, 28, 28, 2, 1),     # Layer 3 downsample
-            (1, 256, 256, 3, 14, 14, 1, 1),     # Layer 3
-            (1, 256, 512, 3, 14, 14, 2, 1),     # Layer 4 downsample
-            (1, 512, 512, 3, 7, 7, 1, 1),       # Layer 4
+            dict(batch=1, in_channels=3, out_channels=64, kernel_size=7,
+                 input_size=(224, 224), stride=2, padding=3),      # Initial conv
+            dict(batch=1, in_channels=64, out_channels=64, kernel_size=3,
+                 input_size=(56, 56), stride=1, padding=1),        # Layer 1
+            dict(batch=1, in_channels=64, out_channels=128, kernel_size=3,
+                 input_size=(56, 56), stride=2, padding=1),        # Layer 2 downsample
+            dict(batch=1, in_channels=128, out_channels=128, kernel_size=3,
+                 input_size=(28, 28), stride=1, padding=1),        # Layer 2
+            dict(batch=1, in_channels=128, out_channels=256, kernel_size=3,
+                 input_size=(28, 28), stride=2, padding=1),        # Layer 3 downsample
+            dict(batch=1, in_channels=256, out_channels=256, kernel_size=3,
+                 input_size=(14, 14), stride=1, padding=1),        # Layer 3
+            dict(batch=1, in_channels=256, out_channels=512, kernel_size=3,
+                 input_size=(14, 14), stride=2, padding=1),        # Layer 4 downsample
+            dict(batch=1, in_channels=512, out_channels=512, kernel_size=3,
+                 input_size=(7, 7), stride=1, padding=1),          # Layer 4
             # ResNet-50/101/152 bottleneck (1x1, 3x3, 1x1)
-            (1, 64, 64, 1, 56, 56, 1, 0),       # Bottleneck 1x1
-            (1, 64, 64, 3, 56, 56, 1, 1),       # Bottleneck 3x3
-            (1, 64, 256, 1, 56, 56, 1, 0),      # Bottleneck 1x1 expand
-            (1, 256, 512, 1, 56, 56, 2, 0),     # Bottleneck downsample
+            dict(batch=1, in_channels=64, out_channels=64, kernel_size=1,
+                 input_size=(56, 56), stride=1, padding=0),        # Bottleneck 1x1
+            dict(batch=1, in_channels=64, out_channels=64, kernel_size=3,
+                 input_size=(56, 56), stride=1, padding=1),        # Bottleneck 3x3
+            dict(batch=1, in_channels=64, out_channels=256, kernel_size=1,
+                 input_size=(56, 56), stride=1, padding=0),        # Bottleneck 1x1 expand
+            dict(batch=1, in_channels=256, out_channels=512, kernel_size=1,
+                 input_size=(56, 56), stride=2, padding=0),        # Bottleneck downsample
             # Batch sizes > 1
-            (8, 64, 64, 3, 56, 56, 1, 1),
-            (32, 64, 64, 3, 56, 56, 1, 1),
+            dict(batch=8, in_channels=64, out_channels=64, kernel_size=3,
+                 input_size=(56, 56), stride=1, padding=1),
+            dict(batch=32, in_channels=64, out_channels=64, kernel_size=3,
+                 input_size=(56, 56), stride=1, padding=1),
         ]
 
-        for config in configs:
-            batch, ic, oc, k, h, w, s, p = config
+        for cfg in configs:
+            batch = cfg["batch"]
+            in_c = cfg["in_channels"]
+            out_c = cfg["out_channels"]
+            k = cfg["kernel_size"]
+            h, w = cfg["input_size"]
+            s = cfg["stride"]
+            p = cfg["padding"]
             for dtype in ["fp16", "bf16", "fp32"]:
-                kernel = create_conv2d_kernel(batch, ic, oc, k, h, w, s, p, dtype)
+                kernel = create_conv2d_kernel(batch, in_c, out_c, k, h, w, s, p, dtype)
                 self._kernels[kernel.name] = kernel
 
     def _register_conv3d_kernels(self):
@@ -555,37 +576,65 @@ class ComputeKernelRegistry:
                                ComputeUnitType.CUBE_TENSOR_CORE)
 
         # Common Conv3d configurations for Video VAE
-        # Format: (batch, ic, oc, kt, kh, kw, in_t, in_h, in_w, st, sh, sw, pt, ph, pw)
+        # Using keyword args similar to torch.nn.Conv3d for better readability
         configs = [
             # Video VAE Encoder - downsample blocks
             # Initial conv: 3 channels (RGB) to 128, temporal stride 1
-            (1, 3, 128, 3, 3, 3, 16, 256, 256, 1, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=3, out_channels=128,
+                 kernel_size=(3, 3, 3), input_size=(16, 256, 256),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
             # Downsample 1: 128 -> 256, spatial stride 2
-            (1, 128, 256, 3, 3, 3, 16, 256, 256, 1, 2, 2, 1, 1, 1),
+            dict(batch=1, in_channels=128, out_channels=256,
+                 kernel_size=(3, 3, 3), input_size=(16, 256, 256),
+                 stride=(1, 2, 2), padding=(1, 1, 1)),
             # Downsample 2: 256 -> 512, spatial stride 2
-            (1, 256, 512, 3, 3, 3, 16, 128, 128, 1, 2, 2, 1, 1, 1),
+            dict(batch=1, in_channels=256, out_channels=512,
+                 kernel_size=(3, 3, 3), input_size=(16, 128, 128),
+                 stride=(1, 2, 2), padding=(1, 1, 1)),
             # Temporal downsample: 512 -> 512, temporal stride 2
-            (1, 512, 512, 3, 3, 3, 16, 64, 64, 2, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=512, out_channels=512,
+                 kernel_size=(3, 3, 3), input_size=(16, 64, 64),
+                 stride=(2, 1, 1), padding=(1, 1, 1)),
 
             # Video VAE Decoder - upsample blocks
             # Upsample 1: 512 -> 512, spatial stride 1 with upsampling
-            (1, 512, 512, 3, 3, 3, 8, 32, 32, 1, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=512, out_channels=512,
+                 kernel_size=(3, 3, 3), input_size=(8, 32, 32),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
             # Upsample 2: 512 -> 256, spatial upsampling
-            (1, 512, 256, 3, 3, 3, 8, 64, 64, 1, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=512, out_channels=256,
+                 kernel_size=(3, 3, 3), input_size=(8, 64, 64),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
             # Upsample 3: 256 -> 128, spatial upsampling
-            (1, 256, 128, 3, 3, 3, 8, 128, 128, 1, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=256, out_channels=128,
+                 kernel_size=(3, 3, 3), input_size=(8, 128, 128),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
             # Final conv: 128 -> 3, temporal stride 1
-            (1, 128, 3, 3, 3, 3, 8, 256, 256, 1, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=128, out_channels=3,
+                 kernel_size=(3, 3, 3), input_size=(8, 256, 256),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
 
             # Common video resolutions
             # 512x512 spatial with different temporal lengths
-            (1, 512, 512, 3, 3, 3, 8, 64, 64, 1, 1, 1, 1, 1, 1),
-            (1, 512, 512, 3, 3, 3, 16, 64, 64, 1, 1, 1, 1, 1, 1),
-            (4, 512, 512, 3, 3, 3, 16, 64, 64, 1, 1, 1, 1, 1, 1),
+            dict(batch=1, in_channels=512, out_channels=512,
+                 kernel_size=(3, 3, 3), input_size=(8, 64, 64),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
+            dict(batch=1, in_channels=512, out_channels=512,
+                 kernel_size=(3, 3, 3), input_size=(16, 64, 64),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
+            dict(batch=4, in_channels=512, out_channels=512,
+                 kernel_size=(3, 3, 3), input_size=(16, 64, 64),
+                 stride=(1, 1, 1), padding=(1, 1, 1)),
         ]
 
-        for config in configs:
-            batch, ic, oc, kt, kh, kw, in_t, in_h, in_w, st, sh, sw, pt, ph, pw = config
+        for cfg in configs:
+            batch = cfg["batch"]
+            ic = cfg["in_channels"]
+            oc = cfg["out_channels"]
+            kt, kh, kw = cfg["kernel_size"]
+            in_t, in_h, in_w = cfg["input_size"]
+            st, sh, sw = cfg["stride"]
+            pt, ph, pw = cfg["padding"]
             for dtype in ["fp16", "bf16"]:
                 kernel = create_conv3d_kernel(
                     batch, ic, oc, kt, kh, kw, in_t, in_h, in_w,
@@ -595,18 +644,36 @@ class ComputeKernelRegistry:
 
     def get_or_create_conv2d(
         self,
-        batch: int,
         in_channels: int,
         out_channels: int,
         kernel_size: int,
-        input_h: int,
-        input_w: int,
         stride: int = 1,
         padding: int = 0,
-        dtype: str = "fp16",
         groups: int = 1,
+        batch: int = 1,
+        input_size: tuple = (224, 224),
+        dtype: str = "fp16",
     ) -> ComputeKernel:
-        """Get or create a Conv2d kernel for specific dimensions."""
+        """Get or create a Conv2d kernel for specific dimensions.
+
+        Interface aligned with torch.nn.Conv2d:
+        https://pytorch.org/docs/stable/generated/torch.nn.Conv2d.html
+
+        Args:
+            in_channels: Number of input channels
+            out_channels: Number of output channels
+            kernel_size: Size of convolving kernel
+            stride: Stride of convolution (default: 1)
+            padding: Zero-padding added to both sides (default: 0)
+            groups: Number of blocked connections (default: 1)
+            batch: Batch size (default: 1)
+            input_size: Input spatial dimensions (H, W) (default: (224, 224))
+            dtype: Data type (default: "fp16")
+
+        Returns:
+            ComputeKernel for 2D convolution
+        """
+        input_h, input_w = input_size
         name = f"conv2d_b{batch}_ic{in_channels}_oc{out_channels}_" \
                f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_g{groups}_{dtype}"
         if name in self._kernels:
@@ -642,46 +709,38 @@ class ComputeKernelRegistry:
 
     def get_or_create_conv3d(
         self,
-        batch: int,
         in_channels: int,
         out_channels: int,
-        kernel_size_t: int,
-        kernel_size_h: int,
-        kernel_size_w: int,
-        input_t: int,
-        input_h: int,
-        input_w: int,
-        stride_t: int = 1,
-        stride_h: int = 1,
-        stride_w: int = 1,
-        padding_t: int = 0,
-        padding_h: int = 0,
-        padding_w: int = 0,
+        kernel_size: tuple,
+        stride: tuple = (1, 1, 1),
+        padding: tuple = (0, 0, 0),
+        batch: int = 1,
+        input_size: tuple = (16, 224, 224),
         dtype: str = "fp16",
     ) -> ComputeKernel:
         """Get or create a Conv3d kernel for video processing.
 
+        Interface aligned with torch.nn.Conv3d:
+        https://pytorch.org/docs/stable/generated/torch.nn.Conv3d.html
+
         Args:
-            batch: Batch size
-            in_channels: Input channels
-            out_channels: Output channels
-            kernel_size_t: Temporal kernel size
-            kernel_size_h: Height kernel size
-            kernel_size_w: Width kernel size
-            input_t: Temporal input dimension
-            input_h: Height input dimension
-            input_w: Width input dimension
-            stride_t: Temporal stride
-            stride_h: Height stride
-            stride_w: Width stride
-            padding_t: Temporal padding
-            padding_h: Height padding
-            padding_w: Width padding
-            dtype: Data type
+            in_channels: Number of input channels
+            out_channels: Number of output channels
+            kernel_size: Size of convolving kernel (T, H, W)
+            stride: Stride of convolution (T, H, W) (default: (1, 1, 1))
+            padding: Zero-padding added to both sides (T, H, W) (default: (0, 0, 0))
+            batch: Batch size (default: 1)
+            input_size: Input dimensions (T, H, W) (default: (16, 224, 224))
+            dtype: Data type (default: "fp16")
 
         Returns:
             ComputeKernel for 3D convolution
         """
+        kernel_size_t, kernel_size_h, kernel_size_w = kernel_size
+        input_t, input_h, input_w = input_size
+        stride_t, stride_h, stride_w = stride
+        padding_t, padding_h, padding_w = padding
+
         name = f"conv3d_b{batch}_ic{in_channels}_oc{out_channels}_" \
                f"kt{kernel_size_t}_kh{kernel_size_h}_kw{kernel_size_w}_" \
                f"t{input_t}_h{input_h}_w{input_w}_" \

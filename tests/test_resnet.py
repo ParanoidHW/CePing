@@ -187,14 +187,13 @@ class TestConvKernelWithResNet(unittest.TestCase):
     def test_get_conv_kernel(self):
         """Test getting a specific conv kernel."""
         kernel = self.registry.get_or_create_conv2d(
-            batch=1,
             in_channels=64,
             out_channels=64,
             kernel_size=3,
-            input_h=56,
-            input_w=56,
             stride=1,
             padding=1,
+            batch=1,
+            input_size=(56, 56),
             dtype="fp16",
         )
         self.assertIsNotNone(kernel)
@@ -205,14 +204,13 @@ class TestConvKernelWithResNet(unittest.TestCase):
     def test_conv_kernel_flops_calculation(self):
         """Test FLOPs calculation for conv kernel."""
         kernel = self.registry.get_or_create_conv2d(
-            batch=1,
             in_channels=64,
             out_channels=64,
             kernel_size=3,
-            input_h=56,
-            input_w=56,
             stride=1,
             padding=1,
+            batch=1,
+            input_size=(56, 56),
             dtype="fp16",
         )
         # FLOPs = 2 * batch * out_h * out_w * out_c * k^2 * in_c
@@ -223,14 +221,13 @@ class TestConvKernelWithResNet(unittest.TestCase):
     def test_conv_kernel_memory_calculation(self):
         """Test memory calculation for conv kernel."""
         kernel = self.registry.get_or_create_conv2d(
-            batch=1,
             in_channels=3,
             out_channels=64,
             kernel_size=7,
-            input_h=224,
-            input_w=224,
             stride=2,
             padding=3,
+            batch=1,
+            input_size=(224, 224),
             dtype="fp16",
         )
         # out_h = out_w = (224 + 6 - 7) // 2 + 1 = 112
@@ -249,14 +246,13 @@ class TestConvKernelWithResNet(unittest.TestCase):
     def test_conv_kernel_estimate_time(self):
         """Test that conv kernel can estimate execution time."""
         kernel = self.registry.get_or_create_conv2d(
-            batch=1,
             in_channels=64,
             out_channels=64,
             kernel_size=3,
-            input_h=56,
-            input_w=56,
             stride=1,
             padding=1,
+            batch=1,
+            input_size=(56, 56),
             dtype="fp16",
         )
         time = kernel.estimate_time(
