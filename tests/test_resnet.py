@@ -198,7 +198,7 @@ class TestConvKernelWithResNet(unittest.TestCase):
             dtype="fp16",
         )
         self.assertIsNotNone(kernel)
-        self.assertEqual(kernel.name, "conv2d_b1_ic64_oc64_k3_h56_w56_s1_fp16")
+        self.assertEqual(kernel.name, "conv2d_b1_ic64_oc64_k3_h56_w56_s1_g1_fp16")
         self.assertGreater(kernel.flops, 0)
         self.assertGreater(kernel.bytes_accessed, 0)
 
@@ -241,7 +241,9 @@ class TestConvKernelWithResNet(unittest.TestCase):
         expected_input = 1 * 3 * 224 * 224 * dtype_size
         expected_weight = 64 * 3 * 7 * 7 * dtype_size
         expected_output = 1 * 64 * 112 * 112 * dtype_size
-        expected_bytes = expected_input + expected_weight + expected_output
+        # Memory includes input, weights, output, and workspace
+        workspace_bytes = 1 * 112 * 112 * 7 * 7 * 3 * dtype_size
+        expected_bytes = expected_input + expected_weight + expected_output + int(workspace_bytes * 0.5)
         self.assertEqual(kernel.bytes_accessed, expected_bytes)
 
     def test_conv_kernel_estimate_time(self):

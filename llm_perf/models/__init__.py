@@ -4,6 +4,7 @@ from .base import BaseModel, ModelConfig, LayerConfig
 from .llama import LlamaConfig, LlamaModel
 from .moe import MoEConfig, MoEModel
 from .resnet import ResNetConfig, ResNetModel
+from .vae import VAEConfig, VAEModel
 
 __all__ = [
     "BaseModel",
@@ -15,4 +16,6 @@ __all__ = [
     "MoEModel",
     "ResNetConfig",
     "ResNetModel",
+    "VAEConfig",
+    "VAEModel",
 ]

@@ -365,7 +365,12 @@ class ComputeKernelRegistry:
         return kernel
     
     def _register_conv_kernels(self):
-        """Register convolution kernels for CNN workloads."""
+        """Register convolution kernels for CNN and video workloads."""
+        self._register_conv2d_kernels()
+        self._register_conv3d_kernels()
+
+    def _register_conv2d_kernels(self):
+        """Register 2D convolution kernels for image CNN workloads."""
 
         def create_conv2d_kernel(
             batch: int,
@@ -376,40 +381,65 @@ class ComputeKernelRegistry:
             input_w: int,
             stride: int,
             padding: int,
-            dtype: str
+            dtype: str,
+            groups: int = 1,
         ) -> ComputeKernel:
             """
-            Conv2d kernel estimation.
+            Conv2d kernel estimation with detailed memory access breakdown.
 
-            FLOPs = 2 * batch * out_h * out_w * out_channels * kernel_size^2 * in_channels
-            Memory = (input + weights + output) * dtype_size
+            FLOPs = 2 * batch * out_h * out_w * out_channels * kernel_size^2 * in_channels / groups
+            Memory = input + weights + output + (workspace for im2col if needed)
+
+            Memory Access Pattern:
+            - Input activation: batch * in_c * in_h * in_w * dtype_size
+            - Weights: out_c * in_c/groups * k^2 * dtype_size
+            - Output activation: batch * out_c * out_h * out_w * dtype_size
+            - Workspace (im2col): batch * out_h * out_w * k^2 * in_c * dtype_size (if not implicit gemm)
             """
             # Calculate output dimensions
             out_h = (input_h + 2 * padding - kernel_size) // stride + 1
             out_w = (input_w + 2 * padding - kernel_size) // stride + 1
 
             # FLOPs calculation
-            # Each output pixel requires: kernel_size^2 * in_channels mults and same number of adds
+            # Each output pixel requires: kernel_size^2 * (in_channels/groups) mults and adds
             flops = (
                 2 * batch * out_h * out_w *
-                out_channels * kernel_size * kernel_size * in_channels
+                out_channels * kernel_size * kernel_size * (in_channels // groups)
             )
 
             dtype_size = DTYPE_SIZES.get(dtype, 2)
 
-            # Memory access
+            # Detailed memory access breakdown
             input_bytes = batch * in_channels * input_h * input_w * dtype_size
-            weight_bytes = out_channels * in_channels * kernel_size * kernel_size * dtype_size
+            weight_bytes = (
+                out_channels * (in_channels // groups) *
+                kernel_size * kernel_size * dtype_size
+            )
             output_bytes = batch * out_channels * out_h * out_w * dtype_size
-            bytes_accessed = input_bytes + weight_bytes + output_bytes
+
+            # Workspace for im2col transformation (when not using implicit GEMM)
+            # This is the expanded column matrix for convolution as GEMM
+            workspace_bytes = batch * out_h * out_w * kernel_size * kernel_size * in_channels * dtype_size
+
+            # Total memory access includes read+write for each buffer
+            # Input: read once (or multiple times if cache miss)
+            # Weights: read once
+            # Output: write
+            # Workspace: read+write (temporary)
+            bytes_accessed = (
+                input_bytes * 1.0 +      # Input read
+                weight_bytes * 1.0 +     # Weight read
+                output_bytes * 1.0 +     # Output write
+                workspace_bytes * 0.5    # Partial workspace access (depends on algorithm)
+            )
 
             config = KernelConfig(
                 name=f"conv2d_b{batch}_ic{in_channels}_oc{out_channels}_"
-                     f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_{dtype}",
+                     f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_g{groups}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
             # Conv2d uses CUBE/Tensor Core
-            return ComputeKernel(config, self.device, flops, bytes_accessed,
+            return ComputeKernel(config, self.device, int(flops), int(bytes_accessed),
                                ComputeUnitType.CUBE_TENSOR_CORE)
 
         # Common Conv2d configurations (ResNet-like)
@@ -439,6 +469,130 @@ class ComputeKernelRegistry:
                 kernel = create_conv2d_kernel(batch, ic, oc, k, h, w, s, p, dtype)
                 self._kernels[kernel.name] = kernel
 
+    def _register_conv3d_kernels(self):
+        """Register 3D convolution kernels for video VAE workloads."""
+
+        def create_conv3d_kernel(
+            batch: int,
+            in_channels: int,
+            out_channels: int,
+            kernel_size_t: int,
+            kernel_size_h: int,
+            kernel_size_w: int,
+            input_t: int,
+            input_h: int,
+            input_w: int,
+            stride_t: int,
+            stride_h: int,
+            stride_w: int,
+            padding_t: int,
+            padding_h: int,
+            padding_w: int,
+            dtype: str,
+        ) -> ComputeKernel:
+            """
+            Conv3d kernel estimation for video processing.
+
+            FLOPs = 2 * batch * out_t * out_h * out_w * out_c * k_t * k_h * k_w * in_c
+            Memory = input + weights + output + workspace
+
+            Memory Access Pattern for 3D Conv:
+            - Input activation: batch * in_c * in_t * in_h * in_w * dtype_size
+            - Weights: out_c * in_c * k_t * k_h * k_w * dtype_size
+            - Output activation: batch * out_c * out_t * out_h * out_w * dtype_size
+            - Workspace: batch * out_t * out_h * out_w * k_t * k_h * k_w * in_c * dtype_size
+
+            Note: 3D conv is memory-bound due to large workspace requirements for
+            unfolding the 3D kernel into columns.
+            """
+            # Calculate output dimensions
+            out_t = (input_t + 2 * padding_t - kernel_size_t) // stride_t + 1
+            out_h = (input_h + 2 * padding_h - kernel_size_h) // stride_h + 1
+            out_w = (input_w + 2 * padding_w - kernel_size_w) // stride_w + 1
+
+            # FLOPs calculation
+            flops = (
+                2 * batch * out_t * out_h * out_w *
+                out_channels * kernel_size_t * kernel_size_h * kernel_size_w *
+                in_channels
+            )
+
+            dtype_size = DTYPE_SIZES.get(dtype, 2)
+
+            # Detailed memory access breakdown
+            input_bytes = batch * in_channels * input_t * input_h * input_w * dtype_size
+            weight_bytes = (
+                out_channels * in_channels *
+                kernel_size_t * kernel_size_h * kernel_size_w * dtype_size
+            )
+            output_bytes = batch * out_channels * out_t * out_h * out_w * dtype_size
+
+            # Workspace for 3D im2col is significantly larger than 2D
+            workspace_bytes = (
+                batch * out_t * out_h * out_w *
+                kernel_size_t * kernel_size_h * kernel_size_w *
+                in_channels * dtype_size
+            )
+
+            # Total memory access with 3D conv overhead
+            # 3D conv has higher memory pressure due to temporal dimension
+            bytes_accessed = (
+                input_bytes * 1.2 +      # Input read (higher due to temporal overlap)
+                weight_bytes * 1.0 +     # Weight read
+                output_bytes * 1.0 +     # Output write
+                workspace_bytes * 0.8    # Higher workspace usage for 3D unfold
+            )
+
+            config = KernelConfig(
+                name=f"conv3d_b{batch}_ic{in_channels}_oc{out_channels}_"
+                     f"kt{kernel_size_t}_kh{kernel_size_h}_kw{kernel_size_w}_"
+                     f"t{input_t}_h{input_h}_w{input_w}_"
+                     f"st{stride_t}_sh{stride_h}_sw{stride_w}_{dtype}",
+                kernel_type=KernelType.COMPUTE,
+            )
+            # Conv3d uses CUBE/Tensor Core
+            return ComputeKernel(config, self.device, int(flops), int(bytes_accessed),
+                               ComputeUnitType.CUBE_TENSOR_CORE)
+
+        # Common Conv3d configurations for Video VAE
+        # Format: (batch, ic, oc, kt, kh, kw, in_t, in_h, in_w, st, sh, sw, pt, ph, pw)
+        configs = [
+            # Video VAE Encoder - downsample blocks
+            # Initial conv: 3 channels (RGB) to 128, temporal stride 1
+            (1, 3, 128, 3, 3, 3, 16, 256, 256, 1, 1, 1, 1, 1, 1),
+            # Downsample 1: 128 -> 256, spatial stride 2
+            (1, 128, 256, 3, 3, 3, 16, 256, 256, 1, 2, 2, 1, 1, 1),
+            # Downsample 2: 256 -> 512, spatial stride 2
+            (1, 256, 512, 3, 3, 3, 16, 128, 128, 1, 2, 2, 1, 1, 1),
+            # Temporal downsample: 512 -> 512, temporal stride 2
+            (1, 512, 512, 3, 3, 3, 16, 64, 64, 2, 1, 1, 1, 1, 1),
+
+            # Video VAE Decoder - upsample blocks
+            # Upsample 1: 512 -> 512, spatial stride 1 with upsampling
+            (1, 512, 512, 3, 3, 3, 8, 32, 32, 1, 1, 1, 1, 1, 1),
+            # Upsample 2: 512 -> 256, spatial upsampling
+            (1, 512, 256, 3, 3, 3, 8, 64, 64, 1, 1, 1, 1, 1, 1),
+            # Upsample 3: 256 -> 128, spatial upsampling
+            (1, 256, 128, 3, 3, 3, 8, 128, 128, 1, 1, 1, 1, 1, 1),
+            # Final conv: 128 -> 3, temporal stride 1
+            (1, 128, 3, 3, 3, 3, 8, 256, 256, 1, 1, 1, 1, 1, 1),
+
+            # Common video resolutions
+            # 512x512 spatial with different temporal lengths
+            (1, 512, 512, 3, 3, 3, 8, 64, 64, 1, 1, 1, 1, 1, 1),
+            (1, 512, 512, 3, 3, 3, 16, 64, 64, 1, 1, 1, 1, 1, 1),
+            (4, 512, 512, 3, 3, 3, 16, 64, 64, 1, 1, 1, 1, 1, 1),
+        ]
+
+        for config in configs:
+            batch, ic, oc, kt, kh, kw, in_t, in_h, in_w, st, sh, sw, pt, ph, pw = config
+            for dtype in ["fp16", "bf16"]:
+                kernel = create_conv3d_kernel(
+                    batch, ic, oc, kt, kh, kw, in_t, in_h, in_w,
+                    st, sh, sw, pt, ph, pw, dtype
+                )
+                self._kernels[kernel.name] = kernel
+
     def get_or_create_conv2d(
         self,
         batch: int,
@@ -449,11 +603,12 @@ class ComputeKernelRegistry:
         input_w: int,
         stride: int = 1,
         padding: int = 0,
-        dtype: str = "fp16"
+        dtype: str = "fp16",
+        groups: int = 1,
     ) -> ComputeKernel:
         """Get or create a Conv2d kernel for specific dimensions."""
         name = f"conv2d_b{batch}_ic{in_channels}_oc{out_channels}_" \
-               f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_{dtype}"
+               f"k{kernel_size}_h{input_h}_w{input_w}_s{stride}_g{groups}_{dtype}"
         if name in self._kernels:
             return self._kernels[name]
 
@@ -462,19 +617,114 @@ class ComputeKernelRegistry:
         out_w = (input_w + 2 * padding - kernel_size) // stride + 1
         flops = (
             2 * batch * out_h * out_w *
-            out_channels * kernel_size * kernel_size * in_channels
+            out_channels * kernel_size * kernel_size * (in_channels // groups)
         )
         dtype_size = DTYPE_SIZES.get(dtype, 2)
         input_bytes = batch * in_channels * input_h * input_w * dtype_size
-        weight_bytes = out_channels * in_channels * kernel_size * kernel_size * dtype_size
+        weight_bytes = out_channels * (in_channels // groups) * kernel_size * kernel_size * dtype_size
         output_bytes = batch * out_channels * out_h * out_w * dtype_size
-        bytes_accessed = input_bytes + weight_bytes + output_bytes
+        workspace_bytes = batch * out_h * out_w * kernel_size * kernel_size * in_channels * dtype_size
+        bytes_accessed = (
+            input_bytes * 1.0 +
+            weight_bytes * 1.0 +
+            output_bytes * 1.0 +
+            workspace_bytes * 0.5
+        )
 
         config = KernelConfig(
             name=name,
             kernel_type=KernelType.COMPUTE,
         )
-        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
+        kernel = ComputeKernel(config, self.device, int(flops), int(bytes_accessed),
+                             ComputeUnitType.CUBE_TENSOR_CORE)
+        self._kernels[name] = kernel
+        return kernel
+
+    def get_or_create_conv3d(
+        self,
+        batch: int,
+        in_channels: int,
+        out_channels: int,
+        kernel_size_t: int,
+        kernel_size_h: int,
+        kernel_size_w: int,
+        input_t: int,
+        input_h: int,
+        input_w: int,
+        stride_t: int = 1,
+        stride_h: int = 1,
+        stride_w: int = 1,
+        padding_t: int = 0,
+        padding_h: int = 0,
+        padding_w: int = 0,
+        dtype: str = "fp16",
+    ) -> ComputeKernel:
+        """Get or create a Conv3d kernel for video processing.
+
+        Args:
+            batch: Batch size
+            in_channels: Input channels
+            out_channels: Output channels
+            kernel_size_t: Temporal kernel size
+            kernel_size_h: Height kernel size
+            kernel_size_w: Width kernel size
+            input_t: Temporal input dimension
+            input_h: Height input dimension
+            input_w: Width input dimension
+            stride_t: Temporal stride
+            stride_h: Height stride
+            stride_w: Width stride
+            padding_t: Temporal padding
+            padding_h: Height padding
+            padding_w: Width padding
+            dtype: Data type
+
+        Returns:
+            ComputeKernel for 3D convolution
+        """
+        name = f"conv3d_b{batch}_ic{in_channels}_oc{out_channels}_" \
+               f"kt{kernel_size_t}_kh{kernel_size_h}_kw{kernel_size_w}_" \
+               f"t{input_t}_h{input_h}_w{input_w}_" \
+               f"st{stride_t}_sh{stride_h}_sw{stride_w}_{dtype}"
+        if name in self._kernels:
+            return self._kernels[name]
+
+        # Create new kernel
+        out_t = (input_t + 2 * padding_t - kernel_size_t) // stride_t + 1
+        out_h = (input_h + 2 * padding_h - kernel_size_h) // stride_h + 1
+        out_w = (input_w + 2 * padding_w - kernel_size_w) // stride_w + 1
+
+        flops = (
+            2 * batch * out_t * out_h * out_w *
+            out_channels * kernel_size_t * kernel_size_h * kernel_size_w *
+            in_channels
+        )
+
+        dtype_size = DTYPE_SIZES.get(dtype, 2)
+        input_bytes = batch * in_channels * input_t * input_h * input_w * dtype_size
+        weight_bytes = (
+            out_channels * in_channels *
+            kernel_size_t * kernel_size_h * kernel_size_w * dtype_size
+        )
+        output_bytes = batch * out_channels * out_t * out_h * out_w * dtype_size
+        workspace_bytes = (
+            batch * out_t * out_h * out_w *
+            kernel_size_t * kernel_size_h * kernel_size_w *
+            in_channels * dtype_size
+        )
+
+        bytes_accessed = (
+            input_bytes * 1.2 +
+            weight_bytes * 1.0 +
+            output_bytes * 1.0 +
+            workspace_bytes * 0.8
+        )
+
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMPUTE,
+        )
+        kernel = ComputeKernel(config, self.device, int(flops), int(bytes_accessed),
                              ComputeUnitType.CUBE_TENSOR_CORE)
         self._kernels[name] = kernel
         return kernel
