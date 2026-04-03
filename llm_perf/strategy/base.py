@@ -1,7 +1,7 @@
 """Base strategy classes."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from enum import Enum
 
 
@@ -13,6 +13,14 @@ class ParallelType(Enum):
     EXPERT = "ep"          # Expert Parallelism (MoE)
     SEQUENCE = "sp"        # Sequence Parallelism
     CONTEXT = "cp"         # Context Parallelism
+
+
+class SPType(Enum):
+    """Types of sequence parallelism."""
+    ULYSSES = "ulysses"
+    RING_P2P = "ring_p2p"
+    RING_ALLGATHER = "ring_allgather"
+    UNIFIED_2D = "unified_2d"
 
 
 @dataclass
@@ -40,6 +48,11 @@ class StrategyConfig:
     sp_degree: int = 1   # Sequence Parallelism
     cp_degree: int = 1   # Context Parallelism
     
+    # Sequence parallelism configuration
+    sp_type: SPType = SPType.ULYSSES
+    ulysses_degree: int = 1
+    ring_degree: int = 1
+    
     # Scheduling options
     pipeline_schedule: str = "1f1b"  # 1F1B, GPipe, etc.
     micro_batch_size: int = 1
@@ -59,7 +72,8 @@ class StrategyConfig:
             self.tp_degree * 
             self.pp_degree * 
             self.dp_degree * 
-            self.ep_degree
+            self.ep_degree * 
+            self.sp_degree
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -73,6 +87,11 @@ class StrategyConfig:
                 "ep": self.ep_degree,
                 "sp": self.sp_degree,
                 "cp": self.cp_degree,
+            },
+            "sequence_parallelism": {
+                "sp_type": self.sp_type.value,
+                "ulysses_degree": self.ulysses_degree,
+                "ring_degree": self.ring_degree,
             },
             "scheduling": {
                 "pipeline_schedule": self.pipeline_schedule,
@@ -93,6 +112,13 @@ class StrategyConfig:
         parallel = data.get("parallelism", {})
         scheduling = data.get("scheduling", {})
         optimization = data.get("optimization", {})
+        sp_config = data.get("sequence_parallelism", {})
+        
+        sp_type_str = sp_config.get("sp_type", "ulysses")
+        try:
+            sp_type = SPType(sp_type_str)
+        except ValueError:
+            sp_type = SPType.ULYSSES
         
         return cls(
             model_name=data.get("model_name", ""),
@@ -102,6 +128,9 @@ class StrategyConfig:
             ep_degree=parallel.get("ep", 1),
             sp_degree=parallel.get("sp", 1),
             cp_degree=parallel.get("cp", 1),
+            sp_type=sp_type,
+            ulysses_degree=sp_config.get("ulysses_degree", 1),
+            ring_degree=sp_config.get("ring_degree", 1),
             pipeline_schedule=scheduling.get("pipeline_schedule", "1f1b"),
             micro_batch_size=scheduling.get("micro_batch_size", 1),
             activation_checkpointing=optimization.get("activation_checkpointing", False),
@@ -156,7 +185,6 @@ class ParallelStrategy:
         
         # TP groups are formed within each DP group
         tp_size = self.config.tp_degree
-        dp_size = self.config.dp_degree
         
         # Find which DP replica this rank belongs to
         dp_replica = rank // tp_size
@@ -171,7 +199,6 @@ class ParallelStrategy:
             return [rank]
         
         tp_size = self.config.tp_degree
-        dp_size = self.config.dp_degree
         world_size = self.config.world_size
         
         # DP groups span across TP groups
@@ -190,7 +217,6 @@ class ParallelStrategy:
         
         # Find position within PP stage
         ranks_per_stage = self.config.world_size // pp_size
-        stage = rank // ranks_per_stage
         
         # All ranks in all stages of this pipeline
         result = []

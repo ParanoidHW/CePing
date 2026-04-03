@@ -359,9 +359,90 @@ c_v = latent_kv · W_UV            # 解压为 Value
 | 2026-03-28 | 分离 Ascend-950-DT 和 Ascend-950-PR | eb7b62c |
 | 2026-03-28 | 补充激活函数和 Normalization FLOPs 来源 | 331930d |
 
+## 7. 序列并行 (Sequence Parallelism) 数据来源
+
+### 7.1 DeepSpeed-Ulysses (SP-Ulysses)
+
+**论文**: Jacobs et al., "DeepSpeed-Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models", arXiv:2309.14509, 2023.
+
+**核心机制**:
+- 在 sequence 维度上切分输入样本，每个 GPU 持有 `S/C` 长度的序列片段
+- Attention 计算前，通过 all-to-all 通信将 Q/K/V 从 sequence-sharded 转换为 head-parallel 布局
+- Attention 计算后，再通过 all-to-all 将结果转回 sequence-sharded 布局
+- 每层 Transformer block 的 Attention 层包含 **2 次 all-to-all**
+
+**通信量特征**:
+- 单次 all-to-all 通信量: `batch * seq_len * hidden_size * dtype_size` (与设备数无关的常数体积)
+- 当序列长度和设备数同比增加时，通信量保持常数，扩展性优于 ring-based 方法
+
+**参考链接**:
+- https://arxiv.org/abs/2309.14509
+- https://github.com/microsoft/DeepSpeed
+
+**局限性**:
+- 并行度不能超过 attention heads 数量
+- 与 Tensor Parallelism 冲突（都切分 head 维度）
+- 对 GQA/MQA 支持受限
+
+### 7.2 Ring Attention (SP-Ring)
+
+**论文**: Liu et al., "Ring Attention with Blockwise Transformers for Near-Infinite Context", 2023.
+
+**核心机制**:
+- 在 sequence 维度切分 Q/K/V，每个 GPU 只保存本地序列片段
+- Attention 计算时，通过循环传递 KV 块完成全局 attention 计算
+- 支持两种通信实现方式：
+  1. **P2P send-recv**: 使用 ring-exchange 点对点通信，每次传递一个 KV 块
+  2. **Allgather**: 通过一次 allgather 收集所有设备的 KV，然后本地计算
+
+**P2P 实现通信量**:
+- 每个设备需要接收 `sp_degree - 1` 个 KV 块
+- 总通信量 per device: `(sp_degree - 1) * batch * (seq_len / sp_degree) * kv_size * dtype_size`
+- 其中 `kv_size = 2 * num_kv_heads * head_dim` (K + V)
+
+**Allgather 实现通信量**:
+- 单次 allgather 聚合所有 KV
+- 通信量: `(sp_degree - 1) / sp_degree * total_kv_bytes`
+
+**参考链接**:
+- PyTorch Context Parallel: https://discuss.pytorch.org/t/distributed-w-torchtitan-breaking-barriers-training-long-context-llms/215082
+- Megatron-LM CP: https://github.com/NVIDIA/Megatron-LM
+- NVIDIA NeMo CP 配置: `cp_comm_type` 支持 `"p2p"`, `"all_gather"`, `"a2a"`, `"a2a+p2p"`
+
+### 7.3 Unified / 2D Sequence Parallelism (SP-Unified)
+
+**论文**: Fang et al., "USP: A Unified Sequence Parallelism Approach for Long Context Generative AI", arXiv:2405.07719, 2024.
+
+**核心机制**:
+- 将 Ulysses 和 Ring 组合成 2D mesh: `sp_degree = ulysses_degree * ring_degree`
+- Ulysses 在 mesh 的行方向上运行（all-to-all 交换 head 切片）
+- Ring 在 mesh 的列方向上运行（P2P/allgather 传递 KV 块）
+- 兼具 Ulysses 的高效通信和 Ring 的无限扩展性
+
+**通信量特征**:
+- Ulysses 部分: 2 次 all-to-all，通信量与纯 Ulysses 相同
+- Ring 部分: 在 ulysses 组内进行 ring 通信，通信量按 `ring_degree` 缩放
+
+**开源实现**:
+- `yunchang` / `long-context-attention`: https://github.com/feifeibear/long-context-attention
+- Verified in Megatron-LM with loss curve alignment
+
+**参考链接**:
+- https://arxiv.org/abs/2405.07719
+- https://github.com/feifeibear/long-context-attention
+
+### 7.4 序列并行通信模型参考
+
+| SP 类型 | 通信操作 | 时间估算参考 | 来源 |
+|---------|----------|--------------|------|
+| Ulysses | 2× all-to-all per layer | `2 * cluster.estimate_alltoall_time(...)` | DeepSpeed-Ulysses paper |
+| Ring P2P | (sp-1) × send-recv steps | `(sp-1) * kv_bytes_per_step / bw` | Ring Attention paper |
+| Ring Allgather | 1× allgather per layer | `cluster.estimate_allgather_time(...)` | Megatron-LM CP |
+| Unified 2D | Ulysses + Ring 组合 | 两者叠加 | USP paper (arXiv:2405.07719) |
+
 ---
 
-## 6. 免责声明
+## 8. 免责声明
 
 1. **硬件参数**: 部分未来产品（950/960/970）参数来自华为路线图，实际发布时可能有变化
 2. **FLOPs 估算**: 激活函数的 FLOPs 为理论估算值，实际实现可能因优化而有所不同

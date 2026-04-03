@@ -1,6 +1,78 @@
 # 开发日志
 
 ## 会话时间
+2026-04-03
+
+---
+
+## 序列并行 (Sequence Parallelism) 评估支持
+
+### [feat(kernels/analyzer)]: 新增 Ulysses-SP、Ring-SP、Unified-2D-SP 评估支持
+
+**功能概述**:
+- 支持多模态生成模型中三种主流序列并行切分方式的性能评估
+- Ulysses-SP: 基于 all-to-all 的 head-sharding 序列并行
+- Ring-SP: 支持 send-recv P2P 和 allgather 两种实现
+- Unified-2D-SP: 融合 Ulysses 和 Ring 的 2D 序列并行
+
+**实现内容**:
+
+1. **策略配置扩展 (`llm_perf/strategy/base.py`)**
+   - 新增 `SPType` 枚举: `ULYSSES`, `RING_P2P`, `RING_ALLGATHER`, `UNIFIED_2D`
+   - `StrategyConfig` 新增 `sp_type`, `ulysses_degree`, `ring_degree` 字段
+   - 更新 `to_dict` / `from_dict` 序列化支持
+
+2. **通信 Kernel 扩展 (`llm_perf/kernels/communication.py`)**
+   - `create_sp_ulysses_alltoall`: Ulysses 注意力前后的 all-to-all 通信
+   - `create_sp_ring_p2p`: Ring Attention 的 ring-exchange P2P 通信
+   - `create_sp_ring_allgather`: Ring Attention 的 allgather 聚合实现
+   - `create_sp_unified_2d`: 2D-SP 组合 kernel，同时创建 ulysses + ring 通信
+
+3. **训练分析器集成 (`llm_perf/analyzer/training.py`)**
+   - 在 `_estimate_communication_time` 中新增 SP 通信开销估算
+   - `_estimate_sp_communication_time` 方法支持四种 SP 类型的独立建模:
+     - Ulysses: `2 * alltoall_time * num_layers`
+     - Ring P2P: `(sp_degree - 1) * kv_bytes_per_step / bw * num_layers`
+     - Ring Allgather: `allgather_time * num_layers`
+     - Unified 2D: ulysses 时间 + ring 时间叠加
+   - SP 激活内存按 `sp_degree` 进行缩减（已有逻辑兼容）
+
+4. **推理分析器集成 (`llm_perf/analyzer/inference.py`)**
+   - 在 `_estimate_communication_time_for_phase` 中新增 SP 通信估算
+   - 区分 prefill 和 decode 阶段的通信量差异
+
+5. **测试覆盖 (`tests/test_sp_communication.py`)**
+   - CommKernel 创建测试 (5 个)
+   - TrainingAnalyzer SP 训练测试 (5 个，含内存缩减验证)
+   - InferenceAnalyzer SP 推理测试 (4 个)
+   - StrategyConfig 序列化测试 (2 个)
+   - 共 16 个测试用例，全部通过
+
+**数据来源**:
+- DeepSpeed-Ulysses: arXiv:2309.14509
+- Ring Attention: Megatron-LM Context Parallel, PyTorch TorchTitan
+- Unified 2D-SP: USP paper (arXiv:2405.07719)
+
+**影响文件**:
+- `llm_perf/strategy/base.py`
+- `llm_perf/kernels/communication.py`
+- `llm_perf/analyzer/training.py`
+- `llm_perf/analyzer/inference.py`
+- `tests/test_sp_communication.py` (新增)
+- `docs/data_sources_wiki.md` (更新)
+
+**验证结果**:
+```bash
+$ python tests/run_tests.py
+Ran 238 tests in 0.299s
+OK
+```
+
+---
+
+## 历史会话
+
+### 会话时间
 2026-04-01
 
 ---

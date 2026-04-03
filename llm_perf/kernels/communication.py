@@ -1,11 +1,10 @@
 """Communication kernel evaluation."""
 
-from typing import Dict, Optional, List, Any, Union
+from typing import Dict, Optional, List
 import math
 
 from .base import Kernel, KernelConfig, KernelType
 from ..hardware.cluster import Cluster
-from ..hardware.topology import NetworkTopology
 
 
 class CommKernel(Kernel):
@@ -55,7 +54,7 @@ class CommKernel(Kernel):
         
         # Fallback: use topology levels
         if topology.levels:
-            return sum(l.bandwidth_gbps for l in topology.levels) / len(topology.levels)
+            return sum(lvl.bandwidth_gbps for lvl in topology.levels) / len(topology.levels)
         
         return 100.0  # Default fallback
     
@@ -243,6 +242,111 @@ class CommKernelRegistry:
         name = f"ep_alltoall_{layer_name}_combine"
         return self.create_alltoall(name, token_bytes, ep_ranks)
     
+    def create_sp_ulysses_alltoall(
+        self,
+        layer_name: str,
+        activation_bytes: int,
+        sp_ranks: List[int],
+    ) -> CommKernel:
+        """
+        Create Ulysses-SP all-to-all kernel.
+
+        DeepSpeed-Ulysses uses all-to-all to switch between sequence-sharded
+        and head-parallel layouts before/after attention computation.
+        Reference: arXiv:2309.14509
+        """
+        name = f"sp_ulysses_alltoall_{layer_name}"
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMMUNICATION,
+        )
+        kernel = CommKernel(
+            config, self.cluster, "alltoall", activation_bytes, sp_ranks
+        )
+        self._kernels[name] = kernel
+        return kernel
+
+    def create_sp_ring_p2p(
+        self,
+        layer_name: str,
+        kv_bytes_per_step: int,
+        sp_ranks: List[int],
+    ) -> CommKernel:
+        """
+        Create Ring-SP P2P send-recv kernel.
+
+        Ring Attention uses ring-exchange send/recv to shuffle KV blocks
+        across devices. Each device performs (sp_degree - 1) steps.
+        Reference: Ring Attention paper, Megatron-LM Context Parallel
+        """
+        name = f"sp_ring_p2p_{layer_name}"
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMMUNICATION,
+        )
+        n = len(sp_ranks)
+        # Total bytes moved per device = (n-1) steps * kv_bytes_per_step
+        total_bytes = kv_bytes_per_step * max(n - 1, 0)
+        # Use broadcast as a proxy for P2P ring exchange bandwidth
+        kernel = CommKernel(
+            config, self.cluster, "broadcast", total_bytes, sp_ranks
+        )
+        self._kernels[name] = kernel
+        return kernel
+
+    def create_sp_ring_allgather(
+        self,
+        layer_name: str,
+        kv_bytes: int,
+        sp_ranks: List[int],
+    ) -> CommKernel:
+        """
+        Create Ring-SP allgather kernel.
+
+        Alternative ring implementation that uses allgather to collect
+        all KV blocks instead of P2P ring exchange.
+        Reference: NVIDIA NeMo cp_comm_type="all_gather"
+        """
+        name = f"sp_ring_allgather_{layer_name}"
+        return self.create_allgather(name, kv_bytes, sp_ranks)
+
+    def create_sp_unified_2d(
+        self,
+        layer_name: str,
+        activation_bytes: int,
+        kv_bytes_per_step: int,
+        ulysses_ranks: List[int],
+        ring_ranks: List[int],
+        use_ring_allgather: bool = False,
+    ) -> List[CommKernel]:
+        """
+        Create Unified 2D-SP kernels.
+
+        Integrates Ulysses-SP and Ring-SP into a 2D mesh.
+        Ulysses operates across rows (all-to-all), Ring operates
+        across columns (P2P or allgather).
+        Reference: USP paper (arXiv:2405.07719)
+
+        Returns:
+            List of CommKernels for ulysses and ring communication.
+        """
+        kernels = []
+        ulysses_kernel = self.create_sp_ulysses_alltoall(
+            layer_name, activation_bytes, ulysses_ranks
+        )
+        kernels.append(ulysses_kernel)
+
+        if use_ring_allgather:
+            ring_kernel = self.create_sp_ring_allgather(
+                layer_name, kv_bytes_per_step, ring_ranks
+            )
+        else:
+            ring_kernel = self.create_sp_ring_p2p(
+                layer_name, kv_bytes_per_step, ring_ranks
+            )
+        kernels.append(ring_kernel)
+        return kernels
+
     def create_pp_p2p(
         self,
         stage: int,

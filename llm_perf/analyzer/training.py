@@ -1,15 +1,15 @@
 """Training performance analyzer."""
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Any
+from dataclasses import dataclass
+from typing import Dict, Any
 
 from ..models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
-from ..strategy.base import StrategyConfig, ParallelStrategy
+from ..strategy.base import StrategyConfig, SPType
 from ..kernels.compute import ComputeKernelRegistry
 from ..kernels.communication import CommKernelRegistry
-from ..utils.constants import DTYPE_SIZES, PHASE_TRAINING
+from ..utils.constants import DTYPE_SIZES
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
 
 
@@ -148,7 +148,6 @@ class TrainingAnalyzer:
             # Optimizer step (for DP only, or ZeRO-1+)
             if self.strategy.dp_degree > 1 or self.strategy.zero_stage > 0:
                 # Rough estimate: 3x parameter size operations (read grad, update, write)
-                dtype_size = DTYPE_SIZES.get(dtype, 2)
                 opt_ops = layer.params_count * 3
                 opt_time = opt_ops / (self.device.get_memory_bw_gbps() * 1e9)
                 total_time += opt_time
@@ -162,14 +161,13 @@ class TrainingAnalyzer:
         
         dtype = self.model.config.dtype
         dtype_size = DTYPE_SIZES.get(dtype, 2)
+        hidden_size = self.model.config.hidden_size
+        seq_len = self.model.config.max_seq_len
+        micro_batch = self.strategy.micro_batch_size
         
         # TP communication
         if self.strategy.tp_degree > 1:
             # Estimate based on activation size
-            hidden_size = self.model.config.hidden_size
-            seq_len = self.model.config.max_seq_len
-            micro_batch = self.strategy.micro_batch_size
-            
             activation_bytes = micro_batch * seq_len * hidden_size * dtype_size
             # 2 all-reduces per layer
             num_layers = self.model.config.num_layers
@@ -184,10 +182,6 @@ class TrainingAnalyzer:
         # PP communication
         if self.strategy.pp_degree > 1:
             # Activation size between stages
-            hidden_size = self.model.config.hidden_size
-            seq_len = self.model.config.max_seq_len
-            micro_batch = self.strategy.micro_batch_size
-            
             pp_bytes = micro_batch * seq_len * hidden_size * dtype_size
             # For each micro-batch, send to next stage
             num_micro_batches = 1  # Simplified
@@ -217,10 +211,6 @@ class TrainingAnalyzer:
         # EP communication (if MoE)
         if self.strategy.ep_degree > 1:
             # All-to-all for MoE
-            hidden_size = self.model.config.hidden_size
-            seq_len = self.model.config.max_seq_len
-            micro_batch = self.strategy.micro_batch_size
-            
             token_bytes = micro_batch * seq_len * hidden_size * dtype_size
             ep_ranks = list(range(self.strategy.ep_degree))
             
@@ -232,7 +222,129 @@ class TrainingAnalyzer:
             comm_time += ep_time
             breakdown["expert_parallel"] = ep_time
         
+        # SP communication (Sequence Parallelism)
+        if self.strategy.sp_degree > 1:
+            sp_time = self._estimate_sp_communication_time(
+                micro_batch, seq_len, hidden_size, dtype_size
+            )
+            comm_time += sp_time
+            breakdown["sequence_parallel"] = sp_time
+        
         return comm_time, breakdown
+    
+    def _estimate_sp_communication_time(
+        self,
+        batch_size: int,
+        seq_len: int,
+        hidden_size: int,
+        dtype_size: int,
+    ) -> float:
+        """
+        Estimate sequence parallelism communication time.
+
+        Supports ulysses-SP, ring-SP (p2p/allgather), and unified-2D-SP.
+        """
+        sp_degree = self.strategy.sp_degree
+        sp_type = self.strategy.sp_type
+        num_layers = self.model.config.num_layers
+        num_kv_heads = getattr(
+            self.model.config, "num_key_value_heads",
+            self.model.config.num_attention_heads
+        )
+        head_dim = hidden_size // self.model.config.num_attention_heads
+        
+        # Activation bytes for all-to-all (Ulysses)
+        activation_bytes = batch_size * seq_len * hidden_size * dtype_size
+        
+        # KV bytes per step for Ring
+        kv_bytes_per_step = (
+            batch_size * (seq_len // sp_degree) *
+            num_kv_heads * head_dim * 2 * dtype_size
+        )
+        
+        sp_ranks = list(range(sp_degree))
+        total_time = 0.0
+        
+        if sp_type == SPType.ULYSSES:
+            # 2 all-to-all per attention layer (pre + post)
+            # Ulysses communication volume is constant w.r.t. sp_degree
+            alltoall_time = self.cluster.estimate_alltoall_time(
+                activation_bytes, sp_ranks
+            )
+            total_time = alltoall_time * 2 * num_layers
+            
+        elif sp_type == SPType.RING_P2P:
+            # (sp_degree - 1) P2P steps per layer
+            # Each step moves kv_bytes_per_step
+            if sp_degree > 1:
+                bw_values = []
+                for i in range(sp_degree):
+                    for j in range(i + 1, sp_degree):
+                        bw = self.cluster.get_bandwidth_between(
+                            sp_ranks[i], sp_ranks[j]
+                        )
+                        if bw > 0:
+                            bw_values.append(bw)
+                avg_bw = (
+                    len(bw_values) / sum(1.0 / bw for bw in bw_values)
+                    if bw_values else 100.0
+                )
+                step_time = kv_bytes_per_step / (avg_bw * 1e9)
+                total_time = step_time * (sp_degree - 1) * num_layers
+                
+        elif sp_type == SPType.RING_ALLGATHER:
+            # 1 allgather per layer for KV aggregation
+            allgather_time = self.cluster.estimate_allgather_time(
+                kv_bytes_per_step * sp_degree, sp_ranks
+            )
+            total_time = allgather_time * num_layers
+            
+        elif sp_type == SPType.UNIFIED_2D:
+            # 2D-SP: ulysses + ring combined
+            ulysses_degree = self.strategy.ulysses_degree or 1
+            ring_degree = self.strategy.ring_degree or 1
+            if ulysses_degree * ring_degree != sp_degree:
+                # Auto-partition: prefer larger ulysses if possible
+                ulysses_degree = min(sp_degree, 8)
+                ring_degree = sp_degree // ulysses_degree
+                while ulysses_degree * ring_degree != sp_degree and ring_degree > 1:
+                    ulysses_degree -= 1
+                    ring_degree = sp_degree // ulysses_degree
+            
+            ulysses_ranks = list(range(ulysses_degree))
+            ring_ranks = list(range(ring_degree))
+            
+            # Ulysses part: 2 all-to-all
+            ulysses_time = self.cluster.estimate_alltoall_time(
+                activation_bytes, ulysses_ranks
+            ) * 2 * num_layers
+            
+            # Ring part
+            ring_kv_bytes = (
+                batch_size * (seq_len // sp_degree) *
+                num_kv_heads * head_dim * 2 * dtype_size
+            )
+            if ring_degree > 1:
+                bw_values = []
+                for i in range(ring_degree):
+                    for j in range(i + 1, ring_degree):
+                        bw = self.cluster.get_bandwidth_between(
+                            ring_ranks[i], ring_ranks[j]
+                        )
+                        if bw > 0:
+                            bw_values.append(bw)
+                avg_bw = (
+                    len(bw_values) / sum(1.0 / bw for bw in bw_values)
+                    if bw_values else 100.0
+                )
+                ring_step_time = ring_kv_bytes / (avg_bw * 1e9)
+                ring_time = ring_step_time * (ring_degree - 1) * num_layers
+            else:
+                ring_time = 0.0
+                
+            total_time = ulysses_time + ring_time
+        
+        return total_time
     
     def _estimate_memory(self, batch_size: int, seq_len: int) -> int:
         """Estimate memory per GPU."""
