@@ -4,6 +4,18 @@
 
 ---
 
+## 更新日志
+
+### 2026-04-03: 新增 Wan2.1 视频生成模型支持
+- 新增 Wan2.1-T2V-14B 多模态生成模型评估支持
+- 包含 Text Encoder (umT5-XXL)、DiT Backbone、3D Causal VAE 三个核心组件
+- 支持完整去噪流程评估（含CFG）
+- 参考来源: Wan2.1 技术报告 (arXiv:2503.20314)
+
+---
+
+---
+
 ## 1. 硬件参数来源
 
 ### 1.1 NVIDIA GPUs
@@ -447,7 +459,73 @@ c_v = latent_kv · W_UV            # 解压为 Value
 
 ---
 
-## 8. 免责声明
+## 8. 多模态视频生成模型 (Wan2.1)
+
+### 8.1 Wan2.1-T2V-14B 架构
+
+**论文**: Wan: Open and Advanced Large-Scale Video Generative Models, arXiv:2503.20314, 2025
+
+**HuggingFace模型**: https://huggingface.co/Wan-AI/Wan2.1-T2V-14B
+
+**核心组件**:
+
+| 组件 | 架构 | 参数量 | 关键配置 |
+|------|------|--------|----------|
+| Text Encoder | umT5-XXL | ~4.7B | hidden_size=4096, layers=24, heads=64 |
+| DiT Backbone | Diffusion Transformer | ~14B | hidden_size=5120, layers=40, heads=40 |
+| VAE | 3D Causal VAE | ~0.5B | latent_channels=16, temporal_comp=4x, spatial_comp=8x8 |
+
+**Text Encoder (umT5-XXL)**:
+- 多语言T5编码器，支持中英文
+- 输出维度: 4096
+- 最大序列长度: 512 tokens
+
+**DiT Backbone**:
+- Flow Matching框架
+- Patchify: 3D卷积 kernel=(1,2,2)
+- 每块结构: Self-Attn → Cross-Attn (text) → FFN
+- Time Embedding: 共享MLP，每块学习独立bias
+- Cross-Attention: Q来自visual，K/V来自text encoder
+
+**3D Causal VAE**:
+- 时序压缩: 4x (T → T/4)
+- 空间压缩: 8x8 (H,W → H/8, W/8)
+- Latent channels: 16
+- 因果卷积保证时序因果性
+
+### 8.2 视频生成流程评估模型
+
+**完整生成流程**:
+1. **Text Encoding**: Prompt → Text Embedding (umT5-XXL)
+2. **Denoising**: N步去噪（默认50步）
+   - 每步: DiT Forward + 噪声更新
+   - CFG支持: batch翻倍 [cond, uncond]
+3. **VAE Decoding**: Latent → Video (Pixel空间)
+
+**时间估算**:
+```
+Total Time = TextEnc + N × DiT_step + VAE_Decode
+```
+
+**CFG (Classifier-Free Guidance)**:
+- 初始noise latent batch翻倍: [cond, uncond]
+- 每步去噪后elementwise加权: `output = uncond + guidance_scale × (cond - uncond)`
+- DiT计算量增加约2x
+
+### 8.3 参考实现
+
+- **官方仓库**: https://github.com/Wan-Video/Wan2.1
+- **技术报告**: https://arxiv.org/abs/2503.20314
+- **Diffusers实现**: https://huggingface.co/Wan-AI/Wan2.1-T2V-14B
+
+**架构验证来源**:
+- ModelScope社区 issue讨论
+- musubi-tuner训练代码
+- DiffSynth-Studio实现
+
+---
+
+## 9. 免责声明
 
 1. **硬件参数**: 部分未来产品（950/960/970）参数来自华为路线图，实际发布时可能有变化
 2. **FLOPs 估算**: 激活函数的 FLOPs 为理论估算值，实际实现可能因优化而有所不同

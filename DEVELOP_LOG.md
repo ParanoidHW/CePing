@@ -1,6 +1,80 @@
 # 开发日志
 
 ## 会话时间
+2026-04-03
+
+---
+
+## Wan2.1 视频生成模型评估支持
+
+### [feat(models/analyzer)]: 新增 Wan2.1-T2V-14B 多模态视频生成模型评估支持
+
+**功能概述**:
+- 支持 Wan2.1 文本到视频生成模型的完整评估
+- 分离评估 Text Encoder、DiT Backbone、VAE 三个核心组件
+- 支持完整去噪流程评估（含CFG）
+
+**实现内容**:
+
+1. **WanTextEncoder (umT5-XXL)** (`llm_perf/models/wan_video.py`)
+   - 24层T5 Encoder架构
+   - hidden_size=4096, num_heads=64
+   - 支持多语言文本编码（中英文）
+   - 参数量: ~4.7B
+
+2. **WanDiTModel (Diffusion Transformer)** (`llm_perf/models/wan_video.py`)
+   - 40层Transformer，hidden_size=5120
+   - Flow Matching框架
+   - 每块结构: Self-Attn → Cross-Attn → FFN
+   - Patchify: 3D卷积 kernel=(1,2,2)
+   - Time Embedding: 共享MLP + 每块独立bias
+   - 参数量: ~14B
+
+3. **WanVAEModel (3D Causal VAE)** (`llm_perf/models/wan_video.py`)
+   - 时序压缩: 4x
+   - 空间压缩: 8x8
+   - Latent channels: 16
+   - 因果卷积保证时序因果性
+   - 参数量: ~0.5B
+
+4. **DiffusionVideoAnalyzer** (`llm_perf/analyzer/diffusion_video.py`)
+   - 完整视频生成流程评估
+   - 支持CFG（Classifier-Free Guidance）
+   - 各组件独立评估 + 整体pipeline评估
+   - 内存和耗时分析
+
+5. **测试覆盖** (`tests/test_wan_video.py`)
+   - TextEncoder测试 (4个)
+   - DiT测试 (7个)
+   - VAE测试 (5个)
+   - Analyzer测试 (8个)
+   - 共24个测试用例
+
+**数据来源**:
+- Wan2.1技术报告: arXiv:2503.20314
+- HF模型页: https://huggingface.co/Wan-AI/Wan2.1-T2V-14B
+- 官方仓库: https://github.com/Wan-Video/Wan2.1
+
+**影响文件**:
+- `llm_perf/models/wan_video.py` (新增)
+- `llm_perf/models/__init__.py`
+- `llm_perf/analyzer/diffusion_video.py` (新增)
+- `llm_perf/analyzer/__init__.py`
+- `tests/test_wan_video.py` (新增)
+- `docs/data_sources_wiki.md` (更新)
+
+**验证结果**:
+```bash
+$ python tests/run_tests.py
+Ran 262 tests in 0.298s
+OK
+```
+
+---
+
+## 历史会话
+
+### 会话时间
 2026-04-03 (修正)
 
 ---
