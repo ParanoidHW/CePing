@@ -1,6 +1,39 @@
 # 开发日志
 
 ## 会话时间
+2026-04-03 (修正)
+
+---
+
+## 序列并行 (Sequence Parallelism) 评估支持 - 修正
+
+### [fix(kernels/analyzer)]: 修正 Ulysses-SP all-to-all 次数和 TP 兼容性描述
+
+**修正内容**:
+
+1. **修正 all-to-all 次数**
+   - 原实现: 每层 2 次 all-to-all (pre + post)
+   - 修正后: 每层 **4 次 all-to-all** (Q/K/V 各一次 pre + O 一次 post)
+   - 参考: FlexSP paper (arXiv:2412.01523)
+   - 影响文件: `training.py`, `inference.py`
+
+2. **修正 Ulysses 与 TP 兼容性描述**
+   - 原描述: "Ulysses 与 TP 冲突"
+   - 修正后: "Ulysses 与 TP **可以组合**，需满足 `sp_degree * tp_degree <= num_heads` 且能整除"
+   - 补充: Dummy-Head 技术可扩展并行度突破 heads 限制
+   - 参考: USP paper, 360-LLaMA-Factory (arXiv:2505.22296)
+   - 影响文件: `docs/data_sources_wiki.md`
+
+**数据来源**:
+- FlexSP: arXiv:2412.01523 (确认 Q/K/V/O 各需一次 all-to-all)
+- Dummy-Head Ulysses: arXiv:2505.22296
+- USP: arXiv:2405.07719
+
+---
+
+## 历史会话
+
+### 会话时间
 2026-04-03
 
 ---

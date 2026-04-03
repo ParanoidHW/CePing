@@ -321,10 +321,13 @@ class InferenceAnalyzer:
         total_time = 0.0
         
         if sp_type == SPType.ULYSSES:
+            # 4 all-to-all per attention layer:
+            # pre-attention: Q, K, V each needs one all-to-all
+            # post-attention: O needs one all-to-all
             alltoall_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, sp_ranks
             )
-            total_time = alltoall_time * 2 * num_layers
+            total_time = alltoall_time * 4 * num_layers
             
         elif sp_type == SPType.RING_P2P:
             if sp_degree > 1:
@@ -362,9 +365,10 @@ class InferenceAnalyzer:
             ulysses_ranks = list(range(ulysses_degree))
             ring_ranks = list(range(ring_degree))
             
+            # Ulysses part: 4 all-to-all (Q/K/V pre + O post)
             ulysses_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, ulysses_ranks
-            ) * 2 * num_layers
+            ) * 4 * num_layers
             
             ring_kv_bytes = (
                 batch_size * (seq_len // sp_degree) *

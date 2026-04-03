@@ -266,12 +266,14 @@ class TrainingAnalyzer:
         total_time = 0.0
         
         if sp_type == SPType.ULYSSES:
-            # 2 all-to-all per attention layer (pre + post)
+            # 4 all-to-all per attention layer:
+            # pre-attention: Q, K, V each needs one all-to-all
+            # post-attention: O needs one all-to-all
             # Ulysses communication volume is constant w.r.t. sp_degree
             alltoall_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, sp_ranks
             )
-            total_time = alltoall_time * 2 * num_layers
+            total_time = alltoall_time * 4 * num_layers
             
         elif sp_type == SPType.RING_P2P:
             # (sp_degree - 1) P2P steps per layer
@@ -314,10 +316,10 @@ class TrainingAnalyzer:
             ulysses_ranks = list(range(ulysses_degree))
             ring_ranks = list(range(ring_degree))
             
-            # Ulysses part: 2 all-to-all
+            # Ulysses part: 4 all-to-all (Q/K/V pre + O post)
             ulysses_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, ulysses_ranks
-            ) * 2 * num_layers
+            ) * 4 * num_layers
             
             # Ring part
             ring_kv_bytes = (

@@ -367,22 +367,27 @@ c_v = latent_kv · W_UV            # 解压为 Value
 
 **核心机制**:
 - 在 sequence 维度上切分输入样本，每个 GPU 持有 `S/C` 长度的序列片段
-- Attention 计算前，通过 all-to-all 通信将 Q/K/V 从 sequence-sharded 转换为 head-parallel 布局
-- Attention 计算后，再通过 all-to-all 将结果转回 sequence-sharded 布局
-- 每层 Transformer block 的 Attention 层包含 **2 次 all-to-all**
+- Attention 计算前，Q、K、V 各自通过 all-to-all 从 sequence-sharded 转换为 head-parallel 布局
+- Attention 计算后，O 通过 all-to-all 转回 sequence-sharded 布局
+- 每层 Transformer block 的 Attention 层包含 **4 次 all-to-all** (Q/K/V pre + O post)
 
 **通信量特征**:
 - 单次 all-to-all 通信量: `batch * seq_len * hidden_size * dtype_size` (与设备数无关的常数体积)
+- 每层总通信量: `4 * batch * seq_len * hidden_size * dtype_size`
 - 当序列长度和设备数同比增加时，通信量保持常数，扩展性优于 ring-based 方法
 
 **参考链接**:
 - https://arxiv.org/abs/2309.14509
 - https://github.com/microsoft/DeepSpeed
 
+**与 Tensor Parallelism 的兼容性**:
+- Ulysses-SP 和 TP 可以组合使用，需满足条件: `sp_degree * tp_degree <= num_heads` 且能整除
+- 当 heads 数量不足时，可使用 Dummy-Head 技术创建虚拟 head 来扩展并行度
+- 参考: 360-LLaMA-Factory (arXiv:2505.22296)
+
 **局限性**:
-- 并行度不能超过 attention heads 数量
-- 与 Tensor Parallelism 冲突（都切分 head 维度）
-- 对 GQA/MQA 支持受限
+- 并行度受限于 attention heads 数量（可通过 Dummy-Head 缓解）
+- 对 GQA/MQA 支持受限（KV heads 较少）
 
 ### 7.2 Ring Attention (SP-Ring)
 
@@ -435,7 +440,7 @@ c_v = latent_kv · W_UV            # 解压为 Value
 
 | SP 类型 | 通信操作 | 时间估算参考 | 来源 |
 |---------|----------|--------------|------|
-| Ulysses | 2× all-to-all per layer | `2 * cluster.estimate_alltoall_time(...)` | DeepSpeed-Ulysses paper |
+| Ulysses | 4× all-to-all per layer | `4 * cluster.estimate_alltoall_time(...)` | FlexSP paper (arXiv:2412.01523) |
 | Ring P2P | (sp-1) × send-recv steps | `(sp-1) * kv_bytes_per_step / bw` | Ring Attention paper |
 | Ring Allgather | 1× allgather per layer | `cluster.estimate_allgather_time(...)` | Megatron-LM CP |
 | Unified 2D | Ulysses + Ring 组合 | 两者叠加 | USP paper (arXiv:2405.07719) |
