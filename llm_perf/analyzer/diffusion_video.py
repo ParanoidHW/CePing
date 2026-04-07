@@ -12,48 +12,48 @@ Based on Wan2.1 architecture with Flow Matching framework.
 from dataclasses import dataclass
 from typing import Dict, Any, Tuple
 
-
-from ..models.wan_video import (
-    WanTextEncoder,
-    WanDiTModel,
-    WanVAEModel,
-
-)
+from ..models.wan_video import WanTextEncoder, WanDiTModel, WanVAEModel
 from ..hardware.device import Device, ComputeUnitType
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from ..kernels.compute import ComputeKernelRegistry
 from ..utils.constants import DTYPE_SIZES
 
+from .detailed_breakdown import DetailedPerformanceResult
+from .breakdown_generator import BreakdownGenerator, PipelineBreakdownGenerator
+
 
 @dataclass
 class DiffusionVideoResult:
     """Result of diffusion video generation performance analysis."""
-    
+
     # Component-specific times (seconds)
     text_encoder_time_sec: float
     dit_single_step_time_sec: float
     vae_encoder_time_sec: float
     vae_decoder_time_sec: float
-    
+
     # Full pipeline time
     total_generation_time_sec: float
-    
+
     # Memory usage (GB per GPU)
     peak_memory_text_encoder_gb: float
     peak_memory_dit_gb: float
     peak_memory_vae_gb: float
     peak_memory_total_gb: float
-    
+
     # Throughput metrics
     video_pixels_per_sec: float  # Total pixels generated per second
-    
+
     # Breakdown
     component_breakdown: Dict[str, float]
-    
+
+    # Detailed breakdown (optional)
+    detailed_breakdown: DetailedPerformanceResult = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "time": {
                 "text_encoder_sec": self.text_encoder_time_sec,
                 "dit_single_step_sec": self.dit_single_step_time_sec,
@@ -72,6 +72,9 @@ class DiffusionVideoResult:
             },
             "component_breakdown": self.component_breakdown,
         }
+        if self.detailed_breakdown is not None:
+            result["detailed_breakdown"] = self.detailed_breakdown.to_dict()
+        return result
 
 
 class DiffusionVideoAnalyzer:
@@ -106,24 +109,26 @@ class DiffusionVideoAnalyzer:
         width: int = 1280,
         num_inference_steps: int = 50,
         use_cfg: bool = True,
+        include_detailed_breakdown: bool = True,
     ) -> DiffusionVideoResult:
         """
         Analyze video generation performance.
-        
+
         Args:
             num_frames: Number of video frames to generate
             height: Video height in pixels
             width: Video width in pixels
             num_inference_steps: Number of denoising steps
             use_cfg: Whether to use Classifier-Free Guidance (doubles batch)
-        
+            include_detailed_breakdown: Whether to include detailed breakdown
+
         Returns:
             DiffusionVideoResult with performance metrics
         """
         # Text Encoder evaluation
         text_encoder_time = self._estimate_text_encoder_time()
         text_encoder_memory = self._estimate_text_encoder_memory(inference_mode=True)
-        
+
         # DiT single step evaluation
         dit_single_step_time = self._estimate_dit_single_step(
             num_frames, height, width, use_cfg
@@ -131,13 +136,13 @@ class DiffusionVideoAnalyzer:
         dit_memory = self._estimate_dit_memory(
             num_frames, height, width, use_cfg, inference_mode=True
         )
-        
+
         # VAE evaluation
         vae_encoder_time, vae_decoder_time = self._estimate_vae_time(
             num_frames, height, width
         )
         vae_memory = self._estimate_vae_memory(num_frames, height, width)
-        
+
         # Full pipeline time
         # Text encoder runs once
         # DiT runs for num_inference_steps
@@ -148,18 +153,18 @@ class DiffusionVideoAnalyzer:
             dit_single_step_time * num_inference_steps +
             vae_decoder_time  # Decoder only for generation
         )
-        
+
         # Peak memory is the max of all components
         peak_memory = max(text_encoder_memory, dit_memory, vae_memory)
-        
+
         # Throughput: total pixels generated per second
         total_pixels = num_frames * height * width * num_inference_steps
         pixels_per_sec = total_pixels / total_time if total_time > 0 else 0
-        
+
         # Ensure total_time is not zero
         if total_time <= 0:
             total_time = 1e-6  # Minimum time to avoid division by zero
-        
+
         # Component breakdown
         breakdown = {
             "text_encoder_pct": text_encoder_time / total_time * 100,
@@ -170,7 +175,16 @@ class DiffusionVideoAnalyzer:
             "dit_single_step_time": dit_single_step_time,
             "vae_decoder_time": vae_decoder_time,
         }
-        
+
+        # Generate detailed breakdown
+        detailed_breakdown = None
+        if include_detailed_breakdown:
+            detailed_breakdown = self._generate_detailed_breakdown(
+                num_frames, height, width, num_inference_steps, use_cfg,
+                text_encoder_time, dit_single_step_time, vae_encoder_time,
+                vae_decoder_time, total_time, pixels_per_sec
+            )
+
         return DiffusionVideoResult(
             text_encoder_time_sec=text_encoder_time,
             dit_single_step_time_sec=dit_single_step_time,
@@ -183,6 +197,58 @@ class DiffusionVideoAnalyzer:
             peak_memory_total_gb=peak_memory / 1024**3,
             video_pixels_per_sec=pixels_per_sec,
             component_breakdown=breakdown,
+            detailed_breakdown=detailed_breakdown,
+        )
+
+    def _generate_detailed_breakdown(
+        self,
+        num_frames: int,
+        height: int,
+        width: int,
+        num_inference_steps: int,
+        use_cfg: bool,
+        text_encoder_time: float,
+        dit_single_step_time: float,
+        vae_encoder_time: float,
+        vae_decoder_time: float,
+        total_time: float,
+        pixels_per_sec: float,
+    ) -> DetailedPerformanceResult:
+        """Generate detailed breakdown for the pipeline."""
+        # Create generators for each sub-model
+        text_encoder_gen = BreakdownGenerator(
+            self.text_encoder, self.device, self.cluster, self.strategy
+        )
+        dit_gen = BreakdownGenerator(
+            self.dit, self.device, self.cluster, self.strategy
+        )
+        vae_gen = BreakdownGenerator(
+            self.vae, self.device, self.cluster, self.strategy
+        )
+
+        # Create pipeline generator
+        pipeline_gen = PipelineBreakdownGenerator(
+            [
+                ("Text Encoder", "text_encoder", text_encoder_gen),
+                ("DiT", "dit", dit_gen),
+                ("VAE", "vae", vae_gen),
+            ],
+            self.device,
+            self.cluster,
+            self.strategy,
+        )
+
+        # Generate detailed result
+        return pipeline_gen.generate(
+            total_time_sec=total_time,
+            throughput=pixels_per_sec,
+            metadata={
+                "num_frames": num_frames,
+                "height": height,
+                "width": width,
+                "num_inference_steps": num_inference_steps,
+                "use_cfg": use_cfg,
+            },
         )
     
     def _estimate_text_encoder_time(self) -> float:

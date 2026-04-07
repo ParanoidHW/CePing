@@ -5,6 +5,72 @@
 
 ---
 
+## 详细性能分解与数据呈现优化
+
+### [feat(analyzer)]: 添加详细性能分解框架
+
+**功能需求**:
+- Pipeline子模型级别分解（Text Encoder、DiT、VAE的内容、计算、通信开销）
+- 模型内Block级别分解（每类block的详细分析）
+- 内存分类呈现（激活内存、模型权重、优化器内存等）
+- 通信细分呈现（按TP、DP、PP、EP、SP切分方式，包含通信语义和通信量）
+
+**实现内容**:
+
+1. **新增详细分解数据结构** (`llm_perf/analyzer/detailed_breakdown.py`)
+   - `ParallelismType` 枚举：TP、DP、PP、EP、SP
+   - `MemoryType` 枚举：PARAMETER、ACTIVATION、GRADIENT、OPTIMIZER、KV_CACHE等
+   - `CommunicationDetail`: 详细通信操作（类型、操作、数据量、时间、描述）
+   - `BlockBreakdown`: Block级别分解（类型、计算、内存、通信）
+   - `SubModelBreakdown`: 子模型级别分解（名称、类型、迭代次数、内存、通信）
+   - `MemoryBreakdown`: 内存分解（按类型、按子模型、按Block类型）
+   - `CommunicationBreakdown`: 通信分解（按并行类型、按子模型）
+   - `DetailedPerformanceResult`: 完整详细结果
+
+2. **新增分解生成器** (`llm_perf/analyzer/breakdown_generator.py`)
+   - `BreakdownGenerator`: 为单个模型生成分解
+     - `_estimate_memory_by_type()`: 按类型估算内存
+     - `_estimate_kv_cache_memory()`: 估算KV Cache
+     - `_generate_block_breakdowns()`: 生成Block级别分解
+     - `_generate_communication_breakdown()`: 生成通信分解
+   - `PipelineBreakdownGenerator`: 为Pipeline生成分解
+     - 聚合所有子模型的内存和通信数据
+
+3. **更新`DiffusionVideoAnalyzer`** (`llm_perf/analyzer/diffusion_video.py`)
+   - 添加`include_detailed_breakdown`参数
+   - 新增`_generate_detailed_breakdown()`方法
+   - `DiffusionVideoResult`支持`detailed_breakdown`字段
+
+**示例输出**:
+```
+=== Detailed Breakdown Summary ===
+
+--- Sub-Models ---
+Text Encoder (text_encoder):
+  Memory: 8.28 GB
+DiT (dit):
+  Memory: 27.89 GB
+VAE (vae):
+  Memory: 18.10 GB
+
+--- Memory Breakdown ---
+  activation     : 21.71 GB
+  comm_buffer    : 0.52 GB
+  gradient       : 5.24 GB
+  kv_cache       : 0.58 GB
+  optimizer      : 20.97 GB
+  parameter      : 5.24 GB
+
+--- Communication Breakdown ---
+  TP   : Volume=0.00 GB, Time=0.00 ms
+```
+
+**测试验证**:
+- 全量测试通过：277 tests passing
+- 代码风格检查通过
+
+---
+
 ## 内存估算框架重构
 
 ### [refactor(models/analyzer)]: 重构内存估算框架，区分训练/推理模式
