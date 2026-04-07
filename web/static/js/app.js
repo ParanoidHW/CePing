@@ -124,16 +124,41 @@ function loadModelPreset() {
     
     // Update form fields
     elements.modelType.value = preset.type;
-    document.getElementById('hidden-size').value = preset.hidden_size;
-    document.getElementById('num-layers').value = preset.num_layers;
-    document.getElementById('num-heads').value = preset.num_attention_heads;
-    document.getElementById('max-seq-len').value = preset.max_seq_len;
-    document.getElementById('dtype').value = preset.dtype;
     
-    // MoE params
-    if (preset.num_experts) {
-        document.getElementById('num-experts').value = preset.num_experts;
-        document.getElementById('experts-per-token').value = preset.num_experts_per_token;
+    // Handle video generation pipeline presets (e.g., wan-t2v-14b)
+    if (preset.type === 'wan-pipeline') {
+        // For video generation, set default values for model params
+        document.getElementById('hidden-size').value = 4096;
+        document.getElementById('num-layers').value = 32;
+        document.getElementById('num-heads').value = 32;
+        document.getElementById('max-seq-len').value = 512;
+        document.getElementById('dtype').value = 'bf16';
+        
+        // Store pipeline info for evaluate function
+        state.currentPipeline = 'diffusion-video';
+        state.videoParams = {
+            num_frames: 81,
+            height: 720,
+            width: 1280,
+            num_inference_steps: 50,
+            use_cfg: true
+        };
+    } else {
+        // Standard LLM/MoE models
+        document.getElementById('hidden-size').value = preset.hidden_size;
+        document.getElementById('num-layers').value = preset.num_layers;
+        document.getElementById('num-heads').value = preset.num_attention_heads;
+        document.getElementById('max-seq-len').value = preset.max_seq_len;
+        document.getElementById('dtype').value = preset.dtype;
+        
+        // Clear pipeline info
+        state.currentPipeline = null;
+        
+        // MoE params
+        if (preset.num_experts) {
+            document.getElementById('num-experts').value = preset.num_experts;
+            document.getElementById('experts-per-token').value = preset.num_experts_per_token;
+        }
     }
     
     updateModelTypeUI();
@@ -270,9 +295,16 @@ async function evaluate() {
     
     try {
         const config = collectConfig();
-        const endpoint = state.mode === 'training' 
-            ? '/api/evaluate/training' 
-            : '/api/evaluate/inference';
+        
+        // Use pipeline endpoint for video generation models
+        let endpoint;
+        if (state.currentPipeline === 'diffusion-video') {
+            endpoint = '/api/evaluate/pipeline/diffusion-video';
+        } else {
+            endpoint = state.mode === 'training' 
+                ? '/api/evaluate/training' 
+                : '/api/evaluate/inference';
+        }
         
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -324,7 +356,7 @@ function collectConfig() {
             break;
     }
     
-    return {
+    const config = {
         model: {
             type: elements.modelType.value,
             vocab_size: 32000,
@@ -349,17 +381,34 @@ function collectConfig() {
             ep: parseInt(document.getElementById('ep-degree').value),
             activation_checkpointing: document.getElementById('activation-checkpointing').checked,
             zero_stage: parseInt(document.getElementById('zero-stage').value)
-        },
-        [state.mode]: state.mode === 'training' ? {
+        }
+    };
+    
+    // Add video generation params for diffusion-video pipeline
+    if (state.currentPipeline === 'diffusion-video' && state.videoParams) {
+        config.num_frames = state.videoParams.num_frames;
+        config.height = state.videoParams.height;
+        config.width = state.videoParams.width;
+        config.num_inference_steps = state.videoParams.num_inference_steps;
+        config.use_cfg = state.videoParams.use_cfg;
+    }
+    
+    // Add mode-specific params
+    if (state.mode === 'training') {
+        config.training = {
             batch_size: parseInt(document.getElementById('batch-size').value),
             seq_len: parseInt(document.getElementById('seq-len').value),
             num_steps: 1000
-        } : {
+        };
+    } else {
+        config.inference = {
             batch_size: parseInt(document.getElementById('inf-batch-size').value),
             prompt_len: parseInt(document.getElementById('prompt-len').value),
             generation_len: parseInt(document.getElementById('generation-len').value)
-        }
-    };
+        };
+    }
+    
+    return config;
 }
 
 function displayResults(result) {

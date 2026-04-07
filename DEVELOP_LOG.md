@@ -5,6 +5,30 @@
 
 ---
 
+## Bug修复：Web服务Wan2.1模型选择错误
+
+### [fix(web)]: 修复选择Wan2.1模型时高级参数为空导致的错误
+
+**问题描述**:
+- 在Web服务中选择wan-t2v-14b模型时出现报错：`Error: unsupported operand type(s) for *: 'int' and 'NoneType'`
+- 原因是wan-t2v-14b预设的type为"wan-pipeline"，而前端`loadModelPreset`函数尝试访问不存在的字段（如`hidden_size`等），导致高级参数显示为"undefined"
+- 提交评估时，undefined值被发送到后端，导致计算错误
+
+**修复内容**:
+
+1. **web/static/js/app.js**
+   - 修改`loadModelPreset`函数，处理"wan-pipeline"类型的特殊情况
+   - 为视频生成模型设置默认参数值
+   - 存储pipeline信息供evaluate函数使用
+   - 修改`evaluate`函数，检测视频生成pipeline并使用正确的端点（`/api/evaluate/pipeline/diffusion-video`）
+   - 修改`collectConfig`函数，为视频生成添加特有参数（num_frames, height, width等）
+
+**测试验证**:
+- 后端API测试通过：`/api/evaluate/pipeline/diffusion-video`返回正确结果
+- 全量测试通过：277 tests passing
+
+---
+
 ## 模型注册机与Pipeline管线抽象
 
 ### [feat(core/registry)]: 实现模型注册机和Pipeline注册机
