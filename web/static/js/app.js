@@ -420,6 +420,69 @@ function displayResults(result) {
     if (state.currentPipeline === 'diffusion-video') {
         const metadata = result.metadata || {};
         const breakdown = metadata.component_breakdown || {};
+        const detailed = result.detailed_breakdown;
+        
+        let detailedHtml = '';
+        if (detailed) {
+            // Memory breakdown by type
+            const memByType = detailed.memory?.by_type || {};
+            const memRows = Object.entries(memByType)
+                .map(([type, gb]) => 
+                    `<tr><td>${type}</td><td>${gb.toFixed(2)} GB</td></tr>`
+                ).join('');
+            
+            // Memory breakdown by submodel
+            const memBySubmodel = detailed.memory?.by_submodel || {};
+            const submodelMemRows = Object.entries(memBySubmodel)
+                .map(([name, mems]) => {
+                    const total = Object.values(mems).reduce((a, b) => a + b, 0);
+                    return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
+                }).join('');
+            
+            // Communication breakdown
+            const commByPara = detailed.communication?.by_parallelism || {};
+            const commRows = Object.entries(commByPara)
+                .map(([type, data]) => 
+                    `<tr><td>${type.toUpperCase()}</td><td>${data.total_volume_gb.toFixed(2)} GB</td><td>${data.total_time_ms.toFixed(2)} ms</td></tr>`
+                ).join('');
+            
+            // Submodel details
+            const submodelDetails = (detailed.submodels || []).map(sm => {
+                const memTypes = Object.entries(sm.memory?.by_type || {})
+                    .map(([t, v]) => `${t}: ${v.toFixed(1)}G`)
+                    .join(', ');
+                return `
+                    <div style="margin: 0.5rem 0; padding: 0.5rem; background: var(--gray-50); border-radius: 4px;">
+                        <strong>${sm.model_name}</strong> (${sm.model_type})<br>
+                        Memory: ${memTypes}
+                    </div>
+                `;
+            }).join('');
+            
+            detailedHtml = `
+                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
+                <table class="breakdown-table">
+                    <tr><th>内存类型</th><th>大小</th></tr>
+                    ${memRows}
+                </table>
+                
+                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>
+                <table class="breakdown-table">
+                    <tr><th>子模型</th><th>总内存</th></tr>
+                    ${submodelMemRows}
+                </table>
+                
+                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">通信分解 (按并行方式)</h3>
+                <table class="breakdown-table">
+                    <tr><th>并行类型</th><th>通信量</th><th>时间</th></tr>
+                    ${commRows || '<tr><td colspan="3">无通信数据</td></tr>'}
+                </table>
+                
+                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模型详情</h3>
+                ${submodelDetails}
+            `;
+        }
+        
         elements.resultsContent.innerHTML = `
             <div class="result-grid">
                 <div class="result-card highlight">
@@ -462,6 +525,7 @@ function displayResults(result) {
                     <td>${(breakdown.vae_decoder_pct || 0).toFixed(2)}%</td>
                 </tr>
             </table>
+            ${detailedHtml}
             <div style="margin-top: 1rem; padding: 1rem; background: var(--gray-100); border-radius: 8px;">
                 <strong>生成配置:</strong> ${metadata.num_frames || 81}帧 @ ${metadata.height || 720}x${metadata.width || 1280} | CFG: ${metadata.use_cfg ? '启用' : '禁用'}
             </div>
