@@ -9,7 +9,9 @@ const state = {
     devices: {},
     devicePresets: {},
     modelPresets: {},
-    topologyPresets: {}
+    topologyPresets: {},
+    currentPipeline: null, // 'diffusion-video' for video generation
+    videoParams: null
 };
 
 // ==================== DOM Elements ====================
@@ -413,6 +415,60 @@ function collectConfig() {
 
 function displayResults(result) {
     elements.results.style.display = 'block';
+    
+    // Handle pipeline results (e.g., video generation)
+    if (state.currentPipeline === 'diffusion-video') {
+        const metadata = result.metadata || {};
+        const breakdown = metadata.component_breakdown || {};
+        elements.resultsContent.innerHTML = `
+            <div class="result-grid">
+                <div class="result-card highlight">
+                    <div class="result-value">${((result.total_time_sec || 0) / 60).toFixed(1)}m</div>
+                    <div class="result-label">Total Time</div>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${(result.memory_peak_gb || 0).toFixed(1)}GB</div>
+                    <div class="result-label">Peak Memory</div>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${((result.throughput || 0) / 1000000).toFixed(2)}M</div>
+                    <div class="result-label">Pixels/sec</div>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${metadata.num_inference_steps || 50}</div>
+                    <div class="result-label">Inference Steps</div>
+                </div>
+            </div>
+            <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">组件耗时分解</h3>
+            <table class="breakdown-table">
+                <tr>
+                    <th>组件</th>
+                    <th>时间</th>
+                    <th>占比</th>
+                </tr>
+                <tr>
+                    <td>Text Encoder</td>
+                    <td>${((breakdown.text_encoder_time || 0) * 1000).toFixed(2)} ms</td>
+                    <td>${(breakdown.text_encoder_pct || 0).toFixed(3)}%</td>
+                </tr>
+                <tr>
+                    <td>DiT Denoising (${metadata.num_inference_steps || 50} steps)</td>
+                    <td>${(breakdown.dit_total_time || 0).toFixed(2)} s</td>
+                    <td>${(breakdown.dit_pct || 0).toFixed(1)}%</td>
+                </tr>
+                <tr>
+                    <td>VAE Decoder</td>
+                    <td>${(breakdown.vae_decoder_time || 0).toFixed(2)} s</td>
+                    <td>${(breakdown.vae_decoder_pct || 0).toFixed(2)}%</td>
+                </tr>
+            </table>
+            <div style="margin-top: 1rem; padding: 1rem; background: var(--gray-100); border-radius: 8px;">
+                <strong>生成配置:</strong> ${metadata.num_frames || 81}帧 @ ${metadata.height || 720}x${metadata.width || 1280} | CFG: ${metadata.use_cfg ? '启用' : '禁用'}
+            </div>
+        `;
+        elements.results.scrollIntoView({ behavior: 'smooth' });
+        return;
+    }
     
     if (state.mode === 'training') {
         elements.resultsContent.innerHTML = `
