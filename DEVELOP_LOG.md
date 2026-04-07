@@ -29,6 +29,29 @@
 
 ---
 
+### [fix(web)]: 修复Wan2.1结果显示错误
+
+**问题描述**:
+- 点击"开始评估"时提示 `Error: Network error: Cannot read properties of undefined (reading 'toFixed')`
+- 原因是`displayResults`函数期望标准训练/推理结果格式，但pipeline返回不同格式（包含`step_times`和`throughput`）
+- 原代码尝试访问不存在的字段（如`tokens_per_sec`、`decode_tokens_per_sec`等），导致undefined错误
+
+**修复内容**:
+
+1. **web/static/js/app.js**
+   - 为`state`对象添加`currentPipeline`和`videoParams`初始值
+   - 在`displayResults`函数中添加对`diffusion-video` pipeline的特殊处理
+   - 添加默认值（`|| 0`）防止undefined错误
+   - 显示视频生成特有的结果（总时间、峰值内存、像素/秒、推理步数）
+   - 添加组件耗时分解表格（Text Encoder、DiT Denoising、VAE Decoder）
+
+**测试验证**:
+- 后端API测试通过
+- Pipeline评估返回正确结果：总时间621.9秒，峰值内存271.5GB
+- 全量测试通过：277 tests passing
+
+---
+
 ## 模型注册机与Pipeline管线抽象
 
 ### [feat(core/registry)]: 实现模型注册机和Pipeline注册机
