@@ -5,6 +5,80 @@
 
 ---
 
+## 模型注册机与Pipeline管线抽象
+
+### [feat(core/registry)]: 实现模型注册机和Pipeline注册机
+
+**功能概述**:
+- 实现ModelRegistry单例模式，集中管理所有模型注册
+- 实现PipelineRegistry单例模式，集中管理所有Pipeline注册
+- 抽象Pipeline基类，支持子模型串接和迭代执行
+- 实现DiffusionVideoPipeline用于视频生成管线
+- Web服务支持动态刷新模型和管线列表
+
+**实现内容**:
+
+1. **ModelRegistry** (`llm_perf/core/registry.py`)
+   - 单例模式，全局唯一实例
+   - 支持注册模型配置类和模型类
+   - 通过名称动态创建模型实例
+   - 按类别组织模型（llm, moe, vae, dit, text_encoder等）
+   - 支持预设配置
+
+2. **PipelineRegistry** (`llm_perf/core/registry.py`)
+   - 单例模式，全局唯一实例
+   - 支持注册Pipeline类
+   - 通过名称动态创建Pipeline实例
+   - 支持查询Pipeline支持的模型类别
+
+3. **Pipeline基类** (`llm_perf/core/pipeline.py`)
+   - 抽象基类定义管线接口
+   - PipelineStep: 单个执行步骤
+   - IterationConfig: 迭代配置（用于去噪等迭代过程）
+   - PipelineResult: 统一的执行结果格式
+   - 支持步骤依赖关系
+
+4. **模型注册模块** (`llm_perf/models/registry.py`)
+   - 注册所有内置模型：llama, moe, deepseek, deepseek-v3, resnet, vae
+   - 注册Wan2.1模型：wan-text-encoder, wan-dit, wan-vae
+   - 提供预设配置（llama-7b, llama-70b, mixtral-8x7b, deepseek-v3等）
+
+5. **Pipeline注册模块** (`llm_perf/pipelines/registry.py`)
+   - 注册inference pipeline（标准LLM推理）
+   - 注册diffusion-video pipeline（视频生成）
+
+6. **DiffusionVideoPipeline** (`llm_perf/pipelines/diffusion_video.py`)
+   - 实现Text Encoder → DiT (迭代) → VAE Decoder管线
+   - 集成DiffusionVideoAnalyzer进行性能分析
+   - 支持可调节的推理步数和CFG
+   - create_wan_t2v_pipeline工厂函数
+
+7. **InferencePipeline** (`llm_perf/pipelines/base.py`)
+   - 标准LLM推理Pipeline封装
+   - 使用InferenceAnalyzer进行性能分析
+
+8. **Web服务更新** (`web/app.py`)
+   - `/api/models` - 获取所有注册模型
+   - `/api/models/refresh` - 刷新模型注册表
+   - `/api/pipelines` - 获取所有注册管线
+   - `/api/pipelines/refresh` - 刷新管线注册表
+   - `/api/evaluate/pipeline/<name>` - 执行指定管线评估
+   - 使用ModelRegistry创建模型，替代硬编码逻辑
+
+9. **测试覆盖** (`tests/test_registry.py`)
+   - ModelRegistry单元测试 (6个)
+   - PipelineRegistry单元测试 (4个)
+   - 集成测试 (5个)
+
+**测试状态**: 277 tests passing (262原有 + 15新增)
+
+---
+
+## 会话时间
+2026-04-03
+
+---
+
 ## Wan2.1 视频生成模型评估支持
 
 ### [feat(models/analyzer)]: 新增 Wan2.1-T2V-14B 多模态视频生成模型评估支持

@@ -1,5 +1,8 @@
 """Model definitions and configurations."""
 
+# Import registry first to auto-register models
+from . import registry as _registry_module
+
 from .base import BaseModel, ModelConfig, LayerConfig
 from .deepseek import (
     DeepSeekConfig,
