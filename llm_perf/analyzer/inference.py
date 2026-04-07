@@ -416,13 +416,27 @@ class InferenceAnalyzer:
         kv_cache_memory = batch_size * max_seq_len * num_layers * kv_per_token
         kv_cache_memory //= self.strategy.tp_degree
         
-        # Activations (much smaller in inference)
-        activation_memory = self.model.activation_memory * batch_size // self.model.config.max_seq_len
-        
+        # Activations - use inference mode estimate
+        is_distributed = (
+            self.strategy.tp_degree > 1
+            or self.strategy.dp_degree > 1
+            or self.strategy.pp_degree > 1
+        )
+        base_memory = self.model.estimate_memory(
+            inference_mode=True,  # Inference mode
+            batch_size=batch_size,
+            is_distributed=is_distributed,
+            apply_calibration=False,  # Handle manually for fine-grained control
+        )
+        dtype_size = 2 if self.model.config.dtype == "fp16" else 4
+        param_memory_total = self.model.total_params * dtype_size
+        activation_memory = base_memory - param_memory_total
+
         total_memory = param_memory + kv_cache_memory + activation_memory
-        
-        # Add overhead
-        total_memory = int(total_memory * 1.05)
+
+        # Apply calibration factors from model config
+        calib = self.model.config.memory_calibration
+        total_memory = calib.apply(total_memory, is_distributed)
         
         return total_memory, kv_cache_memory
     

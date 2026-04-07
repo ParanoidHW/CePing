@@ -1,7 +1,7 @@
 """Base model classes."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
 
@@ -17,16 +17,78 @@ class LayerConfig:
     is_moe: bool = False  # Whether this is an MoE layer
 
 
-@dataclass  
+@dataclass
+class MemoryCalibrationConfig:
+    """Memory calibration configuration for fine-tuning memory estimates.
+
+    These factors account for various sources of memory overhead that are not
+    captured by the basic calculation, such as:
+    - Memory fragmentation
+    - CUDA context overhead
+    - Framework overhead (PyTorch/TensorFlow)
+    - Communication buffers (for distributed training)
+    - Extra workspace for kernels
+    """
+
+    # Fragmentation overhead (typically 10-20%)
+    fragmentation_factor: float = 1.15  # 15% overhead
+
+    # CUDA context and framework overhead (MB)
+    cuda_context_mb: float = 500.0
+
+    # Communication buffer overhead for distributed training
+    # (scaled by number of GPUs and communication pattern)
+    comm_buffer_factor: float = 1.05  # 5% overhead
+
+    # Kernel workspace overhead (temporary buffers for ops like softmax, etc.)
+    kernel_workspace_factor: float = 1.02  # 2% overhead
+
+    # Extra safety margin for unexpected allocations
+    safety_margin_factor: float = 1.05  # 5% margin
+
+    def apply(self, base_memory_bytes: int, is_distributed: bool = False) -> int:
+        """Apply calibration factors to base memory estimate.
+
+        Args:
+            base_memory_bytes: Base memory estimate without calibration
+            is_distributed: Whether running in distributed mode
+
+        Returns:
+            Calibrated memory estimate in bytes
+        """
+        # Start with base memory
+        memory = base_memory_bytes
+
+        # Apply kernel workspace factor
+        memory = int(memory * self.kernel_workspace_factor)
+
+        # Apply communication buffer factor if distributed
+        if is_distributed:
+            memory = int(memory * self.comm_buffer_factor)
+
+        # Apply fragmentation factor
+        memory = int(memory * self.fragmentation_factor)
+
+        # Add CUDA context overhead
+        memory += int(self.cuda_context_mb * 1024 * 1024)
+
+        # Apply safety margin
+        memory = int(memory * self.safety_margin_factor)
+
+        return memory
+
+
+@dataclass
 class ModelConfig:
     """Base model configuration."""
+
     # Required fields (no defaults)
     name: str
     vocab_size: int
     hidden_size: int
     num_layers: int
     num_attention_heads: int
-    
+
     # Optional fields (with defaults)
     num_key_value_heads: Optional[int] = None  # For GQA
     intermediate_size: int = 0  # FFN intermediate size
@@ -35,6 +97,10 @@ class ModelConfig:
     # MoE specific
     num_experts: Optional[int] = None
     num_experts_per_token: Optional[int] = None
+    # Memory calibration config
+    memory_calibration: MemoryCalibrationConfig = field(
+        default_factory=MemoryCalibrationConfig
+    )
 
 
 class BaseModel(ABC):
@@ -71,8 +137,155 @@ class BaseModel(ABC):
     
     @property
     def activation_memory(self) -> int:
-        """Total activation memory in bytes."""
+        """Total activation memory in bytes.
+
+        Warning: This sums all layer activations, which is correct for training
+        but overestimates inference memory. Use estimate_memory() for accurate
+        estimates based on training/inference mode.
+        """
         return sum(layer.activation_bytes for layer in self._layers)
+
+    def estimate_memory(
+        self,
+        inference_mode: bool = True,
+        batch_size: int = 1,
+        is_distributed: bool = False,
+        apply_calibration: bool = True,
+    ) -> int:
+        """Estimate peak memory usage for the model.
+
+        This method calculates memory usage considering layer lifecycle:
+        - Training: All layer activations are saved for backward pass
+        - Inference: Activations are computed layer-by-layer and reused
+
+        Args:
+            inference_mode: If True, use inference memory estimation (layer-wise
+                activation reuse). If False, use training memory (all layers saved).
+            batch_size: Batch size for the computation
+            is_distributed: Whether running in distributed mode (affects comm buffers)
+            apply_calibration: Whether to apply calibration factors
+
+        Returns:
+            Estimated peak memory in bytes
+        """
+        # Calculate parameter memory
+        dtype_size = self._get_dtype_size()
+        param_memory = self.total_params * dtype_size
+
+        # Calculate activation memory based on mode
+        if inference_mode:
+            # Inference: find max single layer activation (layer-wise reuse)
+            activation_memory = self._estimate_inference_activation_memory(batch_size)
+        else:
+            # Training: sum all layer activations (need for backward)
+            activation_memory = self._estimate_training_activation_memory(batch_size)
+
+        # Total base memory
+        base_memory = param_memory + activation_memory
+
+        # Apply calibration if requested
+        if apply_calibration:
+            calib = self.config.memory_calibration
+            base_memory = calib.apply(base_memory, is_distributed)
+
+        return base_memory
+
+    def _get_dtype_size(self) -> int:
+        """Get dtype size in bytes."""
+        dtype_sizes = {
+            "fp32": 4,
+            "fp16": 2,
+            "bf16": 2,
+            "int8": 1,
+            "int4": 0.5,
+        }
+        return dtype_sizes.get(self.config.dtype, 2)
+
+    def _estimate_inference_activation_memory(self, batch_size: int) -> int:
+        """Estimate activation memory for inference mode.
+
+        In inference, activations are computed layer-by-layer and can be reused.
+        Peak memory is determined by the layer with maximum activation.
+
+        Args:
+            batch_size: Batch size for the computation
+
+        Returns:
+            Estimated activation memory in bytes
+        """
+        if not self._layers:
+            return 0
+
+        # Find max single layer activation
+        max_layer_activation = max(
+            layer.activation_bytes for layer in self._layers
+        )
+
+        # Scale by batch size (assuming linear scaling)
+        # Note: This is a simplification; actual scaling depends on layer type
+        max_layer_activation *= batch_size
+
+        # Add residual stream (input that needs to be kept for residual connections)
+        # This is typically the largest layer's input
+        residual_stream = self._estimate_residual_stream(batch_size)
+
+        return max_layer_activation + residual_stream
+
+    def _estimate_training_activation_memory(self, batch_size: int) -> int:
+        """Estimate activation memory for training mode.
+
+        In training, all layer activations must be saved for backward pass
+        (unless activation checkpointing is used).
+
+        Args:
+            batch_size: Batch size for the computation
+
+        Returns:
+            Estimated activation memory in bytes
+        """
+        if not self._layers:
+            return 0
+
+        # Sum all layer activations
+        total_activation = sum(layer.activation_bytes for layer in self._layers)
+
+        # Scale by batch size
+        total_activation *= batch_size
+
+        return total_activation
+
+    def _estimate_residual_stream(self, batch_size: int) -> int:
+        """Estimate residual stream memory.
+
+        This is the memory needed to keep the input tensor for residual connections.
+
+        Args:
+            batch_size: Batch size
+
+        Returns:
+            Residual stream memory in bytes
+        """
+        # Default: use first layer's input shape
+        # Subclasses can override for more accurate estimates
+        if not self._layers:
+            return 0
+
+        first_layer = self._layers[0]
+        input_shape = first_layer.input_shape
+
+        # Calculate bytes from shape
+        # Shape is typically (batch, seq_len, hidden) or similar
+        num_elements = 1
+        for dim in input_shape:
+            if isinstance(dim, int) and dim > 0:
+                num_elements *= dim
+
+        # Scale by actual batch size
+        if batch_size != 1 and input_shape and input_shape[0] == 1:
+            num_elements *= batch_size
+
+        dtype_size = self._get_dtype_size()
+        return num_elements * dtype_size
     
     def get_layer_by_name(self, name: str) -> Optional[LayerConfig]:
         """Get layer configuration by name."""
@@ -100,6 +313,12 @@ class BaseModel(ABC):
             "total_params": self.total_params,
             "total_flops_forward": self.total_flops_forward,
             "activation_memory": self.activation_memory,
+            "estimated_memory": {
+                "inference_bytes": self.estimate_memory(inference_mode=True),
+                "training_bytes": self.estimate_memory(inference_mode=False),
+                "inference_gb": self.estimate_memory(inference_mode=True) / 1024**3,
+                "training_gb": self.estimate_memory(inference_mode=False) / 1024**3,
+            },
             "layers": [
                 {
                     "name": layer.name,

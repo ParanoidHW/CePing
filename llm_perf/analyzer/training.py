@@ -359,31 +359,60 @@ class TrainingAnalyzer:
         # Divide by TP degree (parameters are sharded)
         param_memory //= self.strategy.tp_degree
         
-        # Activations
-        activation_memory = self.model.activation_memory
-        # Batch size scaling
-        activation_memory = activation_memory * batch_size * seq_len // self.model.config.max_seq_len
+        # Activations - use training mode estimate with proper scaling
+        # Note: estimate_memory returns calibrated memory, so we need to extract
+        # the base activation component or disable calibration for manual scaling
+        is_distributed = (
+            self.strategy.tp_degree > 1
+            or self.strategy.dp_degree > 1
+            or self.strategy.pp_degree > 1
+        )
+        base_memory = self.model.estimate_memory(
+            inference_mode=False,  # Training mode
+            batch_size=batch_size,
+            is_distributed=is_distributed,
+            apply_calibration=False,  # We'll handle scaling manually
+        )
+        dtype_size = 2 if self.model.config.dtype == "fp16" else 4
+        param_memory_total = self.model.total_params * dtype_size
+        activation_memory = base_memory - param_memory_total
+
+        # Scale by sequence length ratio
+        seq_ratio = seq_len // max(self.model.config.max_seq_len, 1)
+        if seq_ratio > 0:
+            activation_memory *= seq_ratio
+
         # Sequence parallelism reduces activation memory
-        activation_memory //= self.strategy.sp_degree
-        
+        if self.strategy.sp_degree > 1:
+            activation_memory //= self.strategy.sp_degree
+
         # Gradients (same size as parameters, divided by DP if ZeRO-2/3)
         grad_memory = param_memory
         if self.strategy.zero_stage >= 2:
             grad_memory //= self.strategy.dp_degree
-        
+
         # Optimizer states (Adam: 2x parameters for momentum and variance)
         optimizer_memory = param_memory * 2 * 4  # fp32 states
         if self.strategy.zero_stage >= 3:
             optimizer_memory //= self.strategy.dp_degree
-        
-        # Activation checkpointing
+
+        # Activation checkpointing: only need to store one layer's activation
         if self.strategy.activation_checkpointing:
-            activation_memory //= self.model.config.num_layers
-        
+            # Find max single layer activation
+            max_layer_activation = max(
+                layer.activation_bytes for layer in self.model.layers
+            ) if self.model.layers else 0
+            # Scale by batch and sequence
+            max_layer_activation *= batch_size * seq_len // max(self.model.config.max_seq_len, 1)
+            if self.strategy.sp_degree > 1:
+                max_layer_activation //= self.strategy.sp_degree
+            activation_memory = max_layer_activation
+
         total_memory = param_memory + activation_memory + grad_memory + optimizer_memory
-        
-        # Add overhead (CUDA context, fragmentation, etc.)
-        total_memory = int(total_memory * 1.1)
+
+        # Apply calibration factors from model config
+        calib = self.model.config.memory_calibration
+        total_memory = calib.apply(total_memory, is_distributed)
         
         return total_memory
     

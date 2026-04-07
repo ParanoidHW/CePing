@@ -10,16 +10,14 @@ Based on Wan2.1 architecture with Flow Matching framework.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Any, Tuple, Optional
-import math
+from typing import Dict, Any, Tuple
+
 
 from ..models.wan_video import (
     WanTextEncoder,
     WanDiTModel,
     WanVAEModel,
-    WanTextEncoderConfig,
-    WanDiTConfig,
-    WanVAEConfig,
+
 )
 from ..hardware.device import Device, ComputeUnitType
 from ..hardware.cluster import Cluster
@@ -124,13 +122,15 @@ class DiffusionVideoAnalyzer:
         """
         # Text Encoder evaluation
         text_encoder_time = self._estimate_text_encoder_time()
-        text_encoder_memory = self._estimate_text_encoder_memory()
+        text_encoder_memory = self._estimate_text_encoder_memory(inference_mode=True)
         
         # DiT single step evaluation
         dit_single_step_time = self._estimate_dit_single_step(
             num_frames, height, width, use_cfg
         )
-        dit_memory = self._estimate_dit_memory(num_frames, height, width, use_cfg)
+        dit_memory = self._estimate_dit_memory(
+            num_frames, height, width, use_cfg, inference_mode=True
+        )
         
         # VAE evaluation
         vae_encoder_time, vae_decoder_time = self._estimate_vae_time(
@@ -203,19 +203,29 @@ class DiffusionVideoAnalyzer:
         
         return total_flops / achievable_flops if achievable_flops > 0 else 0.0
     
-    def _estimate_text_encoder_memory(self) -> int:
-        """Estimate text encoder peak memory in bytes."""
-        cfg = self.text_encoder.config
-        dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
-        
-        # Parameters
-        param_memory = self.text_encoder.total_params * dtype_size
-        
-        # Activations
-        activation_memory = self.text_encoder.activation_memory
-        
-        # Gradients (not needed for inference)
-        return param_memory + activation_memory
+    def _estimate_text_encoder_memory(
+        self, inference_mode: bool = True
+    ) -> int:
+        """Estimate text encoder peak memory in bytes.
+
+        Uses the generic memory estimation from BaseModel with video-specific
+        configurations.
+
+        Args:
+            inference_mode: If True, use inference memory estimation (layer-wise
+                activation reuse). If False, use training memory (all layers saved).
+
+        Returns:
+            Estimated peak memory in bytes
+        """
+        # Use BaseModel's generic estimate_memory method
+        # Text encoder uses batch_size=1 (single text prompt)
+        return self.text_encoder.estimate_memory(
+            inference_mode=inference_mode,
+            batch_size=1,
+            is_distributed=False,  # Text encoder typically runs on single GPU
+            apply_calibration=True,
+        )
     
     def _estimate_dit_single_step(
         self,
@@ -274,38 +284,65 @@ class DiffusionVideoAnalyzer:
         height: int,
         width: int,
         use_cfg: bool,
+        inference_mode: bool = True,
     ) -> int:
-        """Estimate DiT peak memory for single step."""
+        """Estimate DiT peak memory for single step.
+
+        Uses BaseModel's generic memory estimation with video-specific
+        scaling for sequence length and CFG batch size.
+
+        Args:
+            num_frames: Number of frames
+            height: Video height
+            width: Video width
+            use_cfg: Whether to use classifier-free guidance
+            inference_mode: If True, use inference memory estimation (layer-wise
+                activation reuse). If False, use training memory (all layers saved).
+
+        Returns:
+            Estimated peak memory in bytes
+        """
         cfg = self.dit.config
-        dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
-        
-        # Parameters
-        param_memory = self.dit.total_params * dtype_size
-        
-        # Activations scale with sequence length
+
+        # Calculate effective batch size (CFG doubles batch)
+        batch_size = 2 if use_cfg else 1
+
+        # Use BaseModel's generic estimate_memory method
+        # This properly handles layer-wise activation lifecycle
+        base_memory = self.dit.estimate_memory(
+            inference_mode=inference_mode,
+            batch_size=batch_size,
+            is_distributed=self.strategy.tp_degree > 1 or self.strategy.dp_degree > 1,
+            apply_calibration=True,
+        )
+
+        # Scale memory based on actual sequence length vs base config
+        # Base config uses latent_num_frames/height/width from config
         pt, ph, pw = cfg.patch_size
         latent_t = (num_frames - 1) // 4 + 1
         latent_h = height // 8
         latent_w = width // 8
-        
-        seq_len = (latent_t // pt) * (latent_h // ph) * (latent_w // pw)
-        batch_size = 2 if use_cfg else 1
-        
-        # Attention activations (dominant memory consumer)
-        # Q, K, V, O for each layer
-        head_dim = cfg.hidden_size // cfg.num_attention_heads
-        
-        # Self-attention: Q, K, V each (batch, seq, hidden)
-        # Cross-attention: Q (batch, seq, hidden), K, V (batch, text_len, hidden)
-        attn_memory = (
-            batch_size * seq_len * cfg.hidden_size * 4 +  # Self-attn Q/K/V/O
-            batch_size * 512 * cfg.hidden_size * 2  # Cross-attn K/V (text)
-        ) * cfg.num_layers * dtype_size
-        
-        # Hidden states
-        hidden_memory = batch_size * seq_len * cfg.hidden_size * dtype_size
-        
-        return param_memory + attn_memory + hidden_memory
+
+        actual_seq_len = (latent_t // pt) * (latent_h // ph) * (latent_w // pw)
+        base_seq_len = (
+            (cfg.latent_num_frames // pt)
+            * (cfg.latent_height // ph)
+            * (cfg.latent_width // pw)
+        )
+
+        # Memory scales roughly linearly with sequence length for activations
+        # Parameters don't scale, so we use a conservative scaling factor
+        seq_scale = actual_seq_len / max(base_seq_len, 1)
+
+        # Activation memory scales with seq_len, but parameter memory doesn't
+        # So we apply partial scaling (rough estimate: 60% activation, 40% params)
+        dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
+        param_memory = self.dit.total_params * dtype_size
+        activation_memory = base_memory - param_memory
+
+        scaled_activation = int(activation_memory * seq_scale)
+
+        return param_memory + scaled_activation
     
     def _estimate_vae_time(
         self,
@@ -409,7 +446,7 @@ class DiffusionVideoAnalyzer:
             "total_flops_forward": self.text_encoder.total_flops_forward,
             "activation_memory_bytes": self.text_encoder.activation_memory,
             "estimated_time_sec": self._estimate_text_encoder_time(),
-            "estimated_memory_gb": self._estimate_text_encoder_memory() / 1024**3,
+            "estimated_memory_gb": self._estimate_text_encoder_memory(inference_mode=True) / 1024**3,
         }
         
         # DiT analysis
@@ -421,7 +458,7 @@ class DiffusionVideoAnalyzer:
                 num_frames, height, width, use_cfg=False
             ),
             "estimated_memory_gb": self._estimate_dit_memory(
-                num_frames, height, width, use_cfg=False
+                num_frames, height, width, use_cfg=False, inference_mode=True
             ) / 1024**3,
             "num_layers": self.dit.config.num_layers,
             "hidden_size": self.dit.config.hidden_size,
@@ -429,14 +466,14 @@ class DiffusionVideoAnalyzer:
         }
         
         # VAE analysis
-        encoder_flops = sum(l.flops for l in self.vae.layers if "encoder" in l.name)
-        decoder_flops = sum(l.flops for l in self.vae.layers if "decoder" in l.name)
+        encoder_flops = sum(layer.flops for layer in self.vae.layers if "encoder" in layer.name)
+        decoder_flops = sum(layer.flops for layer in self.vae.layers if "decoder" in layer.name)
         encoder_time, decoder_time = self._estimate_vae_time(num_frames, height, width)
         
         results["vae"] = {
             "total_params": self.vae.total_params,
-            "encoder_params": sum(l.params_count for l in self.vae.layers if "encoder" in l.name),
-            "decoder_params": sum(l.params_count for l in self.vae.layers if "decoder" in l.name),
+            "encoder_params": sum(layer.params_count for layer in self.vae.layers if "encoder" in layer.name),
+            "decoder_params": sum(layer.params_count for layer in self.vae.layers if "decoder" in layer.name),
             "encoder_flops": encoder_flops,
             "decoder_flops": decoder_flops,
             "encoder_time_sec": encoder_time,

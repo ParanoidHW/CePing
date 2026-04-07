@@ -5,6 +5,59 @@
 
 ---
 
+## 内存估算框架重构
+
+### [refactor(models/analyzer)]: 重构内存估算框架，区分训练/推理模式
+
+**问题背景**:
+- 原内存计算公式对所有模型累加所有层激活值，适用于训练场景（需要保存激活用于反向传播）
+- 但推理场景中，激活内存是逐层覆盖刷新的，应按历史激活值的最大值计算
+- 需要添加内存校准项（碎片、调度开销等）的占位符
+
+**实现内容**:
+
+1. **新增`MemoryCalibrationConfig`** (`llm_perf/models/base.py`)
+   - 支持配置内存碎片因子（默认15%）
+   - CUDA上下文开销（默认500MB）
+   - 通信缓冲区因子（默认5%，分布式场景）
+   - Kernel工作空间因子（默认2%）
+   - 安全边距因子（默认5%）
+   - `apply()`方法自动应用所有校准因子
+
+2. **更新`ModelConfig`** (`llm_perf/models/base.py`)
+   - 添加`memory_calibration`字段，默认使用`MemoryCalibrationConfig()`
+
+3. **新增`BaseModel.estimate_memory()`** (`llm_perf/models/base.py`)
+   - 区分训练模式和推理模式的内存估算
+   - 训练模式：累加所有层激活（用于反向传播）
+   - 推理模式：取单层最大激活（逐层复用）
+   - 支持批量大小、分布式模式、校准应用等参数
+   - 新增`_estimate_inference_activation_memory()`和`_estimate_training_activation_memory()`辅助方法
+
+4. **更新`DiffusionVideoAnalyzer`** (`llm_perf/analyzer/diffusion_video.py`)
+   - `_estimate_text_encoder_memory()`: 使用新的`estimate_memory()`方法
+   - `_estimate_dit_memory()`: 使用新的`estimate_memory()`方法，并保留视频特定的序列长度缩放
+
+5. **更新`TrainingAnalyzer`** (`llm_perf/analyzer/training.py`)
+   - `_estimate_memory()`: 使用新的`estimate_memory(inference_mode=False)`，并保留分布式训练逻辑
+
+6. **更新`InferenceAnalyzer`** (`llm_perf/analyzer/inference.py`)
+   - `_estimate_memory()`: 使用新的`estimate_memory(inference_mode=True)`，并保留KV Cache计算
+
+**内存估算对比**（Wan2.1 DiT）:
+```
+旧方法（累加所有层）: 606.74 GB
+新方法-推理模式:      55.14 GB
+新方法-训练模式:     795.32 GB（含校准因子）
+训练/推理比例:        14.4x
+```
+
+**测试验证**:
+- 全量测试通过：277 tests passing
+- 代码风格检查通过：ruff检查无错误
+
+---
+
 ## Bug修复：Web服务Wan2.1模型选择错误
 
 ### [fix(web)]: 修复选择Wan2.1模型时高级参数为空导致的错误
