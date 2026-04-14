@@ -44,7 +44,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="embedding",
             result=emb_result,
-            params=cfg.vocab_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -61,7 +60,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="final_norm",
             result=final_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -75,7 +73,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="lm_head",
             result=lm_head_result,
-            params=cfg.hidden_size * cfg.vocab_size,
             dtype_size=dtype_size
         ))
         
@@ -103,7 +100,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
             result=input_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -117,7 +113,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_q_proj",
             result=q_result,
-            params=cfg.hidden_size * q_heads * head_dim,
             dtype_size=dtype_size
         ))
         
@@ -131,7 +126,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_k_proj",
             result=k_result,
-            params=cfg.hidden_size * kv_heads * head_dim,
             dtype_size=dtype_size
         ))
         
@@ -145,7 +139,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_v_proj",
             result=v_result,
-            params=cfg.hidden_size * kv_heads * head_dim,
             dtype_size=dtype_size
         ))
         
@@ -160,7 +153,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attention",
             result=attn_result,
-            params=0,
             dtype_size=dtype_size
         ))
         
@@ -174,7 +166,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
             result=o_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -187,7 +178,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
             result=attn_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -205,7 +195,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_up_proj",
             result=up_result,
-            params=cfg.hidden_size * ffn_intermediate,
             dtype_size=dtype_size
         ))
         
@@ -219,7 +208,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_gate_proj",
             result=gate_result,
-            params=cfg.hidden_size * ffn_intermediate,
             dtype_size=dtype_size
         ))
         
@@ -231,7 +219,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_swiglu",
             result=swiglu_result,
-            params=0,
             dtype_size=dtype_size
         ))
         
@@ -245,7 +232,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_down_proj",
             result=down_result,
-            params=ffn_intermediate * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -258,7 +244,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
             result=ffn_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         

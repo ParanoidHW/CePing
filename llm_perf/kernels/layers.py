@@ -55,7 +55,7 @@ def linear_layer(
         name=name,
         input_shape=(batch_size, seq_len, in_features),
         output_shape=output_shape,
-        params_count=in_features * out_features + (out_features if bias else 0),
+        params_count=result.params,
         flops=result.flops,
         activation_bytes=math.prod(output_shape) * (2 if dtype == "fp16" else 4)
     )
@@ -257,15 +257,11 @@ def norm_layer(
     else:
         result = layer_norm(input_shape, (hidden_size,), elementwise_affine, dtype)
     
-    params_count = hidden_size if elementwise_affine else 0
-    if norm_type == "layernorm" and elementwise_affine:
-        params_count *= 2  # weight + bias
-    
     layer = LayerConfig(
         name=name,
         input_shape=input_shape,
         output_shape=input_shape,
-        params_count=params_count,
+        params_count=result.params,
         flops=result.flops,
         activation_bytes=math.prod(result.output) * (2 if dtype == "fp16" else 4)
     )

@@ -32,6 +32,9 @@ class KernelResult:
         arithmetic_intensity: FLOPs per byte (flops / bytes_accessed)
         memory_bound: Whether the kernel is memory bound
         input_shapes: Input tensor shapes for reference
+        params: Number of parameters involved in the kernel
+        param_bytes: Bytes occupied by parameters
+        unit_type: Compute unit type ("cube" for Tensor Core, "vector" for CUDA Core)
     """
     output: Tuple[int, ...]  # Output shape
     flops: int
@@ -39,6 +42,9 @@ class KernelResult:
     arithmetic_intensity: float
     memory_bound: bool
     input_shapes: List[Tuple[int, ...]]
+    params: int = 0
+    param_bytes: int = 0
+    unit_type: str = "vector"
     
     def __post_init__(self):
         """Validate and compute derived metrics."""
@@ -102,13 +108,20 @@ def linear(
         bytes_accessed += out_features * dtype_size  # bias
         flops += batch_size * out_features  # bias addition
     
+    # Calculate params: weight + bias
+    params = in_features * out_features + (out_features if bias else 0)
+    param_bytes = params * dtype_size
+    
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=bytes_accessed > flops / 100,  # Heuristic
-        input_shapes=[input, weight] + ([bias] if bias else [])
+        input_shapes=[input, weight] + ([bias] if bias else []),
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube"
     )
 
 
@@ -147,13 +160,20 @@ def bmm(
         batch * m * n * dtype_size    # output
     )
     
+    # BMM has no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=bytes_accessed > flops / 100,
-        input_shapes=[input, mat2]
+        input_shapes=[input, mat2],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube"
     )
 
 
@@ -204,13 +224,20 @@ def scaled_dot_product_attention(
         batch * num_heads * seq_len * head_dim * dtype_size  # output
     )
     
+    # Attention has no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,  # Attention is typically memory bound
-        input_shapes=[query, key, value]
+        input_shapes=[query, key, value],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube"
     )
 
 
@@ -246,13 +273,20 @@ def layer_norm(
         bytes_accessed += math.prod(normalized_shape) * dtype_size * 2  # weight + bias
         flops += numel * 2  # scale + shift
     
+    # Calculate params: weight + bias (if elementwise_affine)
+    params = normalized_shape[0] * (2 if elementwise_affine else 1)
+    param_bytes = params * dtype_size
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -284,13 +318,20 @@ def rms_norm(
     bytes_accessed = numel * dtype_size * 2  # read input, write output
     bytes_accessed += input[dim] * dtype_size  # weight
     
+    # Calculate params: only weight
+    params = input[dim]
+    param_bytes = params * dtype_size
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -316,13 +357,20 @@ def silu(
     flops = numel * 10
     bytes_accessed = numel * dtype_size * 2  # read + write
     
+    # Activation functions have no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -351,13 +399,20 @@ def gelu(
     flops = numel * flops_per_elem
     bytes_accessed = numel * dtype_size * 2
     
+    # Activation functions have no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -382,13 +437,20 @@ def relu(
     flops = numel  # compare + select
     bytes_accessed = numel * dtype_size * 2
     
+    # Activation functions have no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -417,13 +479,20 @@ def softmax(
     flops = numel * (7 + softmax_dim_size + 1)
     bytes_accessed = numel * dtype_size * 2
     
+    # Softmax has no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -451,13 +520,20 @@ def dropout(
     flops = numel * 3
     bytes_accessed = numel * dtype_size * 2
     
+    # Dropout has no learnable parameters
+    params = 0
+    param_bytes = 0
+    
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input]
+        input_shapes=[input],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )
 
 
@@ -512,13 +588,20 @@ def conv2d(
         bytes_accessed += C_out * dtype_size
         flops += N * C_out * H_out * W_out
     
+    # Calculate params: weight + bias
+    params = C_out * C_in * kH * kW + (C_out if bias else 0)
+    param_bytes = params * dtype_size
+    
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=bytes_accessed > flops / 100,
-        input_shapes=[input, weight] + ([bias] if bias else [])
+        input_shapes=[input, weight] + ([bias] if bias else []),
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube"
     )
 
 
@@ -571,13 +654,20 @@ def conv3d(
         bytes_accessed += C_out * dtype_size
         flops += N * C_out * D_out * H_out * W_out
     
+    # Calculate params: weight + bias
+    params = C_out * C_in * kD * kH * kW + (C_out if bias else 0)
+    param_bytes = params * dtype_size
+    
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=bytes_accessed > flops / 100,
-        input_shapes=[input, weight] + ([bias] if bias else [])
+        input_shapes=[input, weight] + ([bias] if bias else []),
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube"
     )
 
 
@@ -614,11 +704,18 @@ def embedding(
         numel * embedding_dim * dtype_size  # output
     )
     
+    # Calculate params: embedding table
+    params = num_embeddings * embedding_dim
+    param_bytes = params * dtype_size
+    
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,
-        input_shapes=[input_shape]
+        input_shapes=[input_shape],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector"
     )

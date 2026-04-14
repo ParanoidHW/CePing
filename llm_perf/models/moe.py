@@ -47,7 +47,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="embedding",
             result=emb_result,
-            params=cfg.vocab_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -68,7 +67,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="final_norm",
             result=final_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -82,7 +80,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="lm_head",
             result=lm_head_result,
-            params=cfg.hidden_size * cfg.vocab_size,
             dtype_size=dtype_size
         ))
         
@@ -135,7 +132,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
             result=input_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -154,7 +150,6 @@ class MoEModel(BaseModel):
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_{proj_name}",
                 result=proj_result,
-                params=cfg.hidden_size * out_dim,
                 dtype_size=dtype_size
             ))
         
@@ -169,7 +164,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attention",
             result=attn_result,
-            params=0,
             dtype_size=dtype_size
         ))
         
@@ -183,7 +177,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
             result=o_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -196,7 +189,6 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
             result=attn_norm_result,
-            params=cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -218,11 +210,10 @@ class MoEModel(BaseModel):
         router_layer = kernel_result_to_layer(
             name=f"{prefix}_router",
             result=router_linear_result,
-            params=cfg.hidden_size * cfg.num_experts,
-            dtype_size=dtype_size
+            dtype_size=dtype_size,
+            is_moe=True
         )
         router_layer.flops = router_linear_result.flops + router_softmax_result.flops
-        router_layer.is_moe = True
         layers.append(router_layer)
         
         # Each expert's FFN (only active ones computed per token)
@@ -238,11 +229,10 @@ class MoEModel(BaseModel):
         expert_up_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_up",
             result=expert_up_result,
-            params=cfg.hidden_size * ffn_intermediate * cfg.num_experts,
-            dtype_size=dtype_size
+            dtype_size=dtype_size,
+            is_moe=True
         )
         expert_up_layer.flops = int(expert_up_result.flops * cfg.num_experts_per_token)
-        expert_up_layer.is_moe = True
         layers.append(expert_up_layer)
         
         # Gate proj using linear kernel
@@ -255,11 +245,10 @@ class MoEModel(BaseModel):
         expert_gate_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_gate",
             result=expert_gate_result,
-            params=cfg.hidden_size * ffn_intermediate * cfg.num_experts,
-            dtype_size=dtype_size
+            dtype_size=dtype_size,
+            is_moe=True
         )
         expert_gate_layer.flops = int(expert_gate_result.flops * cfg.num_experts_per_token)
-        expert_gate_layer.is_moe = True
         layers.append(expert_gate_layer)
         
         # SwiGLU using silu kernel
@@ -270,11 +259,10 @@ class MoEModel(BaseModel):
         swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_swiglu",
             result=swiglu_result,
-            params=0,
-            dtype_size=dtype_size
+            dtype_size=dtype_size,
+            is_moe=True
         )
         swiglu_layer.flops = int(swiglu_result.flops * cfg.num_experts_per_token)
-        swiglu_layer.is_moe = True
         layers.append(swiglu_layer)
         
         # Down proj using linear kernel
@@ -287,11 +275,10 @@ class MoEModel(BaseModel):
         expert_down_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_down",
             result=expert_down_result,
-            params=ffn_intermediate * cfg.hidden_size * cfg.num_experts,
-            dtype_size=dtype_size
+            dtype_size=dtype_size,
+            is_moe=True
         )
         expert_down_layer.flops = int(expert_down_result.flops * cfg.num_experts_per_token)
-        expert_down_layer.is_moe = True
         layers.append(expert_down_layer)
         
         # All-to-all communication (dispatch and combine)
@@ -326,10 +313,9 @@ class MoEModel(BaseModel):
         moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
             result=moe_norm_result,
-            params=cfg.hidden_size,
-            dtype_size=dtype_size
+            dtype_size=dtype_size,
+            is_moe=True
         )
-        moe_norm_layer.is_moe = True
         layers.append(moe_norm_layer)
         
         return layers

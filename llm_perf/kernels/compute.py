@@ -791,3 +791,128 @@ class ComputeKernelRegistry:
     def list_kernels(self) -> list:
         """List all registered kernel names."""
         return list(self._kernels.keys())
+
+    def get_or_create_activation(
+        self,
+        num_elements: int,
+        activation: str,
+        dtype: str
+    ) -> ComputeKernel:
+        """
+        Get or create an activation kernel for specific parameters.
+
+        Args:
+            num_elements: Number of elements to process
+            activation: Activation function name ("relu", "gelu", "silu", "swiglu", "softmax")
+            dtype: Data type (e.g., "fp16", "bf16")
+
+        Returns:
+            ComputeKernel for the activation function
+        """
+        name = f"{activation}_{num_elements}_{dtype}"
+        if name in self._kernels:
+            return self._kernels[name]
+
+        # Create new kernel
+        dtype_size = DTYPE_SIZES.get(dtype, 2)
+
+        # FLOPs per element for different activation functions
+        flops_per_element = {
+            "relu": 1,
+            "gelu": 10,
+            "silu": 8,
+            "swiglu": 16,
+            "softmax": 20,
+        }.get(activation, 5)
+
+        flops = flops_per_element * num_elements
+        bytes_accessed = num_elements * dtype_size * 2  # read + write
+
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMPUTE,
+        )
+        # Activations use VECTOR/CUDA Core
+        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
+                             ComputeUnitType.VECTOR_CUDA_CORE)
+        self._kernels[name] = kernel
+        return kernel
+
+    def get_or_create_norm(
+        self,
+        num_elements: int,
+        norm_type: str,
+        dtype: str
+    ) -> ComputeKernel:
+        """
+        Get or create a normalization kernel for specific parameters.
+
+        Args:
+            num_elements: Number of elements to process
+            norm_type: Normalization type ("layernorm", "rmsnorm")
+            dtype: Data type (e.g., "fp16", "bf16")
+
+        Returns:
+            ComputeKernel for the normalization operation
+        """
+        name = f"{norm_type}_{num_elements}_{dtype}"
+        if name in self._kernels:
+            return self._kernels[name]
+
+        # Create new kernel
+        dtype_size = DTYPE_SIZES.get(dtype, 2)
+
+        # FLOPs for Layer/RMS Normalization (~7 FLOPs per element)
+        flops = num_elements * 7
+        bytes_accessed = num_elements * dtype_size * 2
+
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMPUTE,
+        )
+        # Normalization uses VECTOR/CUDA Core
+        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
+                             ComputeUnitType.VECTOR_CUDA_CORE)
+        self._kernels[name] = kernel
+        return kernel
+
+    def get_or_create_softmax(
+        self,
+        batch_size: int,
+        seq_len: int,
+        num_heads: int,
+        dtype: str
+    ) -> ComputeKernel:
+        """
+        Get or create a softmax kernel for specific parameters.
+
+        Args:
+            batch_size: Batch size
+            seq_len: Sequence length
+            num_heads: Number of attention heads (used to calculate total elements)
+            dtype: Data type (e.g., "fp16", "bf16")
+
+        Returns:
+            ComputeKernel for the softmax operation
+        """
+        num_elements = batch_size * seq_len * num_heads
+        name = f"softmax_{num_elements}_{dtype}"
+        if name in self._kernels:
+            return self._kernels[name]
+
+        # Create new kernel
+        dtype_size = DTYPE_SIZES.get(dtype, 2)
+
+        # Softmax: ~20 FLOPs per element
+        flops = num_elements * 20
+        bytes_accessed = num_elements * dtype_size * 2  # read + write
+
+        config = KernelConfig(
+            name=name,
+            kernel_type=KernelType.COMPUTE,
+        )
+        # Softmax uses VECTOR/CUDA Core
+        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
+                             ComputeUnitType.VECTOR_CUDA_CORE)
+        self._kernels[name] = kernel
+        return kernel
