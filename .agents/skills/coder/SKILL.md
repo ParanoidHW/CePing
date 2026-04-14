@@ -63,146 +63,16 @@ ruff check llm_perf/models/*.py --select=F401,F841,E741
 - 私有函数/变量前缀 `_`: `_build_transformer_layer()`
 
 
----
+## 2 新增特性需求开发原则
 
-## 2. 模型架构规范
-
-### 2.1 模型配置类
-所有模型配置必须继承 `ModelConfig`，并实现 `__post_init__` 验证：
-
-```python
-@dataclass
-class ModelConfig(ModelConfig):
-    """模型配置类文档字符串.
-    
-    必须列出所有字段及其含义。
-    """
-    # 模型架构参数
-    hidden_size: int = 4096
-    num_layers: int = 32
-    num_attention_heads: int = 32
-    
-    # 派生参数（在 __post_init__ 中计算）
-    intermediate_size: int = 0  # 0 表示自动计算
-    
-    def __post_init__(self):
-        """验证和计算派生参数."""
-        if self.num_key_value_heads is None:
-            self.num_key_value_heads = self.num_attention_heads
-        if self.intermediate_size == 0:
-            # 默认比例（如 Llama 使用 8/3 ≈ 2.67x）
-            self.intermediate_size = int(self.hidden_size * 8 / 3)
-```
-
-### 2.2 模型类结构
-```python
-class ModelName(BaseModel):
-    """模型类文档字符串.
-    
-    描述模型架构特点、参考论文/实现链接。
-    """
-    
-    def __init__(self, config: ModelConfig):
-        super().__init__(config)
-        self._layers = self.build_layers()
-    
-    def build_layers(self) -> List[LayerConfig]:
-        """构建模型层配置.
-        
-        必须使用 kernel API，禁止手动计算 activation_bytes。
-        """
-        pass
-    
-    def _build_transformer_block(self, layer_idx: int, dtype_size: int) -> List[LayerConfig]:
-        """构建单个 transformer 层.
-        
-        私有方法前缀 `_`，返回 LayerConfig 列表。
-        """
-        pass
-```
-
-### 2.3 架构修正规范
-当修正模型架构时（如 Wan2.1 的 AdaLN）：
-1. **参考官方实现**：基于 HuggingFace 或论文官方代码
-2. **记录修正原因**：在代码注释中说明为什么修正
-3. **更新测试**：修正后必须更新对应测试用例
-4. **验证数值**：确保修正后的参数量和 FLOPs 与官方一致
-
-```python
-# Wan2.1 AdaLN 修正示例（参考 model.py line 276）
-# 修正前：错误的参数数量
-# 修正后：6 个调制参数（self-attn 的 shift/scale/gate + FFN 的 shift/scale/gate）
-# Cross-attention 无调制（model.py line 310 确认）
-num_modulation = 6 * cfg.hidden_size
-```
+- 新增模型评估时，可以调用``new-model``技能，对新模型进行评估支持；
+- 新增kernel评估时，可以调用``new-kernel``技能，对新kernel进行评估支持；
 
 ---
 
-## 3. Kernel API 使用规范
+## 3. Web 服务开发规范
 
-### 3.1 强制使用 Kernel API
-**所有模型的 `activation_bytes`/`params`/`FLOPs`/内存开销等特征，必须通过 kernel API 获取**，禁止kernel外手动计算。通信开销也应该通过kernel表达来独立处理通信量和不同拓扑下的开销。
-
-#### ✅ 正确做法
-```python
-from ..kernels import linear, rms_norm
-from ..kernels.utils import kernel_result_to_layer
-
-# 调用 kernel
-result = linear(
-    input=(seq_len, hidden_size),
-    weight=(out_dim, hidden_size),
-    bias=None,
-    dtype=cfg.dtype
-)
-
-# 使用工具函数创建 LayerConfig
-layers.append(kernel_result_to_layer(
-    name="layer_name",
-    result=result,
-))
-```
-
-#### ❌ 错误做法
-```python
-# kernel外独立计算（禁止）
-layers.append(LayerConfig(
-    name="layer_name",
-    input_shape=(1, seq_len, hidden_size),
-    output_shape=(1, seq_len, out_dim),
-    params_count=hidden_size * out_dim,
-    flops=result.flops,
-    activation_bytes=seq_len * out_dim * dtype_size,  # 禁止手动计算
-))
-```
-
-### 3.2 计算类Kernel 函数签名规范
-```python
-def kernel_name(
-    input: Tuple[int, ...],
-    weight: Optional[Tuple[int, ...]] = None,
-    bias: Optional[Tuple[int, ...]] = None,
-    dtype: str = "fp16"
-) -> KernelResult:
-    """Kernel 文档字符串.
-    
-    Args:
-        input: 输入形状
-        weight: 权重形状（如果有）
-        bias: 偏置形状（如果有）
-        dtype: 数据类型
-    
-    Returns:
-        KernelResult 包含 output, flops, bytes_accessed
-    """
-    pass
-```
-
----
-
-## 4. Web 服务开发规范
-
-### 4.1 详细分解展示
+### 3.1 详细分解展示
 Web 服务需要展示详细的性能分解数据：
 
 ```python
@@ -226,16 +96,16 @@ class PerformanceBreakdown:
         }
 ```
 
-### 4.2 前端展示规范
+### 3.2 前端展示规范
 - 使用表格展示详细分解
 - 支持按模型类型（Training/Inference/Pipeline）切换视图
 - 数值格式化：GB 保留 2 位小数，百分比保留 1 位小数
 
 ---
 
-## 5. 重构流程规范
+## 4. 重构流程规范
 
-### 5.1 重构前准备
+### 4.1 重构前准备
 1. **运行现有测试**：确保全部通过
 2. **创建备份分支**（可选）
 3. **识别修改范围**：使用 grep 查找需要修改的位置
@@ -245,7 +115,7 @@ class PerformanceBreakdown:
 grep -rn "activation_bytes=" llm_perf/models/*.py | grep -v "kernel_result_to_layer"
 ```
 
-### 5.2 重构步骤
+### 4.2 重构步骤
 1. **更新 utils**：添加/更新 `kernel_result_to_layer` 辅助函数
 2. **修改模型**：逐一修改模型文件
    - 添加 import：`from ..kernels.utils import kernel_result_to_layer`
@@ -254,13 +124,13 @@ grep -rn "activation_bytes=" llm_perf/models/*.py | grep -v "kernel_result_to_la
 3. **更新 kernel**：添加缺失的 kernel（如 conv2d）
 4. **更新 tests**：修改测试期望以反映新的层结构
 
-### 5.3 验证步骤
+### 4.3 验证步骤
 1. **代码检查**：`ruff check llm_perf/models/*.py --select=F401,F841,E741`
 2. **单元测试**：`python -m pytest tests/test_models.py -v`
 3. **集成测试**：运行相关模型测试
 4. **全量测试**：`python -m pytest tests/ -v`
 
-### 5.4 提交规范
+### 4.4 提交规范
 ```bash
 # 分阶段提交
 git add llm_perf/kernels/
@@ -280,16 +150,16 @@ git commit -m "refactor(models): migrate all models to kernel API
 
 ---
 
-## 6. 测试规范
+## 5. 测试规范
 
 本地conda环境base可以用于程序调试
 
-### 6.1 测试要求
+### 5.1 测试要求
 - **所有模型**必须通过对应的单元测试
 - **新增 kernel**必须添加对应的测试用例
 - **重构后**必须全量运行相关测试
 
-### 6.2 测试更新规范
+### 5.2 测试更新规范
 当模型结构变更时（如层数变化），需要更新测试：
 
 ```python
@@ -304,7 +174,7 @@ class TestLlamaModel:
         self.assertEqual(len(model.layers), expected)
 ```
 
-### 6.3 测试命令
+### 5.3 测试命令
 ```bash
 # 模型测试
 python -m pytest tests/test_models.py -v
@@ -316,20 +186,20 @@ python -m pytest tests/test_deepseek.py -v
 python -m pytest tests/ -v
 ```
 
-### 6.4 额外测试要求
+### 5.4 额外测试要求
 
-如果有测试样例是web服务相关的，无法通过python脚本直接验证，可以启动web服务进行验证。确保web服务功能ok。
+如果有测试样例是web服务相关的，无法通过python脚本直接验证，需要启动web服务进行验证。确保web服务功能ok。
 
-### 6.5 测试通过标准
+### 5.5 测试通过标准
 - 无 Error 或 Failure
 - ruff 检查无警告
 - 代码覆盖率不降低（可选）
 
 ---
 
-## 7. 文档规范
+## 6. 文档规范
 
-### 7.1 代码注释
+### 6.1 代码注释
 - 类和方法必须有 docstring
 - 复杂逻辑需要行内注释
 - 架构修正必须说明参考来源
@@ -344,14 +214,14 @@ def _build_modulation_layer(self, layer_idx: int):
     """
 ```
 
-### 7.2 文档更新
+### 6.2 文档更新
 - 新增 kernel 更新 `docs/kernel_api.md`
 - 重构指南更新 `docs/kernel_migration_guide.md`
 - 示例代码放在 `examples/` 目录
 
 ---
 
-## 8. 检查清单
+## 7. 检查清单
 
 ### 开发前
 - [ ] 理解需求和设计原则
@@ -373,7 +243,7 @@ def _build_modulation_layer(self, layer_idx: int):
 
 ---
 
-## 9. 工具命令速查
+## 8. 工具命令速查
 
 ```bash
 # 代码检查
