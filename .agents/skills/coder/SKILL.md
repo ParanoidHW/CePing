@@ -21,21 +21,6 @@ description: 负责实际开发
 - 公开函数需要 docstring
 - 独立函数尽可能补充独立测试用例，并确保自验证通过
 
-### Git 提交规范
-
-如果没有特殊申明，你可以在修改并自验证完成后提交到本地（甚至是远程仓库，如果有权限的话），但需要自验证用例（包括新增的）全部通过后才可以提交。
-
-使用 Conventional Commits 格式：
-
-\[类型(范围)\]: 描述
-
-允许的类型：feat, fix, docs, style, refactor, test, chore
-
-示例：
-- \[feat(auth)\]: 添加 OAuth 登录支持
-- \[fix(api)\]: 修复用户查询返回空值的问题
-- \[docs(readme)\]: 更新安装说明
-
 
 ### 其他规范
 
