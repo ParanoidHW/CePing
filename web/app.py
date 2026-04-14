@@ -323,13 +323,7 @@ def evaluate_training():
         return jsonify(
             {
                 "success": True,
-                "result": {
-                    "samples_per_sec": result.samples_per_sec,
-                    "tokens_per_sec": result.tokens_per_sec,
-                    "time_per_step_sec": result.time_per_step_sec,
-                    "memory_per_gpu_gb": result.memory_per_gpu_gb,
-                    "breakdown": result.breakdown.to_dict() if result.breakdown else None,
-                },
+                "result": result.to_dict(),
             }
         )
 
@@ -375,26 +369,10 @@ def evaluate_inference():
             generation_len=data["inference"]["generation_len"],
         )
 
-        # Calculate overall TPS (total tokens / total time)
-        total_tokens = data.get("batch_size", 1) * (
-            data.get("prompt_len", 512) + data.get("generation_len", 128)
-        )
-        overall_tps = (
-            total_tokens / result.total_time_sec if result.total_time_sec > 0 else 0
-        )
-
         return jsonify(
             {
                 "success": True,
-                "result": {
-                    "prefill_time_sec": result.prefill_time_sec,
-                    "decode_time_per_step_sec": result.decode_time_per_step_sec,
-                    "decode_tokens_per_sec": result.decode_tokens_per_sec,
-                    "total_time_sec": result.total_time_sec,
-                    "overall_tps": overall_tps,
-                    "memory_per_gpu_gb": result.memory_per_gpu_gb,
-                    "kv_cache_memory_gb": result.kv_cache_memory_gb,
-                },
+                "result": result.to_dict(),
             }
         )
 
@@ -467,13 +445,7 @@ def evaluate_pipeline(pipeline_name: str):
             return jsonify(
                 {
                     "success": True,
-                    "result": {
-                        "total_time_sec": result.total_time_sec,
-                        "step_times": result.step_times,
-                        "memory_peak_gb": result.memory_peak_gb,
-                        "throughput": result.throughput,
-                        "metadata": result.metadata,
-                    },
+                    "result": result.to_dict(),
                 }
             )
 

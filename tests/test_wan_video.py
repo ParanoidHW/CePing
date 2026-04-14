@@ -105,11 +105,14 @@ class TestWanDiT(unittest.TestCase):
     def test_time_embedding_mlp(self):
         """Test time embedding MLP layers."""
         model = create_wan_t2v_14b_dit()
-        time_mlp = model.get_layer_by_name("time_mlp_in")
+        time_mlp = model.get_layer_by_name("time_embedding_in")
         self.assertIsNotNone(time_mlp)
         
-        time_out = model.get_layer_by_name("time_mlp_out")
+        time_out = model.get_layer_by_name("time_embedding_out")
         self.assertIsNotNone(time_out)
+        
+        time_proj = model.get_layer_by_name("time_projection")
+        self.assertIsNotNone(time_proj)
 
     def test_transformer_blocks(self):
         """Test transformer blocks are created."""

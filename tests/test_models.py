@@ -134,8 +134,8 @@ class TestLlamaModel(unittest.TestCase):
     def test_layers_count(self):
         """Test correct number of layers is built."""
         model = LlamaModel(self.config)
-        # embedding + 2 transformer layers (11 sublayers each) + final_norm + lm_head
-        expected = 1 + 2 * 11 + 2
+        # embedding + 2 transformer layers (12 sublayers each: 6 attention + 6 ffn) + final_norm + lm_head
+        expected = 1 + 2 * 12 + 2
         self.assertEqual(len(model.layers), expected)
 
     def test_layer_names(self):

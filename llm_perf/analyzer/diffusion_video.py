@@ -10,7 +10,7 @@ Based on Wan2.1 architecture with Flow Matching framework.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 from ..models.wan_video import WanTextEncoder, WanDiTModel, WanVAEModel
 from ..hardware.device import Device, ComputeUnitType
@@ -49,7 +49,7 @@ class DiffusionVideoResult:
     component_breakdown: Dict[str, float]
 
     # Detailed breakdown (optional)
-    detailed_breakdown: DetailedPerformanceResult = None
+    detailed_breakdown: Optional[DetailedPerformanceResult] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -214,16 +214,16 @@ class DiffusionVideoAnalyzer:
         total_time: float,
         pixels_per_sec: float,
     ) -> DetailedPerformanceResult:
-        """Generate detailed breakdown for the pipeline."""
-        # Create generators for each sub-model
+        """Generate detailed breakdown for the pipeline (inference mode)."""
+        # Create generators for each sub-model (is_training=False for inference)
         text_encoder_gen = BreakdownGenerator(
-            self.text_encoder, self.device, self.cluster, self.strategy
+            self.text_encoder, self.device, self.cluster, self.strategy, is_training=False
         )
         dit_gen = BreakdownGenerator(
-            self.dit, self.device, self.cluster, self.strategy
+            self.dit, self.device, self.cluster, self.strategy, is_training=False
         )
         vae_gen = BreakdownGenerator(
-            self.vae, self.device, self.cluster, self.strategy
+            self.vae, self.device, self.cluster, self.strategy, is_training=False
         )
 
         # Create pipeline generator

@@ -1,10 +1,12 @@
-"""Llama model implementation."""
+"""Llama model implementation using kernel API."""
 
 from dataclasses import dataclass
 from typing import List
 
 from .base import BaseModel, ModelConfig, LayerConfig
 from ..utils.constants import DTYPE_SIZES
+from ..kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding
+from ..kernels.utils import kernel_result_to_layer
 
 
 @dataclass
@@ -20,184 +22,244 @@ class LlamaConfig(ModelConfig):
 
 
 class LlamaModel(BaseModel):
-    """Llama model implementation."""
+    """Llama model implementation using kernel API."""
     
     def __init__(self, config: LlamaConfig):
         super().__init__(config)
         self._layers = self.build_layers()
     
     def build_layers(self) -> List[LayerConfig]:
-        """Build Llama layer configurations."""
+        """Build Llama layer configurations using kernel API."""
         layers = []
         cfg = self.config
         dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
         
-        # Embedding layer
-        embed_params = cfg.vocab_size * cfg.hidden_size
-        layers.append(LayerConfig(
+        # Embedding layer using embedding kernel
+        emb_result = embedding(
+            num_embeddings=cfg.vocab_size,
+            embedding_dim=cfg.hidden_size,
+            input_shape=(1, cfg.max_seq_len),
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name="embedding",
-            input_shape=(1, 1),  # (batch, seq_len) - token ids
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=embed_params,
-            flops=0,  # Lookup table, negligible compute
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=emb_result,
+            params=cfg.vocab_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # Build each transformer layer
         for i in range(cfg.num_layers):
             layers.extend(self._build_transformer_layer(i, dtype_size))
         
-        # Final norm and LM head
-        layers.append(LayerConfig(
+        # Final norm using rms_norm kernel
+        final_norm_result = rms_norm(
+            input=(1, cfg.max_seq_len, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name="final_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,  # weight only
-            flops=cfg.hidden_size * 5,  # rmsnorm: square, mean, add, rsqrt, mul
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=final_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # LM head using linear kernel
+        lm_head_result = linear(
+            input=(cfg.max_seq_len, cfg.hidden_size),
+            weight=(cfg.vocab_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name="lm_head",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.vocab_size),
-            params_count=cfg.hidden_size * cfg.vocab_size,
-            flops=cfg.hidden_size * cfg.vocab_size * 2,
-            activation_bytes=cfg.vocab_size * dtype_size,
+            result=lm_head_result,
+            params=cfg.hidden_size * cfg.vocab_size,
+            dtype_size=dtype_size
         ))
         
         return layers
     
     def _build_transformer_layer(self, layer_idx: int, dtype_size: int) -> List[LayerConfig]:
-        """Build a single transformer layer (attention + FFN)."""
+        """Build a single transformer layer (attention + FFN) using kernel API."""
         layers = []
         cfg = self.config
         prefix = f"layer_{layer_idx}"
+        seq_len = cfg.max_seq_len
+        m = seq_len  # Flattened batch*seq for linear ops
         
         # === Attention Components ===
         head_dim = cfg.hidden_size // cfg.num_attention_heads
         q_heads = cfg.num_attention_heads
         kv_heads = cfg.num_key_value_heads or cfg.num_attention_heads
         
-        # Q, K, V projections
-        q_params = cfg.hidden_size * (q_heads * head_dim)
-        kv_params = cfg.hidden_size * (kv_heads * head_dim)
-        
-        layers.append(LayerConfig(
-            name=f"{prefix}_q_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, q_heads * head_dim),
-            params_count=q_params,
-            flops=q_params * 2,
-            activation_bytes=q_heads * head_dim * dtype_size,
-        ))
-        
-        layers.append(LayerConfig(
-            name=f"{prefix}_k_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, kv_heads * head_dim),
-            params_count=kv_params,
-            flops=kv_params * 2,
-            activation_bytes=kv_heads * head_dim * dtype_size,
-        ))
-        
-        layers.append(LayerConfig(
-            name=f"{prefix}_v_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, kv_heads * head_dim),
-            params_count=kv_params,
-            flops=kv_params * 2,
-            activation_bytes=kv_heads * head_dim * dtype_size,
-        ))
-        
-        # Attention computation (Q*K^T, softmax, *V)
-        # Simplified estimation
-        seq_len = cfg.max_seq_len
-        attn_flops = (
-            seq_len * seq_len * q_heads * head_dim * 2 +  # QK^T
-            seq_len * seq_len * q_heads * 5 +              # softmax (exp, sum, div)
-            seq_len * seq_len * q_heads * head_dim * 2     # *V
+        # Pre-attention RMSNorm
+        input_norm_result = rms_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
         )
+        layers.append(kernel_result_to_layer(
+            name=f"{prefix}_input_norm",
+            result=input_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
+        ))
         
-        layers.append(LayerConfig(
+        # Q projection using linear kernel
+        q_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(q_heads * head_dim, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"{prefix}_q_proj",
+            result=q_result,
+            params=cfg.hidden_size * q_heads * head_dim,
+            dtype_size=dtype_size
+        ))
+        
+        # K projection using linear kernel
+        k_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(kv_heads * head_dim, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"{prefix}_k_proj",
+            result=k_result,
+            params=cfg.hidden_size * kv_heads * head_dim,
+            dtype_size=dtype_size
+        ))
+        
+        # V projection using linear kernel
+        v_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(kv_heads * head_dim, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"{prefix}_v_proj",
+            result=v_result,
+            params=cfg.hidden_size * kv_heads * head_dim,
+            dtype_size=dtype_size
+        ))
+        
+        # Attention computation using scaled_dot_product_attention kernel
+        attn_result = scaled_dot_product_attention(
+            query=(1, q_heads, seq_len, head_dim),
+            key=(1, kv_heads, seq_len, head_dim),
+            value=(1, kv_heads, seq_len, head_dim),
+            is_causal=True,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_attention",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=0,  # No params, just computation
-            flops=attn_flops,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=attn_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        # O projection
-        o_params = cfg.hidden_size * cfg.hidden_size
-        layers.append(LayerConfig(
+        # O projection using linear kernel
+        o_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=o_params,
-            flops=o_params * 2,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=o_result,
+            params=cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        # Attention output norm/residual (simplified)
-        layers.append(LayerConfig(
-            name=f"{prefix}_attn_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,
-            flops=cfg.hidden_size * 5,
-            activation_bytes=cfg.hidden_size * dtype_size,
+        # Post-attention RMSNorm
+        attn_norm_result = rms_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"{prefix}_post_attn_norm",
+            result=attn_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # === FFN Components ===
         # Llama uses SwiGLU: up_proj, gate_proj, down_proj
         ffn_intermediate = cfg.intermediate_size
         
-        layers.append(LayerConfig(
+        # Up projection using linear kernel
+        up_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(ffn_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_up_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=cfg.hidden_size * ffn_intermediate,
-            flops=cfg.hidden_size * ffn_intermediate * 2,
-            activation_bytes=ffn_intermediate * dtype_size,
+            result=up_result,
+            params=cfg.hidden_size * ffn_intermediate,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # Gate projection using linear kernel
+        gate_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(ffn_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_gate_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=cfg.hidden_size * ffn_intermediate,
-            flops=cfg.hidden_size * ffn_intermediate * 2,
-            activation_bytes=ffn_intermediate * dtype_size,
+            result=gate_result,
+            params=cfg.hidden_size * ffn_intermediate,
+            dtype_size=dtype_size
         ))
         
-        # SwiGLU activation (multiply + swish)
-        layers.append(LayerConfig(
+        # SwiGLU activation using silu kernel (x * sigmoid(x))
+        swiglu_result = silu(
+            input=(1, seq_len, ffn_intermediate),
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_swiglu",
-            input_shape=(1, 1, ffn_intermediate),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=0,
-            flops=ffn_intermediate * 8,  # sigmoid, mul, mul
-            activation_bytes=ffn_intermediate * dtype_size,
+            result=swiglu_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # Down projection using linear kernel
+        down_result = linear(
+            input=(m, ffn_intermediate),
+            weight=(cfg.hidden_size, ffn_intermediate),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_down_proj",
-            input_shape=(1, 1, ffn_intermediate),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=ffn_intermediate * cfg.hidden_size,
-            flops=ffn_intermediate * cfg.hidden_size * 2,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=down_result,
+            params=ffn_intermediate * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        # FFN norm/residual
-        layers.append(LayerConfig(
+        # Post-FFN RMSNorm
+        ffn_norm_result = rms_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,
-            flops=cfg.hidden_size * 5,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=ffn_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         return layers

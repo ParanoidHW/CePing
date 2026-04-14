@@ -12,11 +12,12 @@ Reference HF model: https://huggingface.co/Wan-AI/Wan2.1-T2V-14B
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
-import math
+from typing import List, Tuple
 
 from .base import BaseModel, ModelConfig, LayerConfig
 from ..utils.constants import DTYPE_SIZES
+from ..kernels import linear, layer_norm, rms_norm, gelu, silu, conv3d, embedding
+from ..kernels.utils import kernel_result_to_layer
 
 
 @dataclass
@@ -145,39 +146,47 @@ class WanTextEncoder(BaseModel):
         self._layers = self.build_layers()
     
     def build_layers(self) -> List[LayerConfig]:
-        """Build T5 encoder layers."""
+        """Build T5 encoder layers using kernel API."""
         layers = []
         cfg = self.config
         dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
         
-        # Token embedding
-        layers.append(LayerConfig(
-            name="embed_tokens",
+        # Token embedding using embedding kernel
+        emb_result = embedding(
+            num_embeddings=cfg.vocab_size,
+            embedding_dim=cfg.hidden_size,
             input_shape=(1, cfg.max_text_len),
-            output_shape=(1, cfg.max_text_len, cfg.hidden_size),
-            params_count=cfg.vocab_size * cfg.hidden_size,
-            flops=0,  # Lookup
-            activation_bytes=cfg.max_text_len * cfg.hidden_size * dtype_size,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name="embed_tokens",
+            result=emb_result,
+            params=cfg.vocab_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # Encoder layers (24 layers for umT5-XXL)
         for i in range(cfg.num_layers):
             layers.extend(self._build_encoder_block(i, dtype_size))
         
-        # Final layer norm
-        layers.append(LayerConfig(
+        # Final layer norm using layer_norm kernel
+        ln_result = layer_norm(
+            input=(1, cfg.max_text_len, cfg.hidden_size),
+            normalized_shape=(cfg.hidden_size,),
+            elementwise_affine=True,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name="final_layer_norm",
-            input_shape=(1, cfg.max_text_len, cfg.hidden_size),
-            output_shape=(1, cfg.max_text_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * 2,
-            flops=cfg.max_text_len * cfg.hidden_size * 7,
-            activation_bytes=cfg.max_text_len * cfg.hidden_size * dtype_size,
+            result=ln_result,
+            params=cfg.hidden_size * 2,  # weight + bias
+            dtype_size=dtype_size
         ))
         
         return layers
     
     def _build_encoder_block(self, layer_idx: int, dtype_size: int) -> List[LayerConfig]:
-        """Build a single T5 encoder block.
+        """Build a single T5 encoder block using kernel API.
         
         Structure: Self-Attn -> LayerNorm -> FFN -> LayerNorm
         """
@@ -186,97 +195,126 @@ class WanTextEncoder(BaseModel):
         seq_len = cfg.max_text_len
         
         # Self-attention with relative positional bias
-        # Q, K, V projections
-        qkv_params = 3 * cfg.hidden_size * cfg.hidden_size
-        qkv_flops = 3 * seq_len * cfg.hidden_size * cfg.hidden_size
+        # Q, K, V projections using linear kernel
+        # Each projection: (seq_len, hidden_size) @ (hidden_size, hidden_size)
+        m = seq_len
         
-        layers.append(LayerConfig(
+        # QKV projections: 3 separate linear layers
+        qkv_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(3 * cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_qkv",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, 3 * cfg.hidden_size),
-            params_count=qkv_params,
-            flops=qkv_flops,
-            activation_bytes=seq_len * 3 * cfg.hidden_size * dtype_size,
+            result=qkv_result,
+            params=3 * cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # Attention computation (Q @ K^T @ V)
+        # Using bmm kernel for batch matrix multiply
         head_dim = cfg.hidden_size // cfg.num_attention_heads
-        attn_flops = (
-            2 * seq_len * seq_len * cfg.hidden_size +  # QK^T
-            2 * seq_len * seq_len * cfg.hidden_size    # @V
+        from ..kernels import bmm
+        
+        # Softmax + @V
+        attn_v_result = bmm(
+            input=(cfg.num_attention_heads, seq_len, seq_len),
+            mat2=(cfg.num_attention_heads, seq_len, head_dim),
+            dtype=cfg.dtype
         )
         
-        layers.append(LayerConfig(
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_compute",
-            input_shape=(1, seq_len, 3 * cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=0,
-            flops=attn_flops,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=attn_v_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        # Output projection
-        layers.append(LayerConfig(
+        # Output projection using linear kernel
+        o_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_o",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * cfg.hidden_size,
-            flops=seq_len * cfg.hidden_size * cfg.hidden_size,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=o_result,
+            params=cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        # Layer norm after attention
-        layers.append(LayerConfig(
+        # Layer norm after attention using layer_norm kernel
+        ln1_result = layer_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            normalized_shape=(cfg.hidden_size,),
+            elementwise_affine=True,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_post_attn_norm",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * 2,
-            flops=seq_len * cfg.hidden_size * 7,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=ln1_result,
+            params=cfg.hidden_size * 2,  # weight + bias
+            dtype_size=dtype_size
         ))
         
         # FFN (T5 uses gated GeLU: wi_0, wi_1 -> wo)
-        # Two input projections
-        ffn_in_params = 2 * cfg.hidden_size * cfg.intermediate_size
-        ffn_in_flops = 2 * seq_len * cfg.hidden_size * cfg.intermediate_size
-        
-        layers.append(LayerConfig(
+        # Two input projections using linear kernel
+        ffn_in_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(2 * cfg.intermediate_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_in",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, 2 * cfg.intermediate_size),
-            params_count=ffn_in_params,
-            flops=ffn_in_flops,
-            activation_bytes=seq_len * 2 * cfg.intermediate_size * dtype_size,
+            result=ffn_in_result,
+            params=2 * cfg.hidden_size * cfg.intermediate_size,
+            dtype_size=dtype_size
         ))
         
-        # GeLU activation and element-wise product (gated)
-        layers.append(LayerConfig(
+        # GeLU activation using gelu kernel
+        from ..kernels import gelu
+        gelu_result = gelu(
+            input=(1, seq_len, cfg.intermediate_size),
+            approximate="tanh",
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_act",
-            input_shape=(1, seq_len, 2 * cfg.intermediate_size),
-            output_shape=(1, seq_len, cfg.intermediate_size),
-            params_count=0,
-            flops=seq_len * cfg.intermediate_size * 10,  # GeLU ~10 FLOPs
-            activation_bytes=seq_len * cfg.intermediate_size * dtype_size,
+            result=gelu_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        # Output projection
-        layers.append(LayerConfig(
+        # Output projection using linear kernel
+        ffn_out_result = linear(
+            input=(m, cfg.intermediate_size),
+            weight=(cfg.hidden_size, cfg.intermediate_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_out",
-            input_shape=(1, seq_len, cfg.intermediate_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.intermediate_size * cfg.hidden_size,
-            flops=seq_len * cfg.intermediate_size * cfg.hidden_size,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=ffn_out_result,
+            params=cfg.intermediate_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        # Final layer norm
-        layers.append(LayerConfig(
+        # Final layer norm using layer_norm kernel
+        ln2_result = layer_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            normalized_shape=(cfg.hidden_size,),
+            elementwise_affine=True,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_final_norm",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * 2,
-            flops=seq_len * cfg.hidden_size * 7,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=ln2_result,
+            params=cfg.hidden_size * 2,
+            dtype_size=dtype_size
         ))
         
         return layers
@@ -318,80 +356,132 @@ class WanDiTModel(BaseModel):
         return layers
     
     def _build_patchify_layer(self, dtype_size: int) -> LayerConfig:
-        """Build patchify convolution layer."""
+        """Build patchify convolution layer using conv3d kernel."""
         cfg = self.config
         pt, ph, pw = cfg.patch_size
         
-        # Output sequence length after patchify
-        out_t = cfg.latent_num_frames // pt
-        out_h = cfg.latent_height // ph
-        out_w = cfg.latent_width // pw
-        seq_len = out_t * out_h * out_w
-        
-        # 3D conv for patchify
-        kernel_params = (pt * ph * pw * cfg.in_channels * cfg.hidden_size)
-        
-        # FLOPs for convolution
-        flops = (
-            2 * seq_len * pt * ph * pw *
-            cfg.in_channels * cfg.hidden_size
+        # 3D conv for patchify using kernel API
+        conv_result = conv3d(
+            input=(1, cfg.in_channels, cfg.latent_num_frames, cfg.latent_height, cfg.latent_width),
+            weight=(cfg.hidden_size, cfg.in_channels, pt, ph, pw),
+            bias=None,
+            stride=(pt, ph, pw),
+            padding=(0, 0, 0),
+            dtype=cfg.dtype
         )
         
-        return LayerConfig(
+        kernel_params = pt * ph * pw * cfg.in_channels * cfg.hidden_size
+        
+        return kernel_result_to_layer(
             name="patchify",
-            input_shape=(1, cfg.in_channels, cfg.latent_num_frames, 
-                        cfg.latent_height, cfg.latent_width),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=kernel_params,
-            flops=flops,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=conv_result,
+            params=kernel_params,
+            dtype_size=dtype_size
         )
     
     def _build_time_embedding_mlp(self, dtype_size: int) -> List[LayerConfig]:
-        """Build time embedding MLP (shared across blocks)."""
+        """Build time embedding MLP (shared across all blocks) using kernel API.
+        
+        From Wan2.1 reference (model.py line 462-464):
+        - time_embedding: freq_dim -> dim (with SiLU)
+        - time_projection: dim -> dim * 6 (projects to 6 modulation params)
+        """
         layers = []
         cfg = self.config
         
-        # Time embedding uses freq_dim -> hidden_size
-        # MLP: freq_dim -> hidden_size (with SiLU)
-        layers.append(LayerConfig(
-            name="time_mlp_in",
-            input_shape=(1, cfg.freq_dim),
-            output_shape=(1, cfg.hidden_size),
-            params_count=cfg.freq_dim * cfg.hidden_size,
-            flops=cfg.freq_dim * cfg.hidden_size,
-            activation_bytes=cfg.hidden_size * dtype_size,
+        # Time embedding: freq_dim -> hidden_size (with SiLU)
+        te_in_result = linear(
+            input=(1, cfg.freq_dim),
+            weight=(cfg.hidden_size, cfg.freq_dim),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name="time_embedding_in",
+            result=te_in_result,
+            params=cfg.freq_dim * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # SiLU activation
-        layers.append(LayerConfig(
-            name="time_mlp_act",
-            input_shape=(1, cfg.hidden_size),
-            output_shape=(1, cfg.hidden_size),
-            params_count=0,
-            flops=cfg.hidden_size * 8,  # SiLU ~8 FLOPs
-            activation_bytes=cfg.hidden_size * dtype_size,
+        silu_result = silu(
+            input=(1, cfg.hidden_size),
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name="time_embedding_act",
+            result=silu_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        # Output projection (predicts 6 modulation parameters)
+        # Output projection to shared time embedding
+        te_out_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name="time_embedding_out",
+            result=te_out_result,
+            params=cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
+        ))
+        
+        # Time projection: projects time embedding to 6 modulation parameters per block
+        tp_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(6 * cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name="time_projection",
+            result=tp_result,
+            params=cfg.hidden_size * 6 * cfg.hidden_size,
+            dtype_size=dtype_size
+        ))
+        
+        return layers
+    
+    def _build_modulation_layer(self, layer_idx: int, dtype_size: int, seq_len: int) -> List[LayerConfig]:
+        """Build modulation layer for a block.
+        
+        From Wan2.1 reference (model.py line 276):
+        - Each block has self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
+        - 6 modulation parameters: shift/scale/gate for self-attn + shift/scale/gate for FFN
+        - Cross-attention does NOT use modulation (model.py line 310)
+        """
+        layers = []
+        cfg = self.config
+        
+        # Modulation: 6 vectors of hidden_size
+        # e[0], e[1], e[2]: shift, scale, gate for self-attention
+        # e[3], e[4], e[5]: shift, scale, gate for FFN
+        num_modulation = 6 * cfg.hidden_size
+        
+        # Layer-specific modulation parameters (learned)
+        # NOTE: Manual calculation for custom modulation layer (parameter storage layer)
         layers.append(LayerConfig(
-            name="time_mlp_out",
-            input_shape=(1, cfg.hidden_size),
-            output_shape=(1, 6 * cfg.hidden_size),  # 6 modulation params per block
-            params_count=cfg.hidden_size * 6 * cfg.hidden_size,
-            flops=cfg.hidden_size * 6 * cfg.hidden_size,
-            activation_bytes=6 * cfg.hidden_size * dtype_size,
+            name=f"block_{layer_idx}_modulation",
+            input_shape=(1, 6, cfg.hidden_size),  # (self_attn_shift, self_attn_scale, self_attn_gate, ffn_shift, ffn_scale, ffn_gate)
+            output_shape=(1, 6, cfg.hidden_size),
+            params_count=num_modulation,  # 6 * hidden_size learned parameters
+            flops=seq_len * cfg.hidden_size * 6,  # Apply modulation: scale, shift, gate ops
+            activation_bytes=num_modulation * dtype_size,
         ))
         
         return layers
     
     def _build_transformer_block(self, layer_idx: int, dtype_size: int) -> List[LayerConfig]:
-        """Build a single DiT transformer block.
+        """Build a single DiT transformer block using kernel API.
         
-        Structure:
-        1. Self-attention (spatial-temporal)
-        2. Cross-attention (text conditioning)
-        3. FFN (with time modulation via AdaLN)
+        Structure based on Wan2.1 reference (model.py line 238-317):
+        1. Modulation (6 params: shift/scale/gate for self-attn + shift/scale/gate for FFN)
+        2. LayerNorm + Self-attention (with Q/K RMSNorm)
+        3. LayerNorm + Cross-attention (NO modulation)
+        4. LayerNorm + FFN (with modulation)
         """
         layers = []
         cfg = self.config
@@ -404,135 +494,214 @@ class WanDiTModel(BaseModel):
             (cfg.latent_width // pw)
         )
         text_len = 512  # Max text length
+        m = seq_len  # Flattened batch*seq for linear ops
+        
+        # === Modulation (6 parameters per block) ===
+        layers.extend(self._build_modulation_layer(layer_idx, dtype_size, seq_len))
         
         # === Self-Attention ===
-        # QKV projection
-        qkv_params = 3 * cfg.hidden_size * cfg.hidden_size
-        qkv_flops = 3 * seq_len * cfg.hidden_size * cfg.hidden_size
-        
-        layers.append(LayerConfig(
-            name=f"block_{layer_idx}_self_attn_qkv",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, 3 * cfg.hidden_size),
-            params_count=qkv_params,
-            flops=qkv_flops,
-            activation_bytes=seq_len * 3 * cfg.hidden_size * dtype_size,
-        ))
-        
-        # Self-attention computation
-        attn_flops = (
-            2 * seq_len * seq_len * cfg.hidden_size +  # QK^T
-            2 * seq_len * seq_len * cfg.hidden_size    # @V
+        # Pre-self-attn LayerNorm (norm1 in Wan2.1, no elementwise_affine)
+        ln1_result = layer_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            normalized_shape=(cfg.hidden_size,),
+            elementwise_affine=False,
+            dtype=cfg.dtype
         )
-        
-        layers.append(LayerConfig(
-            name=f"block_{layer_idx}_self_attn_compute",
-            input_shape=(1, seq_len, 3 * cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=0,
-            flops=attn_flops,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+        layers.append(kernel_result_to_layer(
+            name=f"block_{layer_idx}_norm1",
+            result=ln1_result,
+            params=0,  # LayerNorm without elementwise_affine
+            dtype_size=dtype_size
         ))
         
-        # Output projection
-        layers.append(LayerConfig(
+        # QKV projection using linear kernel
+        qkv_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(3 * cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"block_{layer_idx}_self_attn_qkv",
+            result=qkv_result,
+            params=3 * cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
+        ))
+        
+        # Q/K RMSNorm using rms_norm kernel
+        qk_norm_result = rms_norm(
+            input=(1, seq_len, 2 * cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"block_{layer_idx}_self_attn_qk_norm",
+            result=qk_norm_result,
+            params=2 * cfg.hidden_size,
+            dtype_size=dtype_size
+        ))
+        
+        # Self-attention computation using scaled_dot_product_attention kernel
+        head_dim = cfg.hidden_size // cfg.num_attention_heads
+        from ..kernels import scaled_dot_product_attention
+        attn_result = scaled_dot_product_attention(
+            query=(1, cfg.num_attention_heads, seq_len, head_dim),
+            key=(1, cfg.num_attention_heads, seq_len, head_dim),
+            value=(1, cfg.num_attention_heads, seq_len, head_dim),
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"block_{layer_idx}_self_attn_compute",
+            result=attn_result,
+            params=0,
+            dtype_size=dtype_size
+        ))
+        
+        # Output projection using linear kernel
+        o_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_o",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * cfg.hidden_size,
-            flops=seq_len * cfg.hidden_size * cfg.hidden_size,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=o_result,
+            params=cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # === Cross-Attention (Text Conditioning) ===
-        # Q from visual, KV from text
-        # Q projection
-        layers.append(LayerConfig(
+        # Pre-cross-attn LayerNorm with elementwise_affine
+        ln3_result = layer_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            normalized_shape=(cfg.hidden_size,),
+            elementwise_affine=True,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"block_{layer_idx}_norm3",
+            result=ln3_result,
+            params=cfg.hidden_size * 2,
+            dtype_size=dtype_size
+        ))
+        
+        # Q projection for cross-attn
+        cross_q_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_q",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * cfg.hidden_size,
-            flops=seq_len * cfg.hidden_size * cfg.hidden_size,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=cross_q_result,
+            params=cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # K, V projections from text
-        kv_params = 2 * cfg.text_dim * cfg.hidden_size
-        kv_flops = 2 * text_len * cfg.text_dim * cfg.hidden_size
-        
-        layers.append(LayerConfig(
+        kv_result = linear(
+            input=(text_len, cfg.text_dim),
+            weight=(2 * cfg.hidden_size, cfg.text_dim),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_kv",
-            input_shape=(1, text_len, cfg.text_dim),
-            output_shape=(1, text_len, 2 * cfg.hidden_size),
-            params_count=kv_params,
-            flops=kv_flops,
-            activation_bytes=text_len * 2 * cfg.hidden_size * dtype_size,
+            result=kv_result,
+            params=2 * cfg.text_dim * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # Cross-attention computation
-        cross_attn_flops = (
-            2 * seq_len * text_len * cfg.hidden_size +  # QK^T
-            2 * seq_len * text_len * cfg.hidden_size    # @V
+        cross_attn_result = scaled_dot_product_attention(
+            query=(1, cfg.num_attention_heads, seq_len, head_dim),
+            key=(1, cfg.num_attention_heads, text_len, head_dim),
+            value=(1, cfg.num_attention_heads, text_len, head_dim),
+            dtype=cfg.dtype
         )
-        
-        layers.append(LayerConfig(
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_compute",
-            input_shape=(1, seq_len + text_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=0,
-            flops=cross_attn_flops,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=cross_attn_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
         # Output projection
-        layers.append(LayerConfig(
+        cross_o_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(cfg.hidden_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_o",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.hidden_size * cfg.hidden_size,
-            flops=seq_len * cfg.hidden_size * cfg.hidden_size,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=cross_o_result,
+            params=cfg.hidden_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        # === FFN with AdaLN modulation ===
-        # MLP: hidden_size -> intermediate_size -> hidden_size
-        # With gated GeLU similar to T5
-        ffn_in_params = 2 * cfg.hidden_size * cfg.intermediate_size
-        ffn_in_flops = 2 * seq_len * cfg.hidden_size * cfg.intermediate_size
+        # === FFN with Modulation ===
+        # Pre-FFN LayerNorm
+        ln2_result = layer_norm(
+            input=(1, seq_len, cfg.hidden_size),
+            normalized_shape=(cfg.hidden_size,),
+            elementwise_affine=False,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name=f"block_{layer_idx}_norm2",
+            result=ln2_result,
+            params=0,
+            dtype_size=dtype_size
+        ))
         
-        layers.append(LayerConfig(
+        # FFN input (gated)
+        ffn_in_result = linear(
+            input=(m, cfg.hidden_size),
+            weight=(2 * cfg.intermediate_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_in",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, 2 * cfg.intermediate_size),
-            params_count=ffn_in_params,
-            flops=ffn_in_flops,
-            activation_bytes=seq_len * 2 * cfg.intermediate_size * dtype_size,
+            result=ffn_in_result,
+            params=2 * cfg.hidden_size * cfg.intermediate_size,
+            dtype_size=dtype_size
         ))
         
-        # GeLU activation (gated)
-        layers.append(LayerConfig(
+        # GeLU activation
+        gelu_result = gelu(
+            input=(1, seq_len, cfg.intermediate_size),
+            approximate="tanh",
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_act",
-            input_shape=(1, seq_len, 2 * cfg.intermediate_size),
-            output_shape=(1, seq_len, cfg.intermediate_size),
-            params_count=0,
-            flops=seq_len * cfg.intermediate_size * 10,
-            activation_bytes=seq_len * cfg.intermediate_size * dtype_size,
+            result=gelu_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        # Output projection
-        layers.append(LayerConfig(
+        # FFN output
+        ffn_out_result = linear(
+            input=(m, cfg.intermediate_size),
+            weight=(cfg.hidden_size, cfg.intermediate_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_out",
-            input_shape=(1, seq_len, cfg.intermediate_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=cfg.intermediate_size * cfg.hidden_size,
-            flops=seq_len * cfg.intermediate_size * cfg.hidden_size,
-            activation_bytes=seq_len * cfg.hidden_size * dtype_size,
+            result=ffn_out_result,
+            params=cfg.intermediate_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         return layers
     
     def _build_unpatchify_layer(self, dtype_size: int) -> LayerConfig:
-        """Build unpatchify output projection."""
+        """Build unpatchify output projection using linear kernel."""
         cfg = self.config
         pt, ph, pw = cfg.patch_size
         
@@ -546,17 +715,19 @@ class WanDiTModel(BaseModel):
         # Output: hidden_size -> patch_size[0] * patch_size[1] * patch_size[2] * out_channels
         out_dim = pt * ph * pw * cfg.out_channels
         
-        params = cfg.hidden_size * out_dim
-        flops = seq_len * cfg.hidden_size * out_dim
+        # Using linear kernel
+        linear_result = linear(
+            input=(seq_len, cfg.hidden_size),
+            weight=(out_dim, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
         
-        return LayerConfig(
+        return kernel_result_to_layer(
             name="unpatchify",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, cfg.out_channels, cfg.latent_num_frames,
-                        cfg.latent_height, cfg.latent_width),
-            params_count=params,
-            flops=flops,
-            activation_bytes=seq_len * out_dim * dtype_size,
+            result=linear_result,
+            params=cfg.hidden_size * out_dim,
+            dtype_size=dtype_size
         )
 
 
@@ -749,33 +920,28 @@ class WanVAEModel(BaseModel):
         dtype_size: int,
         stride: Tuple[int, int, int] = (1, 1, 1),
     ) -> LayerConfig:
-        """Build 3D causal convolution layer."""
+        """Build 3D causal convolution layer using conv3d kernel."""
         kt, kh, kw = kernel_size
         st, sh, sw = stride
         input_t, input_h, input_w = input_dims
         
-        # Causal padding for temporal dimension
-        if self.config.use_causal_conv:
-            output_t = (input_t - 1) // st + 1
-        else:
-            output_t = (input_t + 2 * 1 - kt) // st + 1
-        output_h = (input_h + 2 * 1 - kh) // sh + 1
-        output_w = (input_w + 2 * 1 - kw) // sw + 1
-        
-        flops = (
-            2 * output_t * output_h * output_w *
-            out_channels * kt * kh * kw * in_channels
+        # Use conv3d kernel API
+        conv_result = conv3d(
+            input=(1, in_channels, input_t, input_h, input_w),
+            weight=(out_channels, in_channels, kt, kh, kw),
+            bias=None,
+            stride=(st, sh, sw),
+            padding=(0 if self.config.use_causal_conv else 1, 1, 1),
+            dtype=self.config.dtype
         )
         
         params = out_channels * in_channels * kt * kh * kw
         
-        return LayerConfig(
+        return kernel_result_to_layer(
             name=name,
-            input_shape=(1, in_channels, input_t, input_h, input_w),
-            output_shape=(1, out_channels, output_t, output_h, output_w),
-            params_count=params,
-            flops=flops,
-            activation_bytes=out_channels * output_t * output_h * output_w * dtype_size,
+            result=conv_result,
+            params=params,
+            dtype_size=dtype_size
         )
     
     def _build_resnet_block(
@@ -791,6 +957,7 @@ class WanVAEModel(BaseModel):
         t, h, w = dims
         
         # GroupNorm 1
+        # NOTE: Manual calculation for GroupNorm (non-kernel normalization layer)
         layers.append(LayerConfig(
             name=f"{name}_norm1",
             input_shape=(1, in_channels, t, h, w),
@@ -811,6 +978,7 @@ class WanVAEModel(BaseModel):
         ))
         
         # GroupNorm 2
+        # NOTE: Manual calculation for GroupNorm (non-kernel normalization layer)
         layers.append(LayerConfig(
             name=f"{name}_norm2",
             input_shape=(1, out_channels, t, h, w),

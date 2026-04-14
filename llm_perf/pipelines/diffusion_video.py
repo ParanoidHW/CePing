@@ -308,6 +308,7 @@ class DiffusionVideoPipeline(Pipeline):
                 "use_cfg": use_cfg,
                 "component_breakdown": analysis_result.component_breakdown,
             },
+            detailed_breakdown=analysis_result.detailed_breakdown.to_dict() if analysis_result.detailed_breakdown else None,
         )
 
     def analyze_components(self) -> Dict[str, Any]:

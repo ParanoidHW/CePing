@@ -1,0 +1,281 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inference Performance Report</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .metric {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            display: block;
+        }
+        .metric-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        .breakdown-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        .breakdown-table th,
+        .breakdown-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        .breakdown-table th {
+            background: #667eea;
+            color: white;
+        }
+        .breakdown-table tr:hover {
+            background: #f5f5f5;
+        }
+        .progress-bar {
+            background: #e0e0e0;
+            border-radius: 10px;
+            height: 20px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+        .config-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .config-section code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Inference Performance Report</h1>
+        <p>LLM Performance Evaluation Report</p>
+    </div>
+    
+    
+    <div class="card">
+        <h2>⚡ Inference Performance</h2>
+        <div class="metrics-grid">
+            <div class="metric">
+                <span class="metric-value">108.0</span>
+                <span class="metric-label">TTFT (ms)</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">6.4</span>
+                <span class="metric-label">TPOT (ms)</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">1241.2</span>
+                <span class="metric-label">TPS</span>
+            </div>
+            <div class="metric">
+                <span class="metric-value">2.2</span>
+                <span class="metric-label">GB/GPU</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>📈 Phase Breakdown</h2>
+        <h3>Prefill Phase</h3>
+        <p>Time to First Token (TTFT): 107.95 ms</p>
+        <p>Throughput: 75.9K tokens/sec</p>
+        
+        <h3>Decode Phase</h3>
+        <p>Time Per Output Token (TPOT): 6.45 ms</p>
+        <p>Tokens Per Second (TPS): 1241.22</p>
+        
+        <h3>End-to-End</h3>
+        <p>Total time: 0.93 sec</p>
+        <p>Total tokens: 9,216</p>
+        <p>Overall throughput: 9878.37 tokens/sec</p>
+    </div>
+    
+    
+    <div class="card">
+        <h2>🔍 Prefill Breakdown</h2>
+        
+        <h3>Time Distribution</h3>
+        <table class="breakdown-table">
+            <tr>
+                <th>Category</th>
+                <th>Time (ms)</th>
+                <th>Percentage</th>
+                <th>Visual</th>
+            </tr>
+            <tr>
+                <td>Compute</td>
+                <td>107.28</td>
+                <td>99.4%</td>
+                <td>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 99.37992890868202%"></div>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>Communication</td>
+                <td>3.35</td>
+                <td>3.1%</td>
+                <td>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 3.1003554565899845%"></div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+        
+        <h3>Memory Usage</h3>
+        <p>Peak Memory: 0.00 GB</p>
+        <p>Activations: 8.03 GB</p>
+        <p>Parameters: 12.55 GB</p>
+    </div>
+
+    
+    <div class="card">
+        <h2>🔍 Decode Breakdown</h2>
+        
+        <h3>Time Distribution</h3>
+        <table class="breakdown-table">
+            <tr>
+                <th>Category</th>
+                <th>Time (ms)</th>
+                <th>Percentage</th>
+                <th>Visual</th>
+            </tr>
+            <tr>
+                <td>Compute</td>
+                <td>3.88</td>
+                <td>60.2%</td>
+                <td>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 60.182815786888035%"></div>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>Communication</td>
+                <td>0.01</td>
+                <td>0.1%</td>
+                <td>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 0.1119512651664668%"></div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+        
+        <h3>Memory Usage</h3>
+        <p>Peak Memory: 0.00 GB</p>
+        <p>Activations: 8.03 GB</p>
+        <p>Parameters: 12.55 GB</p>
+    </div>
+
+
+    
+    <div class="card">
+        <h2>📊 System Configuration</h2>
+        <div class="config-section">
+            <pre><code>{
+  "model": {
+    "type": "llama",
+    "name": "llama-7b",
+    "vocab_size": 32000,
+    "hidden_size": 4096,
+    "num_layers": 32,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 32,
+    "intermediate_size": 11008,
+    "max_seq_len": 4096,
+    "dtype": "fp16"
+  },
+  "hardware": {
+    "device_preset": "H100-SXM-80GB",
+    "num_devices": 8,
+    "devices_per_node": 8,
+    "intra_node_bw_gbps": 900,
+    "intra_node_latency_us": 1.0,
+    "inter_node_bw_gbps": 400,
+    "inter_node_latency_us": 2.0,
+    "topology": "full_mesh",
+    "oversubscription_ratio": 1.0
+  },
+  "strategy": {
+    "tp": 8,
+    "pp": 1,
+    "dp": 1,
+    "ep": 1,
+    "sp": 1,
+    "cp": 1,
+    "activation_checkpointing": false,
+    "sequence_parallel": true,
+    "use_megatron": true,
+    "zero_stage": 0
+  }
+}</code></pre>
+        </div>
+    </div>
+    
+    <footer style="text-align: center; padding: 20px; color: #666;">
+        <p>Generated by LLM Performance Evaluator</p>
+    </footer>
+</body>
+</html>

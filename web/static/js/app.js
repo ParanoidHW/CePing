@@ -535,65 +535,135 @@ function displayResults(result) {
     }
     
     if (state.mode === 'training') {
+        const detailed = result.detailed_breakdown;
+        const detailedHtml = renderDetailedBreakdown(detailed);
+        
         elements.resultsContent.innerHTML = `
             <div class="result-grid">
                 <div class="result-card highlight">
-                    <div class="result-value">${(result.tokens_per_sec / 1000).toFixed(2)}K</div>
+                    <div class="result-value">${(result.throughput?.tokens_per_sec / 1000 || 0).toFixed(2)}K</div>
                     <div class="result-label">Tokens/sec</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${result.samples_per_sec.toFixed(2)}</div>
+                    <div class="result-value">${(result.throughput?.samples_per_sec || 0).toFixed(2)}</div>
                     <div class="result-label">Samples/sec</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.time_per_step_sec * 1000).toFixed(0)}ms</div>
+                    <div class="result-value">${((result.time?.time_per_step_sec || 0) * 1000).toFixed(0)}ms</div>
                     <div class="result-label">Time/Step</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${result.memory_per_gpu_gb.toFixed(1)}GB</div>
+                    <div class="result-value">${(result.memory?.memory_per_gpu_gb || 0).toFixed(1)}GB</div>
                     <div class="result-label">Memory/GPU</div>
                 </div>
             </div>
             ${renderBreakdown(result.breakdown)}
+            ${detailedHtml}
         `;
     } else {
+        const detailed = result.detailed_breakdown;
+        const detailedHtml = renderDetailedBreakdown(detailed);
+        
         elements.resultsContent.innerHTML = `
             <div class="result-grid">
                 <div class="result-card highlight">
-                    <div class="result-value">${result.decode_tokens_per_sec.toFixed(0)}</div>
+                    <div class="result-value">${(result.decode?.tps || 0).toFixed(0)}</div>
                     <div class="result-label">Decode TPS</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.prefill_time_sec * 1000).toFixed(0)}ms</div>
+                    <div class="result-value">${((result.prefill?.ttft_sec || 0) * 1000).toFixed(0)}ms</div>
                     <div class="result-label">TTFT (Time To First Token)</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.decode_time_per_step_sec * 1000).toFixed(1)}ms</div>
+                    <div class="result-value">${((result.decode?.tpot_sec || 0) * 1000).toFixed(1)}ms</div>
                     <div class="result-label">TPOT (Time Per Output Token)</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${result.overall_tps.toFixed(0)}</div>
+                    <div class="result-value">${(result.end_to_end?.overall_tps || 0).toFixed(0)}</div>
                     <div class="result-label">Overall TPS</div>
                 </div>
             </div>
             <div class="result-grid" style="margin-top: 1rem;">
                 <div class="result-card">
-                    <div class="result-value">${result.total_time_sec.toFixed(2)}s</div>
+                    <div class="result-value">${(result.end_to_end?.total_time_sec || 0).toFixed(2)}s</div>
                     <div class="result-label">Total Time</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${result.memory_per_gpu_gb.toFixed(1)}GB</div>
+                    <div class="result-value">${(result.memory?.memory_per_gpu_gb || 0).toFixed(1)}GB</div>
                     <div class="result-label">Memory/GPU</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${result.kv_cache_memory_gb.toFixed(1)}GB</div>
+                    <div class="result-value">${(result.memory?.kv_cache_gb || 0).toFixed(1)}GB</div>
                     <div class="result-label">KV Cache</div>
                 </div>
             </div>
+            ${detailedHtml}
         `;
     }
     
     elements.results.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderDetailedBreakdown(detailed) {
+    if (!detailed) return '';
+    
+    // Memory breakdown by type
+    const memByType = detailed.memory?.by_type || {};
+    const memRows = Object.entries(memByType)
+        .map(([type, gb]) => 
+            `<tr><td>${type}</td><td>${gb.toFixed(2)} GB</td></tr>`
+        ).join('');
+    
+    // Memory breakdown by submodel
+    const memBySubmodel = detailed.memory?.by_submodel || {};
+    const submodelMemRows = Object.entries(memBySubmodel)
+        .map(([name, mems]) => {
+            const total = Object.values(mems).reduce((a, b) => a + b, 0);
+            return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
+        }).join('');
+    
+    // Communication breakdown
+    const commByPara = detailed.communication?.by_parallelism || {};
+    const commRows = Object.entries(commByPara)
+        .map(([type, data]) => 
+            `<tr><td>${type.toUpperCase()}</td><td>${data.total_volume_gb?.toFixed(2) || 0} GB</td><td>${data.total_time_ms?.toFixed(2) || 0} ms</td></tr>`
+        ).join('');
+    
+    // Submodel details
+    const submodelDetails = (detailed.submodels || []).map(sm => {
+        const memTypes = Object.entries(sm.memory?.by_type || {})
+            .map(([t, v]) => `${t}: ${v.toFixed(1)}G`)
+            .join(', ');
+        return `
+            <div style="margin: 0.5rem 0; padding: 0.5rem; background: var(--gray-50); border-radius: 4px;">
+                <strong>${sm.model_name}</strong> (${sm.model_type})<br>
+                Memory: ${memTypes}
+            </div>
+        `;
+    }).join('');
+    
+    return `
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
+        <table class="breakdown-table">
+            <tr><th>内存类型</th><th>大小</th></tr>
+            ${memRows || '<tr><td colspan="2">无数据</td></tr>'}
+        </table>
+        
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>
+        <table class="breakdown-table">
+            <tr><th>子模型</th><th>总内存</th></tr>
+            ${submodelMemRows || '<tr><td colspan="2">无数据</td></tr>'}
+        </table>
+        
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">通信分解 (按并行方式)</h3>
+        <table class="breakdown-table">
+            <tr><th>并行类型</th><th>通信量</th><th>时间</th></tr>
+            ${commRows || '<tr><td colspan="3">无通信数据</td></tr>'}
+        </table>
+        
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模型详情</h3>
+        ${submodelDetails || '<p>无子模型详情</p>'}
+    `;
 }
 
 function renderBreakdown(breakdown) {

@@ -33,12 +33,14 @@ class BreakdownGenerator:
         device: Device,
         cluster: Cluster,
         strategy: StrategyConfig,
+        is_training: bool = True,
     ):
         self.model = model
         self.device = device
         self.cluster = cluster
         self.strategy = strategy
         self.dtype_size = DTYPE_SIZES.get(model.config.dtype, 2)
+        self._training_mode = is_training
 
     def generate_submodel_breakdown(
         self,
@@ -349,8 +351,7 @@ class BreakdownGenerator:
 
     def _is_training(self) -> bool:
         """Check if in training mode."""
-        # This is a heuristic - in practice would be passed explicitly
-        return hasattr(self.strategy, 'zero_stage') and self.strategy.zero_stage >= 0
+        return self._training_mode
 
     def _is_distributed(self) -> bool:
         """Check if running in distributed mode."""

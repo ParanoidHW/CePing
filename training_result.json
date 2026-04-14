@@ -1,0 +1,2563 @@
+{
+  "metadata": {
+    "model": {
+      "type": "llama",
+      "name": "llama-7b",
+      "vocab_size": 32000,
+      "hidden_size": 4096,
+      "num_layers": 32,
+      "num_attention_heads": 32,
+      "num_key_value_heads": 32,
+      "intermediate_size": 11008,
+      "max_seq_len": 4096,
+      "dtype": "fp16"
+    },
+    "hardware": {
+      "device_preset": "H100-SXM-80GB",
+      "num_devices": 8,
+      "devices_per_node": 8,
+      "intra_node_bw_gbps": 900,
+      "intra_node_latency_us": 1.0,
+      "inter_node_bw_gbps": 400,
+      "inter_node_latency_us": 2.0,
+      "topology": "full_mesh",
+      "oversubscription_ratio": 1.0
+    },
+    "strategy": {
+      "tp": 8,
+      "pp": 1,
+      "dp": 1,
+      "ep": 1,
+      "sp": 1,
+      "cp": 1,
+      "activation_checkpointing": false,
+      "sequence_parallel": true,
+      "use_megatron": true,
+      "zero_stage": 0
+    }
+  },
+  "result": {
+    "throughput": {
+      "samples_per_sec": 6.212880984280098,
+      "tokens_per_sec": 25447.96051161128
+    },
+    "time": {
+      "time_per_step_sec": 5.150589570437091,
+      "time_per_step_ms": 5150.589570437091,
+      "time_to_solution_sec": 5150.589570437091
+    },
+    "memory": {
+      "memory_per_gpu_gb": 52.590084647759795
+    },
+    "breakdown": {
+      "overview": {
+        "total_time_sec": 5.152932421520469,
+        "total_time_ms": 5152.932421520469,
+        "throughput": 0.0
+      },
+      "time_breakdown": {
+        "compute_sec": 5.149585491401358,
+        "communication_sec": 0.0033469301191111113,
+        "memory_sec": 0.0,
+        "compute_percent": 99.93504804943427,
+        "communication_percent": 0.06495195056572345,
+        "memory_percent": 0.0
+      },
+      "memory_breakdown": {
+        "peak_mb": 53852.24667930603,
+        "activation_mb": 1027.84228515625,
+        "parameter_mb": 12852.5078125
+      },
+      "communication": {
+        "tensor_parallel": 0.0033469301191111113
+      },
+      "layers": [
+        {
+          "name": "embedding",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_0_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_0_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_0_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_0_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_0_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_0_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_0_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_0_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_0_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_0_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_0_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_1_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_1_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_1_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_1_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_1_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_1_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_1_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_1_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_1_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_1_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_1_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_2_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_2_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_2_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_2_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_2_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_2_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_2_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_2_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_2_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_2_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_2_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_3_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_3_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_3_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_3_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_3_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_3_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_3_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_3_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_3_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_3_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_3_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_4_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_4_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_4_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_4_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_4_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_4_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_4_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_4_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_4_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_4_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_4_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_5_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_5_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_5_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_5_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_5_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_5_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_5_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_5_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_5_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_5_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_5_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_6_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_6_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_6_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_6_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_6_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_6_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_6_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_6_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_6_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_6_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_6_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_7_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_7_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_7_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_7_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_7_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_7_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_7_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_7_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_7_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_7_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_7_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_8_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_8_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_8_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_8_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_8_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_8_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_8_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_8_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_8_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_8_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_8_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_9_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_9_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_9_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_9_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_9_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_9_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_9_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_9_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_9_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_9_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_9_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_10_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_10_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_10_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_10_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_10_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_10_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_10_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_10_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_10_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_10_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_10_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_11_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_11_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_11_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_11_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_11_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_11_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_11_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_11_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_11_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_11_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_11_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_12_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_12_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_12_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_12_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_12_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_12_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_12_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_12_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_12_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_12_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_12_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_13_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_13_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_13_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_13_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_13_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_13_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_13_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_13_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_13_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_13_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_13_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_14_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_14_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_14_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_14_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_14_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_14_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_14_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_14_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_14_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_14_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_14_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_15_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_15_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_15_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_15_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_15_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_15_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_15_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_15_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_15_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_15_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_15_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_16_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_16_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_16_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_16_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_16_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_16_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_16_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_16_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_16_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_16_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_16_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_17_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_17_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_17_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_17_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_17_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_17_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_17_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_17_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_17_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_17_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_17_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_18_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_18_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_18_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_18_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_18_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_18_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_18_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_18_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_18_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_18_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_18_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_19_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_19_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_19_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_19_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_19_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_19_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_19_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_19_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_19_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_19_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_19_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_20_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_20_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_20_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_20_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_20_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_20_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_20_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_20_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_20_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_20_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_20_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_21_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_21_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_21_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_21_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_21_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_21_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_21_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_21_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_21_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_21_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_21_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_22_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_22_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_22_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_22_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_22_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_22_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_22_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_22_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_22_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_22_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_22_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_23_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_23_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_23_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_23_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_23_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_23_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_23_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_23_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_23_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_23_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_23_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_24_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_24_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_24_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_24_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_24_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_24_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_24_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_24_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_24_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_24_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_24_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_25_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_25_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_25_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_25_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_25_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_25_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_25_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_25_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_25_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_25_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_25_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_26_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_26_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_26_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_26_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_26_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_26_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_26_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_26_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_26_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_26_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_26_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_27_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_27_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_27_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_27_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_27_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_27_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_27_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_27_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_27_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_27_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_27_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_28_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_28_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_28_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_28_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_28_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_28_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_28_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_28_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_28_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_28_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_28_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_29_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_29_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_29_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_29_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_29_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_29_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_29_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_29_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_29_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_29_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_29_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_30_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_30_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_30_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_30_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_30_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_30_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_30_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_30_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_30_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_30_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_30_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_31_q_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_31_k_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_31_v_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_31_attention",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        },
+        {
+          "name": "layer_31_o_proj",
+          "total_time_ms": 0.1389675970394338,
+          "compute_ms": 0.1389675970394338,
+          "comm_ms": 0,
+          "memory_mb": 96.0
+        },
+        {
+          "name": "layer_31_attn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "layer_31_up_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_31_gate_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_31_swiglu",
+          "total_time_ms": 1.3143880597014925e-05,
+          "compute_ms": 1.3143880597014925e-05,
+          "comm_ms": 0,
+          "memory_mb": 0.0419921875
+        },
+        {
+          "name": "layer_31_down_proj",
+          "total_time_ms": 0.37347541704347825,
+          "compute_ms": 0.37347541704347825,
+          "comm_ms": 0,
+          "memory_mb": 204.0
+        },
+        {
+          "name": "layer_31_ffn_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "final_norm",
+          "total_time_ms": 4.890746268656716e-06,
+          "compute_ms": 4.890746268656716e-06,
+          "comm_ms": 0,
+          "memory_mb": 0.015625
+        },
+        {
+          "name": "lm_head",
+          "total_time_ms": 0,
+          "compute_ms": 0,
+          "comm_ms": 0,
+          "memory_mb": 0.0
+        }
+      ]
+    }
+  }
+}

@@ -1,4 +1,4 @@
-"""DeepSeek V2/V3 model implementation with MLA (Multi-head Latent Attention).
+"""DeepSeek V2/V3 model implementation with MLA (Multi-head Latent Attention) using kernel API.
 
 DeepSeek-V2 and DeepSeek-V3 use Multi-head Latent Attention (MLA) which
 compresses the Key-Value cache into a latent vector, significantly reducing
@@ -9,10 +9,15 @@ Reference: https://huggingface.co/deepseek-ai/DeepSeek-V2
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 
 from .base import BaseModel, ModelConfig, LayerConfig
 from ..utils.constants import DTYPE_SIZES
+from ..kernels import (
+    linear, rms_norm, silu, scaled_dot_product_attention,
+    embedding
+)
+from ..kernels.utils import kernel_result_to_layer
 
 
 @dataclass
@@ -118,7 +123,7 @@ class DeepSeekV3Config(DeepSeekConfig):
 
 
 class DeepSeekModel(BaseModel):
-    """DeepSeek V2/V3 model implementation with MLA.
+    """DeepSeek V2/V3 model implementation with MLA using kernel API.
     
     Implements Multi-head Latent Attention (MLA) which compresses the KV cache
     through low-rank projection matrices:
@@ -136,7 +141,7 @@ class DeepSeekModel(BaseModel):
         self._layers = self.build_layers()
     
     def build_layers(self) -> List[LayerConfig]:
-        """Build DeepSeek layer configurations with MLA and MoE.
+        """Build DeepSeek layer configurations with MLA and MoE using kernel API.
         
         Returns:
             List of layer configurations including:
@@ -149,38 +154,49 @@ class DeepSeekModel(BaseModel):
         cfg = self.config
         dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
         
-        # Embedding layer
-        embed_params = cfg.vocab_size * cfg.hidden_size
-        layers.append(LayerConfig(
-            name="embedding",
+        # Embedding layer using embedding kernel
+        emb_result = embedding(
+            num_embeddings=cfg.vocab_size,
+            embedding_dim=cfg.hidden_size,
             input_shape=(1, 1),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=embed_params,
-            flops=0,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
+            name="embedding",
+            result=emb_result,
+            params=cfg.vocab_size * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         # Build each transformer layer
         for i in range(cfg.num_layers):
             layers.extend(self._build_transformer_layer(i, dtype_size))
         
-        # Final norm and LM head
-        layers.append(LayerConfig(
+        # Final norm using rms_norm kernel
+        final_norm_result = rms_norm(
+            input=(1, 1, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name="final_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,
-            flops=cfg.hidden_size * 5,  # RMSNorm
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=final_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # LM head using linear kernel
+        lm_head_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(cfg.vocab_size, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name="lm_head",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.vocab_size),
-            params_count=cfg.hidden_size * cfg.vocab_size,
-            flops=cfg.hidden_size * cfg.vocab_size * 2,
-            activation_bytes=cfg.vocab_size * dtype_size,
+            result=lm_head_result,
+            params=cfg.hidden_size * cfg.vocab_size,
+            dtype_size=dtype_size
         ))
         
         return layers
@@ -213,7 +229,7 @@ class DeepSeekModel(BaseModel):
         return layers
     
     def _build_mla_attention(self, prefix: str, dtype_size: int) -> List[LayerConfig]:
-        """Build MLA (Multi-head Latent Attention) components.
+        """Build MLA (Multi-head Latent Attention) components using kernel API.
         
         MLA Architecture:
         1. Query compression (if q_lora_rank > 0): h -> c_q
@@ -234,152 +250,159 @@ class DeepSeekModel(BaseModel):
         # Query compression (latent space)
         if cfg.q_lora_rank > 0:
             # W_DQ: Down-projection to latent space
-            q_down_params = cfg.hidden_size * cfg.q_lora_rank
-            layers.append(LayerConfig(
+            q_down_result = linear(
+                input=(1, cfg.hidden_size),
+                weight=(cfg.q_lora_rank, cfg.hidden_size),
+                bias=None,
+                dtype=cfg.dtype
+            )
+            layers.append(kernel_result_to_layer(
                 name=f"{prefix}_q_down_proj",
-                input_shape=(1, 1, cfg.hidden_size),
-                output_shape=(1, 1, cfg.q_lora_rank),
-                params_count=q_down_params,
-                flops=q_down_params * 2,
-                activation_bytes=cfg.q_lora_rank * dtype_size,
+                result=q_down_result,
+                params=cfg.hidden_size * cfg.q_lora_rank,
+                dtype_size=dtype_size
             ))
             
             # W_UQ: Up-projection to Q heads
-            q_up_params = cfg.q_lora_rank * (
-                cfg.num_attention_heads * cfg.qk_nope_head_dim
+            q_up_dim = cfg.num_attention_heads * cfg.qk_nope_head_dim
+            q_up_result = linear(
+                input=(1, cfg.q_lora_rank),
+                weight=(q_up_dim, cfg.q_lora_rank),
+                bias=None,
+                dtype=cfg.dtype
             )
-            layers.append(LayerConfig(
+            layers.append(kernel_result_to_layer(
                 name=f"{prefix}_q_up_proj",
-                input_shape=(1, 1, cfg.q_lora_rank),
-                output_shape=(1, 1, cfg.num_attention_heads * cfg.qk_nope_head_dim),
-                params_count=q_up_params,
-                flops=q_up_params * 2,
-                activation_bytes=cfg.num_attention_heads * cfg.qk_nope_head_dim * dtype_size,
+                result=q_up_result,
+                params=cfg.q_lora_rank * q_up_dim,
+                dtype_size=dtype_size
             ))
         
         # KV compression (the key innovation of MLA)
         # W_DKV: Projects hidden state to compressed KV representation
-        kv_down_params = cfg.hidden_size * cfg.kv_lora_rank
-        layers.append(LayerConfig(
+        kv_down_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(cfg.kv_lora_rank, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_kv_down_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.kv_lora_rank),
-            params_count=kv_down_params,
-            flops=kv_down_params * 2,
-            activation_bytes=cfg.kv_lora_rank * dtype_size,
+            result=kv_down_result,
+            params=cfg.hidden_size * cfg.kv_lora_rank,
+            dtype_size=dtype_size
         ))
         
         # W_UK: Decompress latent KV to key heads
-        uk_params = cfg.kv_lora_rank * (
-            cfg.num_key_value_heads * cfg.qk_nope_head_dim
+        uk_dim = cfg.num_key_value_heads * cfg.qk_nope_head_dim
+        uk_result = linear(
+            input=(1, cfg.kv_lora_rank),
+            weight=(uk_dim, cfg.kv_lora_rank),
+            bias=None,
+            dtype=cfg.dtype
         )
-        layers.append(LayerConfig(
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_k_up_proj",
-            input_shape=(1, 1, cfg.kv_lora_rank),
-            output_shape=(1, 1, cfg.num_key_value_heads * cfg.qk_nope_head_dim),
-            params_count=uk_params,
-            flops=uk_params * 2,
-            activation_bytes=cfg.num_key_value_heads * cfg.qk_nope_head_dim * dtype_size,
+            result=uk_result,
+            params=cfg.kv_lora_rank * uk_dim,
+            dtype_size=dtype_size
         ))
         
         # W_UV: Decompress latent KV to value heads
-        uv_params = cfg.kv_lora_rank * (
-            cfg.num_key_value_heads * cfg.v_head_dim
+        uv_dim = cfg.num_key_value_heads * cfg.v_head_dim
+        uv_result = linear(
+            input=(1, cfg.kv_lora_rank),
+            weight=(uv_dim, cfg.kv_lora_rank),
+            bias=None,
+            dtype=cfg.dtype
         )
-        layers.append(LayerConfig(
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_v_up_proj",
-            input_shape=(1, 1, cfg.kv_lora_rank),
-            output_shape=(1, 1, cfg.num_key_value_heads * cfg.v_head_dim),
-            params_count=uv_params,
-            flops=uv_params * 2,
-            activation_bytes=cfg.num_key_value_heads * cfg.v_head_dim * dtype_size,
+            result=uv_result,
+            params=cfg.kv_lora_rank * uv_dim,
+            dtype_size=dtype_size
         ))
         
         # RoPE projections for position encoding
-        qk_rope_params = cfg.hidden_size * cfg.qk_rope_head_dim
-        layers.append(LayerConfig(
+        q_rope_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(cfg.qk_rope_head_dim, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_q_rope_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.qk_rope_head_dim),
-            params_count=qk_rope_params,
-            flops=qk_rope_params * 2,
-            activation_bytes=cfg.qk_rope_head_dim * dtype_size,
+            result=q_rope_result,
+            params=cfg.hidden_size * cfg.qk_rope_head_dim,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        k_rope_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(cfg.qk_rope_head_dim, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_k_rope_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.qk_rope_head_dim),
-            params_count=qk_rope_params,
-            flops=qk_rope_params * 2,
-            activation_bytes=cfg.qk_rope_head_dim * dtype_size,
+            result=k_rope_result,
+            params=cfg.hidden_size * cfg.qk_rope_head_dim,
+            dtype_size=dtype_size
         ))
         
-        # Attention computation
-        seq_len = cfg.max_seq_len
-        attn_flops = self._compute_mla_attention_flops(seq_len)
-        layers.append(LayerConfig(
+        # Attention computation using scaled_dot_product_attention kernel
+        # For inference, we use cache_len=1, but for training use full seq_len
+        seq_len = cfg.max_position_embeddings
+        kv_heads = cfg.num_key_value_heads
+        q_heads = cfg.num_attention_heads
+        head_dim = cfg.qk_nope_head_dim + cfg.qk_rope_head_dim
+        
+        attn_result = scaled_dot_product_attention(
+            query=(1, q_heads, 1, head_dim),
+            key=(1, kv_heads, seq_len, head_dim),
+            value=(1, kv_heads, seq_len, cfg.v_head_dim),
+            is_causal=True,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_mla_attention",
-            input_shape=(1, seq_len, cfg.hidden_size),
-            output_shape=(1, seq_len, cfg.hidden_size),
-            params_count=0,
-            flops=attn_flops,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=attn_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
         # Output projection
-        o_params = (cfg.num_attention_heads * cfg.v_head_dim) * cfg.hidden_size
-        layers.append(LayerConfig(
+        o_dim = cfg.num_attention_heads * cfg.v_head_dim
+        o_result = linear(
+            input=(1, o_dim),
+            weight=(cfg.hidden_size, o_dim),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
-            input_shape=(1, 1, cfg.num_attention_heads * cfg.v_head_dim),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=o_params,
-            flops=o_params * 2,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=o_result,
+            params=o_dim * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        # Attention norm/residual
-        layers.append(LayerConfig(
+        # Attention norm/residual using rms_norm kernel
+        attn_norm_result = rms_norm(
+            input=(1, 1, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_attn_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,
-            flops=cfg.hidden_size * 5,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=attn_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         return layers
     
-    def _compute_mla_attention_flops(self, seq_len: int) -> int:
-        """Compute FLOPs for MLA attention computation.
-        
-        MLA uses compressed representations, so attention FLOPs are
-        similar to standard attention but with different dimensions.
-        
-        Args:
-            seq_len: Sequence length for attention computation
-            
-        Returns:
-            Estimated FLOPs for attention computation
-        """
-        cfg = self.config
-        q_heads = cfg.num_attention_heads
-        kv_heads = cfg.num_key_value_heads or cfg.num_attention_heads
-        head_dim = cfg.qk_nope_head_dim + cfg.qk_rope_head_dim
-        
-        # QK^T computation
-        qk_flops = seq_len * seq_len * q_heads * head_dim * 2
-        
-        # Softmax (exp, sum, div)
-        softmax_flops = seq_len * seq_len * q_heads * 5
-        
-        # Attention * V
-        attn_v_flops = seq_len * seq_len * q_heads * cfg.v_head_dim * 2
-        
-        return qk_flops + softmax_flops + attn_v_flops
-    
     def _build_dense_ffn(self, prefix: str, dtype_size: int) -> List[LayerConfig]:
-        """Build dense FFN layers (used for first k layers).
+        """Build dense FFN layers (used for first k layers) using kernel API.
         
         Args:
             prefix: Layer name prefix
@@ -394,55 +417,77 @@ class DeepSeekModel(BaseModel):
         # SwiGLU FFN: up_proj, gate_proj, down_proj
         ffn_intermediate = cfg.intermediate_size
         
-        layers.append(LayerConfig(
+        # Up projection
+        up_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(ffn_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_up_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=cfg.hidden_size * ffn_intermediate,
-            flops=cfg.hidden_size * ffn_intermediate * 2,
-            activation_bytes=ffn_intermediate * dtype_size,
+            result=up_result,
+            params=cfg.hidden_size * ffn_intermediate,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # Gate projection
+        gate_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(ffn_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_gate_proj",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=cfg.hidden_size * ffn_intermediate,
-            flops=cfg.hidden_size * ffn_intermediate * 2,
-            activation_bytes=ffn_intermediate * dtype_size,
+            result=gate_result,
+            params=cfg.hidden_size * ffn_intermediate,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # SwiGLU activation using silu kernel
+        swiglu_result = silu(
+            input=(1, 1, ffn_intermediate),
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_swiglu",
-            input_shape=(1, 1, ffn_intermediate),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=0,
-            flops=ffn_intermediate * 8,
-            activation_bytes=ffn_intermediate * dtype_size,
+            result=swiglu_result,
+            params=0,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # Down projection
+        down_result = linear(
+            input=(1, ffn_intermediate),
+            weight=(cfg.hidden_size, ffn_intermediate),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_down_proj",
-            input_shape=(1, 1, ffn_intermediate),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=ffn_intermediate * cfg.hidden_size,
-            flops=ffn_intermediate * cfg.hidden_size * 2,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=down_result,
+            params=ffn_intermediate * cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
-        layers.append(LayerConfig(
+        # FFN norm using rms_norm kernel
+        ffn_norm_result = rms_norm(
+            input=(1, 1, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,
-            flops=cfg.hidden_size * 5,
-            activation_bytes=cfg.hidden_size * dtype_size,
+            result=ffn_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
         ))
         
         return layers
     
     def _build_moe_ffn(self, prefix: str, dtype_size: int) -> List[LayerConfig]:
-        """Build MoE FFN layers with DeepSeekMoE architecture.
+        """Build MoE FFN layers with DeepSeekMoE architecture using kernel API.
         
         DeepSeekMoE uses:
         - Routed experts: Selected via top-k routing
@@ -459,112 +504,159 @@ class DeepSeekModel(BaseModel):
         layers = []
         cfg = self.config
         
-        # Router / Gate
-        router_params = cfg.hidden_size * cfg.n_routed_experts
-        layers.append(LayerConfig(
+        # Router / Gate using linear kernel
+        router_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(cfg.n_routed_experts, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+
+        router_layer = kernel_result_to_layer(
             name=f"{prefix}_router",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.n_routed_experts),
-            params_count=router_params,
-            flops=router_params * 2 + cfg.n_routed_experts * 10,
-            activation_bytes=cfg.n_routed_experts * dtype_size,
-            is_moe=True,
-        ))
+            result=router_result,
+            params=cfg.hidden_size * cfg.n_routed_experts,
+            dtype_size=dtype_size
+        )
+        router_layer.is_moe = True
+        layers.append(router_layer)
         
         # Routed experts (only active ones computed per token)
-        expert_scale = cfg.num_experts_per_tok / cfg.n_routed_experts
         ffn_intermediate = cfg.moe_intermediate_size
         
         # Up projection for routed experts
-        expert_up_params = cfg.hidden_size * ffn_intermediate
-        layers.append(LayerConfig(
+        up_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(ffn_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        up_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_up",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=expert_up_params * cfg.n_routed_experts,
-            flops=int(expert_up_params * 2 * cfg.num_experts_per_tok),
-            activation_bytes=int(ffn_intermediate * dtype_size * cfg.num_experts_per_tok),
-            is_moe=True,
-        ))
+            result=up_result,
+            params=cfg.hidden_size * ffn_intermediate * cfg.n_routed_experts,
+            dtype_size=dtype_size
+        )
+        up_layer.flops = int(up_result.flops * cfg.num_experts_per_tok)
+        up_layer.is_moe = True
+        layers.append(up_layer)
         
         # Gate projection for routed experts
-        layers.append(LayerConfig(
+        gate_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(ffn_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        gate_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_gate",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=expert_up_params * cfg.n_routed_experts,
-            flops=int(expert_up_params * 2 * cfg.num_experts_per_tok),
-            activation_bytes=int(ffn_intermediate * dtype_size * cfg.num_experts_per_tok),
-            is_moe=True,
-        ))
+            result=gate_result,
+            params=cfg.hidden_size * ffn_intermediate * cfg.n_routed_experts,
+            dtype_size=dtype_size
+        )
+        gate_layer.flops = int(gate_result.flops * cfg.num_experts_per_tok)
+        gate_layer.is_moe = True
+        layers.append(gate_layer)
         
-        # SwiGLU activation for routed experts
-        layers.append(LayerConfig(
+        # SwiGLU activation for routed experts using silu kernel
+        swiglu_result = silu(
+            input=(1, 1, ffn_intermediate),
+            dtype=cfg.dtype
+        )
+        swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_swiglu",
-            input_shape=(1, 1, ffn_intermediate),
-            output_shape=(1, 1, ffn_intermediate),
-            params_count=0,
-            flops=int(ffn_intermediate * 8 * cfg.num_experts_per_tok),
-            activation_bytes=int(ffn_intermediate * dtype_size * cfg.num_experts_per_tok),
-            is_moe=True,
-        ))
+            result=swiglu_result,
+            params=0,
+            dtype_size=dtype_size
+        )
+        swiglu_layer.flops = int(swiglu_result.flops * cfg.num_experts_per_tok)
+        swiglu_layer.is_moe = True
+        layers.append(swiglu_layer)
         
         # Down projection for routed experts
-        expert_down_params = ffn_intermediate * cfg.hidden_size
-        layers.append(LayerConfig(
+        down_result = linear(
+            input=(1, ffn_intermediate),
+            weight=(cfg.hidden_size, ffn_intermediate),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        down_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_down",
-            input_shape=(1, 1, ffn_intermediate),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=expert_down_params * cfg.n_routed_experts,
-            flops=int(expert_down_params * 2 * cfg.num_experts_per_tok),
-            activation_bytes=cfg.hidden_size * dtype_size,
-            is_moe=True,
-        ))
+            result=down_result,
+            params=ffn_intermediate * cfg.hidden_size * cfg.n_routed_experts,
+            dtype_size=dtype_size
+        )
+        down_layer.flops = int(down_result.flops * cfg.num_experts_per_tok)
+        down_layer.is_moe = True
+        layers.append(down_layer)
         
         # Shared experts (always active)
         shared_intermediate = cfg.moe_intermediate_size * cfg.n_shared_experts
         
-        layers.append(LayerConfig(
+        # Shared up projection
+        shared_up_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(shared_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        shared_up_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_up",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, shared_intermediate),
-            params_count=cfg.hidden_size * shared_intermediate,
-            flops=cfg.hidden_size * shared_intermediate * 2,
-            activation_bytes=shared_intermediate * dtype_size,
-            is_moe=True,
-        ))
+            result=shared_up_result,
+            params=cfg.hidden_size * shared_intermediate,
+            dtype_size=dtype_size
+        )
+        shared_up_layer.is_moe = True
+        layers.append(shared_up_layer)
         
-        layers.append(LayerConfig(
+        # Shared gate projection
+        shared_gate_result = linear(
+            input=(1, cfg.hidden_size),
+            weight=(shared_intermediate, cfg.hidden_size),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        shared_gate_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_gate",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, shared_intermediate),
-            params_count=cfg.hidden_size * shared_intermediate,
-            flops=cfg.hidden_size * shared_intermediate * 2,
-            activation_bytes=shared_intermediate * dtype_size,
-            is_moe=True,
-        ))
+            result=shared_gate_result,
+            params=cfg.hidden_size * shared_intermediate,
+            dtype_size=dtype_size
+        )
+        shared_gate_layer.is_moe = True
+        layers.append(shared_gate_layer)
         
-        layers.append(LayerConfig(
+        # Shared SwiGLU
+        shared_swiglu_result = silu(
+            input=(1, 1, shared_intermediate),
+            dtype=cfg.dtype
+        )
+        shared_swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_swiglu",
-            input_shape=(1, 1, shared_intermediate),
-            output_shape=(1, 1, shared_intermediate),
-            params_count=0,
-            flops=shared_intermediate * 8,
-            activation_bytes=shared_intermediate * dtype_size,
-            is_moe=True,
-        ))
+            result=shared_swiglu_result,
+            params=0,
+            dtype_size=dtype_size
+        )
+        shared_swiglu_layer.is_moe = True
+        layers.append(shared_swiglu_layer)
         
-        layers.append(LayerConfig(
+        # Shared down projection
+        shared_down_result = linear(
+            input=(1, shared_intermediate),
+            weight=(cfg.hidden_size, shared_intermediate),
+            bias=None,
+            dtype=cfg.dtype
+        )
+        shared_down_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_down",
-            input_shape=(1, 1, shared_intermediate),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=shared_intermediate * cfg.hidden_size,
-            flops=shared_intermediate * cfg.hidden_size * 2,
-            activation_bytes=cfg.hidden_size * dtype_size,
-            is_moe=True,
-        ))
+            result=shared_down_result,
+            params=shared_intermediate * cfg.hidden_size,
+            dtype_size=dtype_size
+        )
+        shared_down_layer.is_moe = True
+        layers.append(shared_down_layer)
         
         # All-to-all communication for expert parallelism
+        # NOTE: Manual calculation for communication layer (alltoall)
         layers.append(LayerConfig(
             name=f"{prefix}_alltoall_dispatch",
             input_shape=(1, 1, cfg.hidden_size),
@@ -575,6 +667,7 @@ class DeepSeekModel(BaseModel):
             is_moe=True,
         ))
         
+        # NOTE: Manual calculation for communication layer (alltoall)
         layers.append(LayerConfig(
             name=f"{prefix}_alltoall_combine",
             input_shape=(1, 1, cfg.hidden_size),
@@ -585,16 +678,20 @@ class DeepSeekModel(BaseModel):
             is_moe=True,
         ))
         
-        # MoE norm/residual
-        layers.append(LayerConfig(
+        # MoE norm/residual using rms_norm kernel
+        moe_norm_result = rms_norm(
+            input=(1, 1, cfg.hidden_size),
+            dim=-1,
+            dtype=cfg.dtype
+        )
+        moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
-            input_shape=(1, 1, cfg.hidden_size),
-            output_shape=(1, 1, cfg.hidden_size),
-            params_count=cfg.hidden_size,
-            flops=cfg.hidden_size * 5,
-            activation_bytes=cfg.hidden_size * dtype_size,
-            is_moe=True,
-        ))
+            result=moe_norm_result,
+            params=cfg.hidden_size,
+            dtype_size=dtype_size
+        )
+        moe_norm_layer.is_moe = True
+        layers.append(moe_norm_layer)
         
         return layers
     

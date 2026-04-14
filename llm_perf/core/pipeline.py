@@ -118,6 +118,7 @@ class PipelineResult:
         memory_peak_gb: Peak memory usage in GB
         throughput: Optional throughput metric
         metadata: Additional metadata
+        detailed_breakdown: Optional detailed performance breakdown
     """
 
     total_time_sec: float
@@ -126,10 +127,11 @@ class PipelineResult:
     memory_peak_gb: float = 0.0
     throughput: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    detailed_breakdown: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
-        return {
+        result = {
             "total_time_sec": self.total_time_sec,
             "step_times": self.step_times,
             "step_results": {
@@ -140,6 +142,9 @@ class PipelineResult:
             "throughput": self.throughput,
             "metadata": self.metadata,
         }
+        if self.detailed_breakdown is not None:
+            result["detailed_breakdown"] = self.detailed_breakdown
+        return result
 
 
 class Pipeline(ABC):

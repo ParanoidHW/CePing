@@ -1,14 +1,17 @@
-"""Video VAE (Variational Autoencoder) model for video generation.
+"""Video VAE (Variational Autoencoder) model for video generation using kernel API.
 
 Based on AutoencoderKL from Diffusers, adapted for video generation with 3D convolutions.
 Supports both Encoder and Decoder with 3D ResNet blocks and attention layers.
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 from .base import BaseModel, ModelConfig, LayerConfig
 from ..utils.constants import DTYPE_SIZES
+from ..kernels import conv3d, conv2d
+from ..kernels.utils import kernel_result_to_layer
+
 
 
 @dataclass
@@ -53,7 +56,7 @@ class VAEConfig(ModelConfig):
 
 
 class VAEModel(BaseModel):
-    """Video VAE model with separate Encoder and Decoder.
+    """Video VAE model with separate Encoder and Decoder using kernel API.
 
     Architecture based on AutoencoderKL from Diffusers:
     - Encoder: Compresses video to latent representation
@@ -67,7 +70,7 @@ class VAEModel(BaseModel):
         self._layers = self.build_layers()
 
     def build_layers(self) -> List[LayerConfig]:
-        """Build VAE layer configurations (Encoder + Decoder)."""
+        """Build VAE layer configurations (Encoder + Decoder) using kernel API."""
         layers = []
         cfg = self.config
         dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
@@ -83,7 +86,7 @@ class VAEModel(BaseModel):
         return layers
 
     def _build_encoder(self, dtype_size: int) -> List[LayerConfig]:
-        """Build Video VAE Encoder.
+        """Build Video VAE Encoder using kernel API.
 
         Encoder structure:
         1. Initial conv3d (in_channels -> block_out_channels[0])
@@ -99,17 +102,20 @@ class VAEModel(BaseModel):
 
         # Initial convolution
         if cfg.use_3d_conv:
-            layers.append(self._build_conv3d_layer(
-                name="encoder_conv_in",
-                in_channels=in_channels,
-                out_channels=out_channels_list[0],
-                kernel_size=(3, 3, 3),
-                input_t=cfg.num_frames,
-                input_h=cfg.height,
-                input_w=cfg.width,
+            conv_in_result = conv3d(
+                input=(1, in_channels, cfg.num_frames, cfg.height, cfg.width),
+                weight=(out_channels_list[0], in_channels, 3, 3, 3),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(1, 1, 1),
-                dtype_size=dtype_size,
+                dtype=cfg.dtype
+            )
+            params = out_channels_list[0] * in_channels * 3 * 3 * 3
+            layers.append(kernel_result_to_layer(
+                name="encoder_conv_in",
+                result=conv_in_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
             current_t = cfg.num_frames
@@ -117,16 +123,20 @@ class VAEModel(BaseModel):
             current_w = cfg.width
         else:
             # 2D conv for image VAE
-            layers.append(self._build_conv2d_layer(
+            conv_in_result = conv2d(
+                input=(1, in_channels, cfg.height, cfg.width),
+                weight=(out_channels_list[0], in_channels, 3, 3),
+                bias=None,
+                stride=(1, 1),
+                padding=(1, 1),
+                dtype=cfg.dtype
+            )
+            params = out_channels_list[0] * in_channels * 3 * 3
+            layers.append(kernel_result_to_layer(
                 name="encoder_conv_in",
-                in_channels=in_channels,
-                out_channels=out_channels_list[0],
-                kernel_size=3,
-                input_h=cfg.height,
-                input_w=cfg.width,
-                stride=1,
-                padding=1,
-                dtype_size=dtype_size,
+                result=conv_in_result,
+                params=params,
+                dtype_size=dtype_size
             ))
             current_t = 1
             current_h = cfg.height
@@ -148,6 +158,7 @@ class VAEModel(BaseModel):
                     width=current_w,
                     dtype_size=dtype_size,
                     use_3d=cfg.use_3d_conv,
+                    dtype=cfg.dtype,
                 ))
 
             # Attention in later blocks
@@ -160,36 +171,44 @@ class VAEModel(BaseModel):
                     width=current_w,
                     dtype_size=dtype_size,
                     use_3d=cfg.use_3d_conv,
+                    dtype=cfg.dtype,
                 ))
 
             # Downsample (except last block)
             if not is_last_block:
                 if cfg.use_3d_conv:
-                    layers.append(self._build_conv3d_layer(
-                        name=f"encoder_down_{i}_downsample",
-                        in_channels=out_channels,
-                        out_channels=out_channels,
-                        kernel_size=(3, 3, 3),
-                        input_t=current_t,
-                        input_h=current_h,
-                        input_w=current_w,
+                    down_result = conv3d(
+                        input=(1, out_channels, current_t, current_h, current_w),
+                        weight=(out_channels, out_channels, 3, 3, 3),
+                        bias=None,
                         stride=(1, 2, 2),  # Downsample spatial only
                         padding=(1, 1, 1),
-                        dtype_size=dtype_size,
+                        dtype=cfg.dtype
+                    )
+                    params = out_channels * out_channels * 3 * 3 * 3
+                    layers.append(kernel_result_to_layer(
+                        name=f"encoder_down_{i}_downsample",
+                        result=down_result,
+                        params=params,
+                        dtype_size=dtype_size
                     ))
                     current_h //= 2
                     current_w //= 2
                 else:
-                    layers.append(self._build_conv2d_layer(
+                    down_result = conv2d(
+                        input=(1, out_channels, current_h, current_w),
+                        weight=(out_channels, out_channels, 3, 3),
+                        bias=None,
+                        stride=(2, 2),
+                        padding=(1, 1),
+                        dtype=cfg.dtype
+                    )
+                    params = out_channels * out_channels * 3 * 3
+                    layers.append(kernel_result_to_layer(
                         name=f"encoder_down_{i}_downsample",
-                        in_channels=out_channels,
-                        out_channels=out_channels,
-                        kernel_size=3,
-                        input_h=current_h,
-                        input_w=current_w,
-                        stride=2,
-                        padding=1,
-                        dtype_size=dtype_size,
+                        result=down_result,
+                        params=params,
+                        dtype_size=dtype_size
                     ))
                     current_h //= 2
                     current_w //= 2
@@ -205,6 +224,7 @@ class VAEModel(BaseModel):
             width=current_w,
             dtype_size=dtype_size,
             use_3d=cfg.use_3d_conv,
+            dtype=cfg.dtype,
         ))
 
         if cfg.use_attention:
@@ -216,6 +236,7 @@ class VAEModel(BaseModel):
                 width=current_w,
                 dtype_size=dtype_size,
                 use_3d=cfg.use_3d_conv,
+                dtype=cfg.dtype,
             ))
 
         layers.extend(self._build_resnet_block(
@@ -227,39 +248,47 @@ class VAEModel(BaseModel):
             width=current_w,
             dtype_size=dtype_size,
             use_3d=cfg.use_3d_conv,
+            dtype=cfg.dtype,
         ))
 
         # Output convolution (to latent, *2 for mean and logvar)
         if cfg.use_3d_conv:
-            layers.append(self._build_conv3d_layer(
-                name="encoder_conv_out",
-                in_channels=mid_channels,
-                out_channels=cfg.latent_channels * 2,
-                kernel_size=(3, 3, 3),
-                input_t=current_t,
-                input_h=current_h,
-                input_w=current_w,
+            conv_out_result = conv3d(
+                input=(1, mid_channels, current_t, current_h, current_w),
+                weight=(cfg.latent_channels * 2, mid_channels, 3, 3, 3),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(1, 1, 1),
-                dtype_size=dtype_size,
+                dtype=cfg.dtype
+            )
+            params = cfg.latent_channels * 2 * mid_channels * 3 * 3 * 3
+            layers.append(kernel_result_to_layer(
+                name="encoder_conv_out",
+                result=conv_out_result,
+                params=params,
+                dtype_size=dtype_size
             ))
         else:
-            layers.append(self._build_conv2d_layer(
+            conv_out_result = conv2d(
+                input=(1, mid_channels, current_h, current_w),
+                weight=(cfg.latent_channels * 2, mid_channels, 3, 3),
+                bias=None,
+                stride=(1, 1),
+                padding=(1, 1),
+                dtype=cfg.dtype
+            )
+            params = cfg.latent_channels * 2 * mid_channels * 3 * 3
+            layers.append(kernel_result_to_layer(
                 name="encoder_conv_out",
-                in_channels=mid_channels,
-                out_channels=cfg.latent_channels * 2,
-                kernel_size=3,
-                input_h=current_h,
-                input_w=current_w,
-                stride=1,
-                padding=1,
-                dtype_size=dtype_size,
+                result=conv_out_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
         return layers
 
     def _build_decoder(self, dtype_size: int) -> List[LayerConfig]:
-        """Build Video VAE Decoder.
+        """Build Video VAE Decoder using kernel API.
 
         Decoder structure:
         1. Initial conv (from latent_channels)
@@ -280,32 +309,39 @@ class VAEModel(BaseModel):
 
         # Initial convolution
         if cfg.use_3d_conv:
-            layers.append(self._build_conv3d_layer(
-                name="decoder_conv_in",
-                in_channels=cfg.latent_channels,
-                out_channels=reverse_channels[0],
-                kernel_size=(3, 3, 3),
-                input_t=latent_t,
-                input_h=latent_h,
-                input_w=latent_w,
+            conv_in_result = conv3d(
+                input=(1, cfg.latent_channels, latent_t, latent_h, latent_w),
+                weight=(reverse_channels[0], cfg.latent_channels, 3, 3, 3),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(1, 1, 1),
-                dtype_size=dtype_size,
+                dtype=cfg.dtype
+            )
+            params = reverse_channels[0] * cfg.latent_channels * 3 * 3 * 3
+            layers.append(kernel_result_to_layer(
+                name="decoder_conv_in",
+                result=conv_in_result,
+                params=params,
+                dtype_size=dtype_size
             ))
             current_t = latent_t
             current_h = latent_h
             current_w = latent_w
         else:
-            layers.append(self._build_conv2d_layer(
+            conv_in_result = conv2d(
+                input=(1, cfg.latent_channels, latent_h, latent_w),
+                weight=(reverse_channels[0], cfg.latent_channels, 3, 3),
+                bias=None,
+                stride=(1, 1),
+                padding=(1, 1),
+                dtype=cfg.dtype
+            )
+            params = reverse_channels[0] * cfg.latent_channels * 3 * 3
+            layers.append(kernel_result_to_layer(
                 name="decoder_conv_in",
-                in_channels=cfg.latent_channels,
-                out_channels=reverse_channels[0],
-                kernel_size=3,
-                input_h=latent_h,
-                input_w=latent_w,
-                stride=1,
-                padding=1,
-                dtype_size=dtype_size,
+                result=conv_in_result,
+                params=params,
+                dtype_size=dtype_size
             ))
             current_t = 1
             current_h = latent_h
@@ -322,6 +358,7 @@ class VAEModel(BaseModel):
             width=current_w,
             dtype_size=dtype_size,
             use_3d=cfg.use_3d_conv,
+            dtype=cfg.dtype,
         ))
 
         if cfg.use_attention:
@@ -333,6 +370,7 @@ class VAEModel(BaseModel):
                 width=current_w,
                 dtype_size=dtype_size,
                 use_3d=cfg.use_3d_conv,
+                dtype=cfg.dtype,
             ))
 
         layers.extend(self._build_resnet_block(
@@ -344,6 +382,7 @@ class VAEModel(BaseModel):
             width=current_w,
             dtype_size=dtype_size,
             use_3d=cfg.use_3d_conv,
+            dtype=cfg.dtype,
         ))
 
         # Upsample blocks
@@ -362,6 +401,7 @@ class VAEModel(BaseModel):
                     width=current_w,
                     dtype_size=dtype_size,
                     use_3d=cfg.use_3d_conv,
+                    dtype=cfg.dtype,
                 ))
 
             # Attention in early upsample blocks
@@ -374,42 +414,50 @@ class VAEModel(BaseModel):
                     width=current_w,
                     dtype_size=dtype_size,
                     use_3d=cfg.use_3d_conv,
+                    dtype=cfg.dtype,
                 ))
 
             # Upsample (except last block)
             if not is_last_block:
                 if cfg.use_3d_conv:
-                    layers.append(self._build_conv3d_layer(
-                        name=f"decoder_up_{i}_upsample",
-                        in_channels=out_channels,
-                        out_channels=out_channels,
-                        kernel_size=(3, 3, 3),
-                        input_t=current_t,
-                        input_h=current_h,
-                        input_w=current_w,
+                    up_result = conv3d(
+                        input=(1, out_channels, current_t, current_h, current_w),
+                        weight=(out_channels, out_channels, 3, 3, 3),
+                        bias=None,
                         stride=(1, 1, 1),
                         padding=(1, 1, 1),
-                        dtype_size=dtype_size,
+                        dtype=cfg.dtype
+                    )
+                    params = out_channels * out_channels * 3 * 3 * 3
+                    layers.append(kernel_result_to_layer(
+                        name=f"decoder_up_{i}_upsample",
+                        result=up_result,
+                        params=params,
+                        dtype_size=dtype_size
                     ))
                     current_h *= 2
                     current_w *= 2
                 else:
-                    layers.append(self._build_conv2d_layer(
+                    up_result = conv2d(
+                        input=(1, out_channels, current_h, current_w),
+                        weight=(out_channels, out_channels, 3, 3),
+                        bias=None,
+                        stride=(1, 1),
+                        padding=(1, 1),
+                        dtype=cfg.dtype
+                    )
+                    params = out_channels * out_channels * 3 * 3
+                    layers.append(kernel_result_to_layer(
                         name=f"decoder_up_{i}_upsample",
-                        in_channels=out_channels,
-                        out_channels=out_channels,
-                        kernel_size=3,
-                        input_h=current_h,
-                        input_w=current_w,
-                        stride=1,
-                        padding=1,
-                        dtype_size=dtype_size,
+                        result=up_result,
+                        params=params,
+                        dtype_size=dtype_size
                     ))
                     current_h *= 2
                     current_w *= 2
 
-        # Output normalization and convolution
-        # GroupNorm (simplified as activation)
+        # Output normalization (GroupNorm)
+        # NOTE: Manual calculation for GroupNorm (non-kernel normalization layer)
         layers.append(LayerConfig(
             name="decoder_norm_out",
             input_shape=(1, out_channels, current_t, current_h, current_w) if cfg.use_3d_conv
@@ -423,102 +471,39 @@ class VAEModel(BaseModel):
 
         # Final conv to output channels
         if cfg.use_3d_conv:
-            layers.append(self._build_conv3d_layer(
-                name="decoder_conv_out",
-                in_channels=out_channels,
-                out_channels=cfg.out_channels,
-                kernel_size=(3, 3, 3),
-                input_t=current_t,
-                input_h=current_h,
-                input_w=current_w,
+            conv_out_result = conv3d(
+                input=(1, out_channels, current_t, current_h, current_w),
+                weight=(cfg.out_channels, out_channels, 3, 3, 3),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(1, 1, 1),
-                dtype_size=dtype_size,
+                dtype=cfg.dtype
+            )
+            params = cfg.out_channels * out_channels * 3 * 3 * 3
+            layers.append(kernel_result_to_layer(
+                name="decoder_conv_out",
+                result=conv_out_result,
+                params=params,
+                dtype_size=dtype_size
             ))
         else:
-            layers.append(self._build_conv2d_layer(
+            conv_out_result = conv2d(
+                input=(1, out_channels, current_h, current_w),
+                weight=(cfg.out_channels, out_channels, 3, 3),
+                bias=None,
+                stride=(1, 1),
+                padding=(1, 1),
+                dtype=cfg.dtype
+            )
+            params = cfg.out_channels * out_channels * 3 * 3
+            layers.append(kernel_result_to_layer(
                 name="decoder_conv_out",
-                in_channels=out_channels,
-                out_channels=cfg.out_channels,
-                kernel_size=3,
-                input_h=current_h,
-                input_w=current_w,
-                stride=1,
-                padding=1,
-                dtype_size=dtype_size,
+                result=conv_out_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
         return layers
-
-    def _build_conv2d_layer(
-        self,
-        name: str,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int,
-        input_h: int,
-        input_w: int,
-        stride: int,
-        padding: int,
-        dtype_size: int,
-    ) -> LayerConfig:
-        """Build a 2D convolution layer config."""
-        output_h = (input_h + 2 * padding - kernel_size) // stride + 1
-        output_w = (input_w + 2 * padding - kernel_size) // stride + 1
-
-        flops = (
-            2 * output_h * output_w *
-            out_channels * kernel_size * kernel_size * in_channels
-        )
-
-        params = out_channels * in_channels * kernel_size * kernel_size
-
-        return LayerConfig(
-            name=name,
-            input_shape=(1, in_channels, input_h, input_w),
-            output_shape=(1, out_channels, output_h, output_w),
-            params_count=params,
-            flops=flops,
-            activation_bytes=out_channels * output_h * output_w * dtype_size,
-        )
-
-    def _build_conv3d_layer(
-        self,
-        name: str,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: Tuple[int, int, int],
-        input_t: int,
-        input_h: int,
-        input_w: int,
-        stride: Tuple[int, int, int],
-        padding: Tuple[int, int, int],
-        dtype_size: int,
-    ) -> LayerConfig:
-        """Build a 3D convolution layer config."""
-        kt, kh, kw = kernel_size
-        st, sh, sw = stride
-        pt, ph, pw = padding
-
-        output_t = (input_t + 2 * pt - kt) // st + 1
-        output_h = (input_h + 2 * ph - kh) // sh + 1
-        output_w = (input_w + 2 * pw - kw) // sw + 1
-
-        flops = (
-            2 * output_t * output_h * output_w *
-            out_channels * kt * kh * kw * in_channels
-        )
-
-        params = out_channels * in_channels * kt * kh * kw
-
-        return LayerConfig(
-            name=name,
-            input_shape=(1, in_channels, input_t, input_h, input_w),
-            output_shape=(1, out_channels, output_t, output_h, output_w),
-            params_count=params,
-            flops=flops,
-            activation_bytes=out_channels * output_t * output_h * output_w * dtype_size,
-        )
 
     def _build_resnet_block(
         self,
@@ -530,11 +515,13 @@ class VAEModel(BaseModel):
         width: int,
         dtype_size: int,
         use_3d: bool = True,
+        dtype: str = "fp16",
     ) -> List[LayerConfig]:
-        """Build a ResNet block (norm1 -> conv1 -> norm2 -> conv2)."""
+        """Build a ResNet block (norm1 -> conv1 -> norm2 -> conv2) using kernel API."""
         layers = []
 
-        # GroupNorm 1
+        # GroupNorm 1 (simplified as activation)
+        # NOTE: Manual calculation for GroupNorm (non-kernel normalization layer)
         layers.append(LayerConfig(
             name=f"{name}_norm1",
             input_shape=(1, in_channels, time_dim, height, width) if use_3d
@@ -548,32 +535,40 @@ class VAEModel(BaseModel):
 
         # Conv1
         if use_3d:
-            layers.append(self._build_conv3d_layer(
-                name=f"{name}_conv1",
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=(3, 3, 3),
-                input_t=time_dim,
-                input_h=height,
-                input_w=width,
+            conv1_result = conv3d(
+                input=(1, in_channels, time_dim, height, width),
+                weight=(out_channels, in_channels, 3, 3, 3),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(1, 1, 1),
-                dtype_size=dtype_size,
+                dtype=dtype
+            )
+            params = out_channels * in_channels * 3 * 3 * 3
+            layers.append(kernel_result_to_layer(
+                name=f"{name}_conv1",
+                result=conv1_result,
+                params=params,
+                dtype_size=dtype_size
             ))
         else:
-            layers.append(self._build_conv2d_layer(
+            conv1_result = conv2d(
+                input=(1, in_channels, height, width),
+                weight=(out_channels, in_channels, 3, 3),
+                bias=None,
+                stride=(1, 1),
+                padding=(1, 1),
+                dtype=dtype
+            )
+            params = out_channels * in_channels * 3 * 3
+            layers.append(kernel_result_to_layer(
                 name=f"{name}_conv1",
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=3,
-                input_h=height,
-                input_w=width,
-                stride=1,
-                padding=1,
-                dtype_size=dtype_size,
+                result=conv1_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
         # GroupNorm 2
+        # NOTE: Manual calculation for GroupNorm (non-kernel normalization layer)
         layers.append(LayerConfig(
             name=f"{name}_norm2",
             input_shape=(1, out_channels, time_dim, height, width) if use_3d
@@ -587,57 +582,71 @@ class VAEModel(BaseModel):
 
         # Conv2
         if use_3d:
-            layers.append(self._build_conv3d_layer(
-                name=f"{name}_conv2",
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel_size=(3, 3, 3),
-                input_t=time_dim,
-                input_h=height,
-                input_w=width,
+            conv2_result = conv3d(
+                input=(1, out_channels, time_dim, height, width),
+                weight=(out_channels, out_channels, 3, 3, 3),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(1, 1, 1),
-                dtype_size=dtype_size,
+                dtype=dtype
+            )
+            params = out_channels * out_channels * 3 * 3 * 3
+            layers.append(kernel_result_to_layer(
+                name=f"{name}_conv2",
+                result=conv2_result,
+                params=params,
+                dtype_size=dtype_size
             ))
         else:
-            layers.append(self._build_conv2d_layer(
+            conv2_result = conv2d(
+                input=(1, out_channels, height, width),
+                weight=(out_channels, out_channels, 3, 3),
+                bias=None,
+                stride=(1, 1),
+                padding=(1, 1),
+                dtype=dtype
+            )
+            params = out_channels * out_channels * 3 * 3
+            layers.append(kernel_result_to_layer(
                 name=f"{name}_conv2",
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel_size=3,
-                input_h=height,
-                input_w=width,
-                stride=1,
-                padding=1,
-                dtype_size=dtype_size,
+                result=conv2_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
         # Shortcut if channels change
         if in_channels != out_channels:
             if use_3d:
-                layers.append(self._build_conv3d_layer(
-                    name=f"{name}_shortcut",
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    kernel_size=(1, 1, 1),
-                    input_t=time_dim,
-                    input_h=height,
-                    input_w=width,
+                shortcut_result = conv3d(
+                    input=(1, in_channels, time_dim, height, width),
+                    weight=(out_channels, in_channels, 1, 1, 1),
+                    bias=None,
                     stride=(1, 1, 1),
                     padding=(0, 0, 0),
-                    dtype_size=dtype_size,
+                    dtype=dtype
+                )
+                params = out_channels * in_channels * 1 * 1 * 1
+                layers.append(kernel_result_to_layer(
+                    name=f"{name}_shortcut",
+                    result=shortcut_result,
+                    params=params,
+                    dtype_size=dtype_size
                 ))
             else:
-                layers.append(self._build_conv2d_layer(
+                shortcut_result = conv2d(
+                    input=(1, in_channels, height, width),
+                    weight=(out_channels, in_channels, 1, 1),
+                    bias=None,
+                    stride=(1, 1),
+                    padding=(0, 0),
+                    dtype=dtype
+                )
+                params = out_channels * in_channels * 1 * 1
+                layers.append(kernel_result_to_layer(
                     name=f"{name}_shortcut",
-                    in_channels=in_channels,
-                    out_channels=out_channels,
-                    kernel_size=1,
-                    input_h=height,
-                    input_w=width,
-                    stride=1,
-                    padding=0,
-                    dtype_size=dtype_size,
+                    result=shortcut_result,
+                    params=params,
+                    dtype_size=dtype_size
                 ))
 
         return layers
@@ -651,8 +660,9 @@ class VAEModel(BaseModel):
         width: int,
         dtype_size: int,
         use_3d: bool = True,
+        dtype: str = "fp16",
     ) -> List[LayerConfig]:
-        """Build a self-attention block for VAE.
+        """Build a self-attention block for VAE using kernel API.
 
         Uses spatial attention over (height, width) dimensions.
         For 3D, can optionally use temporal attention as well.
@@ -660,6 +670,7 @@ class VAEModel(BaseModel):
         layers = []
 
         # GroupNorm
+        # NOTE: Manual calculation for GroupNorm (non-kernel normalization layer)
         layers.append(LayerConfig(
             name=f"{name}_norm",
             input_shape=(1, channels, time_dim, height, width) if use_3d
@@ -677,36 +688,42 @@ class VAEModel(BaseModel):
         qkv_channels = channels * 3
 
         if use_3d:
-            layers.append(self._build_conv3d_layer(
-                name=f"{name}_qkv",
-                in_channels=channels,
-                out_channels=qkv_channels,
-                kernel_size=(1, 1, 1),
-                input_t=time_dim,
-                input_h=height,
-                input_w=width,
+            qkv_result = conv3d(
+                input=(1, channels, time_dim, height, width),
+                weight=(qkv_channels, channels, 1, 1, 1),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(0, 0, 0),
-                dtype_size=dtype_size,
+                dtype=dtype
+            )
+            params = qkv_channels * channels * 1 * 1 * 1
+            layers.append(kernel_result_to_layer(
+                name=f"{name}_qkv",
+                result=qkv_result,
+                params=params,
+                dtype_size=dtype_size
             ))
         else:
-            layers.append(self._build_conv2d_layer(
+            qkv_result = conv2d(
+                input=(1, channels, height, width),
+                weight=(qkv_channels, channels, 1, 1),
+                bias=None,
+                stride=(1, 1),
+                padding=(0, 0),
+                dtype=dtype
+            )
+            params = qkv_channels * channels * 1 * 1
+            layers.append(kernel_result_to_layer(
                 name=f"{name}_qkv",
-                in_channels=channels,
-                out_channels=qkv_channels,
-                kernel_size=1,
-                input_h=height,
-                input_w=width,
-                stride=1,
-                padding=0,
-                dtype_size=dtype_size,
+                result=qkv_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
         # Attention computation (Q @ K^T @ V)
-        # Simplified: attention over spatial dimensions
+        # NOTE: Manual calculation for attention compute (no kernel API available)
         seq_len = height * width
         if use_3d:
-            # Spatial attention per frame
             attn_flops = (
                 2 * time_dim * num_heads * seq_len * seq_len * head_dim +  # QK^T
                 2 * time_dim * num_heads * seq_len * seq_len * head_dim    # @V
@@ -730,29 +747,36 @@ class VAEModel(BaseModel):
 
         # Output projection
         if use_3d:
-            layers.append(self._build_conv3d_layer(
-                name=f"{name}_proj",
-                in_channels=channels,
-                out_channels=channels,
-                kernel_size=(1, 1, 1),
-                input_t=time_dim,
-                input_h=height,
-                input_w=width,
+            proj_result = conv3d(
+                input=(1, channels, time_dim, height, width),
+                weight=(channels, channels, 1, 1, 1),
+                bias=None,
                 stride=(1, 1, 1),
                 padding=(0, 0, 0),
-                dtype_size=dtype_size,
+                dtype=dtype
+            )
+            params = channels * channels * 1 * 1 * 1
+            layers.append(kernel_result_to_layer(
+                name=f"{name}_proj",
+                result=proj_result,
+                params=params,
+                dtype_size=dtype_size
             ))
         else:
-            layers.append(self._build_conv2d_layer(
+            proj_result = conv2d(
+                input=(1, channels, height, width),
+                weight=(channels, channels, 1, 1),
+                bias=None,
+                stride=(1, 1),
+                padding=(0, 0),
+                dtype=dtype
+            )
+            params = channels * channels * 1 * 1
+            layers.append(kernel_result_to_layer(
                 name=f"{name}_proj",
-                in_channels=channels,
-                out_channels=channels,
-                kernel_size=1,
-                input_h=height,
-                input_w=width,
-                stride=1,
-                padding=0,
-                dtype_size=dtype_size,
+                result=proj_result,
+                params=params,
+                dtype_size=dtype_size
             ))
 
         return layers

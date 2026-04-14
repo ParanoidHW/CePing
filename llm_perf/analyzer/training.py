@@ -1,7 +1,7 @@
 """Training performance analyzer."""
 
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ..models.base import BaseModel
 from ..hardware.device import Device
@@ -11,6 +11,8 @@ from ..kernels.compute import ComputeKernelRegistry
 from ..kernels.communication import CommKernelRegistry
 from ..utils.constants import DTYPE_SIZES
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
+from .detailed_breakdown import DetailedPerformanceResult
+from .breakdown_generator import BreakdownGenerator
 
 
 @dataclass
@@ -31,9 +33,12 @@ class TrainingResult:
     # Detailed breakdown
     breakdown: PerformanceBreakdown = None
     
+    # Detailed performance breakdown with memory/communication breakdown
+    detailed_breakdown: Optional[DetailedPerformanceResult] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "throughput": {
                 "samples_per_sec": self.samples_per_sec,
                 "tokens_per_sec": self.tokens_per_sec,
@@ -48,6 +53,9 @@ class TrainingResult:
             },
             "breakdown": self.breakdown.to_dict() if self.breakdown else None,
         }
+        if self.detailed_breakdown is not None:
+            result["detailed_breakdown"] = self.detailed_breakdown.to_dict()
+        return result
 
 
 class TrainingAnalyzer:
@@ -112,6 +120,11 @@ class TrainingAnalyzer:
             compute_time, comm_time, comm_breakdown, memory_bytes
         )
         
+        # Generate detailed breakdown
+        detailed_breakdown = self._generate_detailed_breakdown(
+            compute_time, comm_time, memory_bytes, batch_size
+        )
+        
         return TrainingResult(
             samples_per_sec=samples_per_sec,
             tokens_per_sec=tokens_per_sec,
@@ -119,6 +132,45 @@ class TrainingAnalyzer:
             time_to_solution_sec=time_per_step * num_steps,
             memory_per_gpu_gb=memory_bytes / 1024 / 1024 / 1024,
             breakdown=breakdown,
+            detailed_breakdown=detailed_breakdown,
+        )
+    
+    def _generate_detailed_breakdown(
+        self, compute_time: float, comm_time: float, memory_bytes: int, batch_size: int = 1
+    ) -> DetailedPerformanceResult:
+        """Generate detailed performance breakdown."""
+        generator = BreakdownGenerator(
+            self.model, self.device, self.cluster, self.strategy
+        )
+        
+        submodel = generator.generate_submodel_breakdown(
+            model_name=self.model.config.name or "model",
+            model_type=getattr(self.model.config, 'model_type', None) or "transformer",
+            compute_time_sec=compute_time,
+            num_iterations=1,
+        )
+        
+        # Build memory breakdown from submodel
+        from .detailed_breakdown import MemoryBreakdown, CommunicationBreakdown
+        memory_breakdown = MemoryBreakdown(
+            by_type=submodel.memory_by_type,
+            by_submodel={submodel.model_name: submodel.memory_by_type},
+        )
+        
+        # Build communication breakdown from submodel
+        comm_breakdown = CommunicationBreakdown(
+            by_type=submodel.comm_by_parallelism,
+            by_submodel={submodel.model_name: [
+                op for ops in submodel.comm_by_parallelism.values() for op in ops
+            ]},
+        )
+        
+        return DetailedPerformanceResult(
+            total_time_sec=compute_time + comm_time,
+            throughput=batch_size / (compute_time + comm_time) if (compute_time + comm_time) > 0 else 0,
+            submodels=[submodel],
+            memory=memory_breakdown,
+            communication=comm_breakdown,
         )
     
     def _estimate_compute_time(self, batch_size: int, seq_len: int) -> float:

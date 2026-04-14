@@ -1,10 +1,12 @@
-"""ResNet model implementation for computer vision workloads."""
+"""ResNet model implementation for computer vision workloads using kernel API."""
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List
 
 from .base import BaseModel, ModelConfig, LayerConfig
 from ..utils.constants import DTYPE_SIZES
+from ..kernels import conv2d
+from ..kernels.utils import kernel_result_to_layer
 
 
 @dataclass
@@ -36,7 +38,7 @@ class ResNetConfig(ModelConfig):
 
 
 class ResNetModel(BaseModel):
-    """ResNet model implementation.
+    """ResNet model implementation using kernel API.
 
     Supports ResNet-18, ResNet-34, ResNet-50, ResNet-101, ResNet-152.
     """
@@ -59,7 +61,7 @@ class ResNetModel(BaseModel):
         self._layers = self.build_layers()
 
     def build_layers(self) -> List[LayerConfig]:
-        """Build ResNet layer configurations."""
+        """Build ResNet layer configurations using kernel API."""
         layers = []
         cfg = self.config
         dtype_size = DTYPE_SIZES.get(cfg.dtype, 2)
@@ -70,23 +72,25 @@ class ResNetModel(BaseModel):
 
         layers_per_stage, block_type = self.ARCHITECTURES[variant]
 
-        # Initial convolution (conv1)
-        # 7x7, 64, stride 2, padding 3
-        layers.append(self._build_conv_layer(
+        # Initial convolution (conv1): 7x7, 64, stride 2, padding 3
+        conv1_result = conv2d(
+            input=(1, cfg.input_channels, cfg.input_height, cfg.input_width),
+            weight=(64, cfg.input_channels, 7, 7),
+            bias=(64,),  # Initial conv has bias
+            stride=(2, 2),
+            padding=(3, 3),
+            dtype=cfg.dtype
+        )
+        params = 64 * cfg.input_channels * 7 * 7 + 64  # weight + bias
+        layers.append(kernel_result_to_layer(
             name="conv1",
-            in_channels=cfg.input_channels,
-            out_channels=64,
-            kernel_size=7,
-            input_h=cfg.input_height,
-            input_w=cfg.input_width,
-            stride=2,
-            padding=3,
-            dtype_size=dtype_size,
+            result=conv1_result,
+            params=params,
+            dtype_size=dtype_size
         ))
 
         # MaxPool (not counted as a learnable layer but has compute)
-        # 3x3, stride 2, padding 1
-        # Output: 56x56 for 224x224 input
+        # 3x3, stride 2, padding 1 -> Output: 56x56 for 224x224 input
         current_h = 56
         current_w = 56
 
@@ -110,6 +114,7 @@ class ResNetModel(BaseModel):
                         input_w=current_w,
                         stride=stride,
                         dtype_size=dtype_size,
+                        dtype=cfg.dtype,
                     )
                 else:  # bottleneck
                     block_layers = self._build_bottleneck_block(
@@ -121,6 +126,7 @@ class ResNetModel(BaseModel):
                         input_w=current_w,
                         stride=stride,
                         dtype_size=dtype_size,
+                        dtype=cfg.dtype,
                     )
 
                 layers.extend(block_layers)
@@ -134,6 +140,7 @@ class ResNetModel(BaseModel):
             stage_idx += 1
 
         # Global average pooling
+        # NOTE: Manual calculation for pooling layer (no kernel API available)
         layers.append(LayerConfig(
             name="avgpool",
             input_shape=(1, in_channels, current_h, current_w),
@@ -143,55 +150,28 @@ class ResNetModel(BaseModel):
             activation_bytes=in_channels * dtype_size,
         ))
 
-        # Fully connected layer
-        layers.append(LayerConfig(
+        # Fully connected layer using conv2d kernel (treated as 1x1 conv)
+        fc_result = conv2d(
+            input=(1, in_channels, 1, 1),
+            weight=(cfg.vocab_size, in_channels, 1, 1),
+            bias=None,
+            stride=(1, 1),
+            padding=(0, 0),
+            dtype=cfg.dtype
+        )
+        # FC layer: flatten input and output
+        fc_layer = kernel_result_to_layer(
             name="fc",
-            input_shape=(1, in_channels),
-            output_shape=(1, cfg.vocab_size),
-            params_count=in_channels * cfg.vocab_size,
-            flops=in_channels * cfg.vocab_size * 2,
-            activation_bytes=cfg.vocab_size * dtype_size,
-        ))
+            result=fc_result,
+            params=in_channels * cfg.vocab_size,
+            dtype_size=dtype_size
+        )
+        # Override shapes for FC layer (flattened)
+        fc_layer.input_shape = (1, in_channels)
+        fc_layer.output_shape = (1, cfg.vocab_size)
+        layers.append(fc_layer)
 
         return layers
-
-    def _build_conv_layer(
-        self,
-        name: str,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int,
-        input_h: int,
-        input_w: int,
-        stride: int,
-        padding: int,
-        dtype_size: int,
-    ) -> LayerConfig:
-        """Build a convolution layer config."""
-        # Calculate output dimensions
-        output_h = (input_h + 2 * padding - kernel_size) // stride + 1
-        output_w = (input_w + 2 * padding - kernel_size) // stride + 1
-
-        # FLOPs for Conv2d
-        flops = (
-            2 * output_h * output_w *
-            out_channels * kernel_size * kernel_size * in_channels
-        )
-
-        # Parameters
-        params = out_channels * in_channels * kernel_size * kernel_size
-        if name == "conv1":
-            # Initial conv also has bias
-            params += out_channels
-
-        return LayerConfig(
-            name=name,
-            input_shape=(1, in_channels, input_h, input_w),
-            output_shape=(1, out_channels, output_h, output_w),
-            params_count=params,
-            flops=flops,
-            activation_bytes=out_channels * output_h * output_w * dtype_size,
-        )
 
     def _build_basic_block(
         self,
@@ -203,8 +183,9 @@ class ResNetModel(BaseModel):
         input_w: int,
         stride: int,
         dtype_size: int,
+        dtype: str = "fp16",
     ) -> List[LayerConfig]:
-        """Build a BasicBlock (for ResNet-18/34).
+        """Build a BasicBlock (for ResNet-18/34) using kernel API.
 
         BasicBlock consists of two 3x3 conv layers with a skip connection.
         """
@@ -212,46 +193,57 @@ class ResNetModel(BaseModel):
         prefix = f"layer{stage}_{block}"
 
         # First conv 3x3
-        layers.append(self._build_conv_layer(
+        conv1_result = conv2d(
+            input=(1, in_channels, input_h, input_w),
+            weight=(out_channels, in_channels, 3, 3),
+            bias=None,
+            stride=(stride, stride),
+            padding=(1, 1),
+            dtype=dtype
+        )
+        output_h = (input_h + 2 * 1 - 3) // stride + 1
+        output_w = (input_w + 2 * 1 - 3) // stride + 1
+        params1 = out_channels * in_channels * 3 * 3
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv1",
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=3,
-            input_h=input_h,
-            input_w=input_w,
-            stride=stride,
-            padding=1,
-            dtype_size=dtype_size,
+            result=conv1_result,
+            params=params1,
+            dtype_size=dtype_size
         ))
 
-        output_h = (input_h + 2 - 3) // stride + 1
-        output_w = (input_w + 2 - 3) // stride + 1
-
         # Second conv 3x3
-        layers.append(self._build_conv_layer(
+        conv2_result = conv2d(
+            input=(1, out_channels, output_h, output_w),
+            weight=(out_channels, out_channels, 3, 3),
+            bias=None,
+            stride=(1, 1),
+            padding=(1, 1),
+            dtype=dtype
+        )
+        params2 = out_channels * out_channels * 3 * 3
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv2",
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=3,
-            input_h=output_h,
-            input_w=output_w,
-            stride=1,
-            padding=1,
-            dtype_size=dtype_size,
+            result=conv2_result,
+            params=params2,
+            dtype_size=dtype_size
         ))
 
         # Shortcut connection (if needed)
         if stride != 1 or in_channels != out_channels:
-            layers.append(self._build_conv_layer(
+            shortcut_result = conv2d(
+                input=(1, in_channels, input_h, input_w),
+                weight=(out_channels, in_channels, 1, 1),
+                bias=None,
+                stride=(stride, stride),
+                padding=(0, 0),
+                dtype=dtype
+            )
+            params_shortcut = out_channels * in_channels * 1 * 1
+            layers.append(kernel_result_to_layer(
                 name=f"{prefix}_shortcut",
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=1,
-                input_h=input_h,
-                input_w=input_w,
-                stride=stride,
-                padding=0,
-                dtype_size=dtype_size,
+                result=shortcut_result,
+                params=params_shortcut,
+                dtype_size=dtype_size
             ))
 
         return layers
@@ -266,69 +258,87 @@ class ResNetModel(BaseModel):
         input_w: int,
         stride: int,
         dtype_size: int,
+        dtype: str = "fp16",
     ) -> List[LayerConfig]:
-        """Build a Bottleneck block (for ResNet-50/101/152).
+        """Build a Bottleneck block (for ResNet-50/101/152) using kernel API.
 
         Bottleneck consists of 1x1, 3x3, 1x1 conv layers with a skip connection.
         """
         layers = []
         prefix = f"layer{stage}_{block}"
+        expand_channels = out_channels * 4
 
         # First conv 1x1 (reduce)
-        layers.append(self._build_conv_layer(
+        conv1_result = conv2d(
+            input=(1, in_channels, input_h, input_w),
+            weight=(out_channels, in_channels, 1, 1),
+            bias=None,
+            stride=(1, 1),
+            padding=(0, 0),
+            dtype=dtype
+        )
+        params1 = out_channels * in_channels * 1 * 1
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv1",
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=1,
-            input_h=input_h,
-            input_w=input_w,
-            stride=1,
-            padding=0,
-            dtype_size=dtype_size,
+            result=conv1_result,
+            params=params1,
+            dtype_size=dtype_size
         ))
 
         # Second conv 3x3 (process)
-        layers.append(self._build_conv_layer(
+        conv_h = input_h if stride == 1 else (input_h + 1) // 2
+        conv_w = input_w if stride == 1 else (input_w + 1) // 2
+        conv2_result = conv2d(
+            input=(1, out_channels, conv_h, conv_w),
+            weight=(out_channels, out_channels, 3, 3),
+            bias=None,
+            stride=(stride, stride),
+            padding=(1, 1),
+            dtype=dtype
+        )
+        output_h = (conv_h + 2 * 1 - 3) // stride + 1 if stride > 1 else conv_h
+        output_w = (conv_w + 2 * 1 - 3) // stride + 1 if stride > 1 else conv_w
+        params2 = out_channels * out_channels * 3 * 3
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv2",
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=3,
-            input_h=input_h if stride == 1 else (input_h + 1) // 2,
-            input_w=input_w if stride == 1 else (input_w + 1) // 2,
-            stride=stride,
-            padding=1,
-            dtype_size=dtype_size,
+            result=conv2_result,
+            params=params2,
+            dtype_size=dtype_size
         ))
 
-        output_h = (input_h + 2 - 3) // stride + 1 if stride > 1 else input_h
-        output_w = (input_w + 2 - 3) // stride + 1 if stride > 1 else input_w
-
         # Third conv 1x1 (expand)
-        expand_channels = out_channels * 4
-        layers.append(self._build_conv_layer(
+        conv3_result = conv2d(
+            input=(1, out_channels, output_h, output_w),
+            weight=(expand_channels, out_channels, 1, 1),
+            bias=None,
+            stride=(1, 1),
+            padding=(0, 0),
+            dtype=dtype
+        )
+        params3 = expand_channels * out_channels * 1 * 1
+        layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv3",
-            in_channels=out_channels,
-            out_channels=expand_channels,
-            kernel_size=1,
-            input_h=output_h,
-            input_w=output_w,
-            stride=1,
-            padding=0,
-            dtype_size=dtype_size,
+            result=conv3_result,
+            params=params3,
+            dtype_size=dtype_size
         ))
 
         # Shortcut connection (if needed)
         if stride != 1 or in_channels != expand_channels:
-            layers.append(self._build_conv_layer(
+            shortcut_result = conv2d(
+                input=(1, in_channels, input_h, input_w),
+                weight=(expand_channels, in_channels, 1, 1),
+                bias=None,
+                stride=(stride, stride),
+                padding=(0, 0),
+                dtype=dtype
+            )
+            params_shortcut = expand_channels * in_channels * 1 * 1
+            layers.append(kernel_result_to_layer(
                 name=f"{prefix}_shortcut",
-                in_channels=in_channels,
-                out_channels=expand_channels,
-                kernel_size=1,
-                input_h=input_h,
-                input_w=input_w,
-                stride=stride,
-                padding=0,
-                dtype_size=dtype_size,
+                result=shortcut_result,
+                params=params_shortcut,
+                dtype_size=dtype_size
             ))
 
         return layers

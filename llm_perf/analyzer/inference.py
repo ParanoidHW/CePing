@@ -1,7 +1,7 @@
 """Inference performance analyzer."""
 
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ..models.base import BaseModel
 from ..hardware.device import Device
@@ -11,6 +11,8 @@ from ..kernels.compute import ComputeKernelRegistry
 from ..kernels.communication import CommKernelRegistry
 from ..utils.constants import DTYPE_SIZES, PHASE_PREFILL, PHASE_DECODE
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
+from .detailed_breakdown import DetailedPerformanceResult
+from .breakdown_generator import BreakdownGenerator
 
 
 @dataclass
@@ -37,9 +39,12 @@ class InferenceResult:
     prefill_breakdown: PerformanceBreakdown = None
     decode_breakdown: PerformanceBreakdown = None
     
+    # Detailed performance breakdown with memory/communication breakdown
+    detailed_breakdown: Optional[DetailedPerformanceResult] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "prefill": {
                 "ttft_sec": self.prefill_time_sec,
                 "ttft_ms": self.prefill_time_sec * 1000,
@@ -62,6 +67,9 @@ class InferenceResult:
             "prefill_breakdown": self.prefill_breakdown.to_dict() if self.prefill_breakdown else None,
             "decode_breakdown": self.decode_breakdown.to_dict() if self.decode_breakdown else None,
         }
+        if self.detailed_breakdown is not None:
+            result["detailed_breakdown"] = self.detailed_breakdown.to_dict()
+        return result
 
 
 class InferenceAnalyzer:
@@ -122,6 +130,11 @@ class InferenceAnalyzer:
         prefill_breakdown = self._build_prefill_breakdown(batch_size, prompt_len, prefill_time)
         decode_breakdown = self._build_decode_breakdown(batch_size, decode_time_per_step)
         
+        # Generate detailed breakdown
+        detailed_breakdown = self._generate_detailed_breakdown(
+            prefill_time, decode_time_per_step, generation_len, memory_bytes
+        )
+        
         return InferenceResult(
             prefill_time_sec=prefill_time,
             decode_time_per_step_sec=decode_time_per_step,
@@ -133,6 +146,48 @@ class InferenceAnalyzer:
             kv_cache_memory_gb=kv_cache_bytes / 1024 / 1024 / 1024,
             prefill_breakdown=prefill_breakdown,
             decode_breakdown=decode_breakdown,
+            detailed_breakdown=detailed_breakdown,
+        )
+    
+    def _generate_detailed_breakdown(
+        self, prefill_time: float, decode_time_per_step: float, 
+        generation_len: int, memory_bytes: int
+    ) -> DetailedPerformanceResult:
+        """Generate detailed performance breakdown for inference."""
+        # Create generator with is_training=False for inference mode
+        generator = BreakdownGenerator(
+            self.model, self.device, self.cluster, self.strategy, is_training=False
+        )
+        
+        submodel = generator.generate_submodel_breakdown(
+            model_name=self.model.config.name or "model",
+            model_type=getattr(self.model.config, 'model_type', None) or "transformer",
+            compute_time_sec=prefill_time + decode_time_per_step * generation_len,
+            num_iterations=1,
+        )
+        
+        # Build memory breakdown from submodel
+        from .detailed_breakdown import MemoryBreakdown, CommunicationBreakdown
+        memory_breakdown = MemoryBreakdown(
+            by_type=submodel.memory_by_type,
+            by_submodel={submodel.model_name: submodel.memory_by_type},
+        )
+        
+        # Build communication breakdown from submodel
+        comm_breakdown = CommunicationBreakdown(
+            by_type=submodel.comm_by_parallelism,
+            by_submodel={submodel.model_name: [
+                op for ops in submodel.comm_by_parallelism.values() for op in ops
+            ]},
+        )
+        
+        total_time = prefill_time + decode_time_per_step * generation_len
+        return DetailedPerformanceResult(
+            total_time_sec=total_time,
+            throughput=generation_len / total_time if total_time > 0 else 0,
+            submodels=[submodel],
+            memory=memory_breakdown,
+            communication=comm_breakdown,
         )
     
     def _estimate_prefill_time(self, batch_size: int, seq_len: int) -> float:
