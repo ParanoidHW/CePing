@@ -81,11 +81,9 @@ class ResNetModel(BaseModel):
             padding=(3, 3),
             dtype=cfg.dtype
         )
-        params = 64 * cfg.input_channels * 7 * 7 + 64  # weight + bias
         layers.append(kernel_result_to_layer(
             name="conv1",
             result=conv1_result,
-            params=params,
             dtype_size=dtype_size
         ))
 
@@ -163,7 +161,6 @@ class ResNetModel(BaseModel):
         fc_layer = kernel_result_to_layer(
             name="fc",
             result=fc_result,
-            params=in_channels * cfg.vocab_size,
             dtype_size=dtype_size
         )
         # Override shapes for FC layer (flattened)
@@ -203,11 +200,9 @@ class ResNetModel(BaseModel):
         )
         output_h = (input_h + 2 * 1 - 3) // stride + 1
         output_w = (input_w + 2 * 1 - 3) // stride + 1
-        params1 = out_channels * in_channels * 3 * 3
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv1",
             result=conv1_result,
-            params=params1,
             dtype_size=dtype_size
         ))
 
@@ -220,11 +215,9 @@ class ResNetModel(BaseModel):
             padding=(1, 1),
             dtype=dtype
         )
-        params2 = out_channels * out_channels * 3 * 3
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv2",
             result=conv2_result,
-            params=params2,
             dtype_size=dtype_size
         ))
 
@@ -238,11 +231,9 @@ class ResNetModel(BaseModel):
                 padding=(0, 0),
                 dtype=dtype
             )
-            params_shortcut = out_channels * in_channels * 1 * 1
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_shortcut",
                 result=shortcut_result,
-                params=params_shortcut,
                 dtype_size=dtype_size
             ))
 
@@ -277,11 +268,9 @@ class ResNetModel(BaseModel):
             padding=(0, 0),
             dtype=dtype
         )
-        params1 = out_channels * in_channels * 1 * 1
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv1",
             result=conv1_result,
-            params=params1,
             dtype_size=dtype_size
         ))
 
@@ -298,11 +287,9 @@ class ResNetModel(BaseModel):
         )
         output_h = (conv_h + 2 * 1 - 3) // stride + 1 if stride > 1 else conv_h
         output_w = (conv_w + 2 * 1 - 3) // stride + 1 if stride > 1 else conv_w
-        params2 = out_channels * out_channels * 3 * 3
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv2",
             result=conv2_result,
-            params=params2,
             dtype_size=dtype_size
         ))
 
@@ -315,11 +302,9 @@ class ResNetModel(BaseModel):
             padding=(0, 0),
             dtype=dtype
         )
-        params3 = expand_channels * out_channels * 1 * 1
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv3",
             result=conv3_result,
-            params=params3,
             dtype_size=dtype_size
         ))
 
@@ -333,11 +318,9 @@ class ResNetModel(BaseModel):
                 padding=(0, 0),
                 dtype=dtype
             )
-            params_shortcut = expand_channels * in_channels * 1 * 1
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_shortcut",
                 result=shortcut_result,
-                params=params_shortcut,
                 dtype_size=dtype_size
             ))
 

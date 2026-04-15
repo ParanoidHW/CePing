@@ -110,11 +110,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1, 1),
                 dtype=cfg.dtype
             )
-            params = out_channels_list[0] * in_channels * 3 * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="encoder_conv_in",
                 result=conv_in_result,
-                params=params,
                 dtype_size=dtype_size
             ))
 
@@ -131,11 +129,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1),
                 dtype=cfg.dtype
             )
-            params = out_channels_list[0] * in_channels * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="encoder_conv_in",
                 result=conv_in_result,
-                params=params,
                 dtype_size=dtype_size
             ))
             current_t = 1
@@ -185,11 +181,9 @@ class VAEModel(BaseModel):
                         padding=(1, 1, 1),
                         dtype=cfg.dtype
                     )
-                    params = out_channels * out_channels * 3 * 3 * 3
                     layers.append(kernel_result_to_layer(
                         name=f"encoder_down_{i}_downsample",
                         result=down_result,
-                        params=params,
                         dtype_size=dtype_size
                     ))
                     current_h //= 2
@@ -203,11 +197,9 @@ class VAEModel(BaseModel):
                         padding=(1, 1),
                         dtype=cfg.dtype
                     )
-                    params = out_channels * out_channels * 3 * 3
                     layers.append(kernel_result_to_layer(
                         name=f"encoder_down_{i}_downsample",
                         result=down_result,
-                        params=params,
                         dtype_size=dtype_size
                     ))
                     current_h //= 2
@@ -261,11 +253,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1, 1),
                 dtype=cfg.dtype
             )
-            params = cfg.latent_channels * 2 * mid_channels * 3 * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="encoder_conv_out",
                 result=conv_out_result,
-                params=params,
                 dtype_size=dtype_size
             ))
         else:
@@ -277,11 +267,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1),
                 dtype=cfg.dtype
             )
-            params = cfg.latent_channels * 2 * mid_channels * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="encoder_conv_out",
                 result=conv_out_result,
-                params=params,
                 dtype_size=dtype_size
             ))
 
@@ -317,11 +305,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1, 1),
                 dtype=cfg.dtype
             )
-            params = reverse_channels[0] * cfg.latent_channels * 3 * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="decoder_conv_in",
                 result=conv_in_result,
-                params=params,
                 dtype_size=dtype_size
             ))
             current_t = latent_t
@@ -336,11 +322,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1),
                 dtype=cfg.dtype
             )
-            params = reverse_channels[0] * cfg.latent_channels * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="decoder_conv_in",
                 result=conv_in_result,
-                params=params,
                 dtype_size=dtype_size
             ))
             current_t = 1
@@ -428,11 +412,9 @@ class VAEModel(BaseModel):
                         padding=(1, 1, 1),
                         dtype=cfg.dtype
                     )
-                    params = out_channels * out_channels * 3 * 3 * 3
                     layers.append(kernel_result_to_layer(
                         name=f"decoder_up_{i}_upsample",
                         result=up_result,
-                        params=params,
                         dtype_size=dtype_size
                     ))
                     current_h *= 2
@@ -446,11 +428,9 @@ class VAEModel(BaseModel):
                         padding=(1, 1),
                         dtype=cfg.dtype
                     )
-                    params = out_channels * out_channels * 3 * 3
                     layers.append(kernel_result_to_layer(
                         name=f"decoder_up_{i}_upsample",
                         result=up_result,
-                        params=params,
                         dtype_size=dtype_size
                     ))
                     current_h *= 2
@@ -479,11 +459,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1, 1),
                 dtype=cfg.dtype
             )
-            params = cfg.out_channels * out_channels * 3 * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="decoder_conv_out",
                 result=conv_out_result,
-                params=params,
                 dtype_size=dtype_size
             ))
         else:
@@ -495,11 +473,9 @@ class VAEModel(BaseModel):
                 padding=(1, 1),
                 dtype=cfg.dtype
             )
-            params = cfg.out_channels * out_channels * 3 * 3
             layers.append(kernel_result_to_layer(
                 name="decoder_conv_out",
                 result=conv_out_result,
-                params=params,
                 dtype_size=dtype_size
             ))
 
@@ -546,9 +522,7 @@ class VAEModel(BaseModel):
             params = out_channels * in_channels * 3 * 3 * 3
             layers.append(kernel_result_to_layer(
                 name=f"{name}_conv1",
-                result=conv1_result,
-                params=params,
-                dtype_size=dtype_size
+                result=conv1_result,dtype_size=dtype_size
             ))
         else:
             conv1_result = conv2d(
@@ -562,9 +536,7 @@ class VAEModel(BaseModel):
             params = out_channels * in_channels * 3 * 3
             layers.append(kernel_result_to_layer(
                 name=f"{name}_conv1",
-                result=conv1_result,
-                params=params,
-                dtype_size=dtype_size
+                result=conv1_result,dtype_size=dtype_size
             ))
 
         # GroupNorm 2
@@ -593,9 +565,7 @@ class VAEModel(BaseModel):
             params = out_channels * out_channels * 3 * 3 * 3
             layers.append(kernel_result_to_layer(
                 name=f"{name}_conv2",
-                result=conv2_result,
-                params=params,
-                dtype_size=dtype_size
+                result=conv2_result,dtype_size=dtype_size
             ))
         else:
             conv2_result = conv2d(
@@ -609,9 +579,7 @@ class VAEModel(BaseModel):
             params = out_channels * out_channels * 3 * 3
             layers.append(kernel_result_to_layer(
                 name=f"{name}_conv2",
-                result=conv2_result,
-                params=params,
-                dtype_size=dtype_size
+                result=conv2_result,dtype_size=dtype_size
             ))
 
         # Shortcut if channels change
@@ -628,9 +596,7 @@ class VAEModel(BaseModel):
                 params = out_channels * in_channels * 1 * 1 * 1
                 layers.append(kernel_result_to_layer(
                     name=f"{name}_shortcut",
-                    result=shortcut_result,
-                    params=params,
-                    dtype_size=dtype_size
+                    result=shortcut_result,dtype_size=dtype_size
                 ))
             else:
                 shortcut_result = conv2d(
@@ -644,9 +610,7 @@ class VAEModel(BaseModel):
                 params = out_channels * in_channels * 1 * 1
                 layers.append(kernel_result_to_layer(
                     name=f"{name}_shortcut",
-                    result=shortcut_result,
-                    params=params,
-                    dtype_size=dtype_size
+                    result=shortcut_result,dtype_size=dtype_size
                 ))
 
         return layers
@@ -699,9 +663,7 @@ class VAEModel(BaseModel):
             params = qkv_channels * channels * 1 * 1 * 1
             layers.append(kernel_result_to_layer(
                 name=f"{name}_qkv",
-                result=qkv_result,
-                params=params,
-                dtype_size=dtype_size
+                result=qkv_result,dtype_size=dtype_size
             ))
         else:
             qkv_result = conv2d(
@@ -715,9 +677,7 @@ class VAEModel(BaseModel):
             params = qkv_channels * channels * 1 * 1
             layers.append(kernel_result_to_layer(
                 name=f"{name}_qkv",
-                result=qkv_result,
-                params=params,
-                dtype_size=dtype_size
+                result=qkv_result,dtype_size=dtype_size
             ))
 
         # Attention computation (Q @ K^T @ V)
@@ -758,9 +718,7 @@ class VAEModel(BaseModel):
             params = channels * channels * 1 * 1 * 1
             layers.append(kernel_result_to_layer(
                 name=f"{name}_proj",
-                result=proj_result,
-                params=params,
-                dtype_size=dtype_size
+                result=proj_result,dtype_size=dtype_size
             ))
         else:
             proj_result = conv2d(
@@ -774,9 +732,7 @@ class VAEModel(BaseModel):
             params = channels * channels * 1 * 1
             layers.append(kernel_result_to_layer(
                 name=f"{name}_proj",
-                result=proj_result,
-                params=params,
-                dtype_size=dtype_size
+                result=proj_result,dtype_size=dtype_size
             ))
 
         return layers

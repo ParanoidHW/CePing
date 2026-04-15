@@ -161,7 +161,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name="embed_tokens",
             result=emb_result,
-            params=cfg.vocab_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -179,7 +178,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name="final_layer_norm",
             result=ln_result,
-            params=cfg.hidden_size * 2,  # weight + bias
             dtype_size=dtype_size
         ))
         
@@ -209,7 +207,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_qkv",
             result=qkv_result,
-            params=3 * cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -242,7 +239,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_o",
             result=o_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -256,7 +252,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_post_attn_norm",
             result=ln1_result,
-            params=cfg.hidden_size * 2,  # weight + bias
             dtype_size=dtype_size
         ))
         
@@ -271,7 +266,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_in",
             result=ffn_in_result,
-            params=2 * cfg.hidden_size * cfg.intermediate_size,
             dtype_size=dtype_size
         ))
         
@@ -299,7 +293,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_out",
             result=ffn_out_result,
-            params=cfg.intermediate_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -313,7 +306,6 @@ class WanTextEncoder(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_final_norm",
             result=ln2_result,
-            params=cfg.hidden_size * 2,
             dtype_size=dtype_size
         ))
         
@@ -370,12 +362,9 @@ class WanDiTModel(BaseModel):
             dtype=cfg.dtype
         )
         
-        kernel_params = pt * ph * pw * cfg.in_channels * cfg.hidden_size
-        
         return kernel_result_to_layer(
             name="patchify",
             result=conv_result,
-            params=kernel_params,
             dtype_size=dtype_size
         )
     
@@ -399,7 +388,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="time_embedding_in",
             result=te_in_result,
-            params=cfg.freq_dim * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -425,7 +413,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="time_embedding_out",
             result=te_out_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -439,7 +426,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="time_projection",
             result=tp_result,
-            params=cfg.hidden_size * 6 * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -510,7 +496,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_norm1",
             result=ln1_result,
-            params=0,  # LayerNorm without elementwise_affine
             dtype_size=dtype_size
         ))
         
@@ -524,7 +509,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_qkv",
             result=qkv_result,
-            params=3 * cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -537,7 +521,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_qk_norm",
             result=qk_norm_result,
-            params=2 * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -567,7 +550,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_o",
             result=o_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -582,7 +564,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_norm3",
             result=ln3_result,
-            params=cfg.hidden_size * 2,
             dtype_size=dtype_size
         ))
         
@@ -596,7 +577,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_q",
             result=cross_q_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -610,7 +590,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_kv",
             result=kv_result,
-            params=2 * cfg.text_dim * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -638,7 +617,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_o",
             result=cross_o_result,
-            params=cfg.hidden_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -653,7 +631,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_norm2",
             result=ln2_result,
-            params=0,
             dtype_size=dtype_size
         ))
         
@@ -667,7 +644,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_in",
             result=ffn_in_result,
-            params=2 * cfg.hidden_size * cfg.intermediate_size,
             dtype_size=dtype_size
         ))
         
@@ -694,7 +670,6 @@ class WanDiTModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_out",
             result=ffn_out_result,
-            params=cfg.intermediate_size * cfg.hidden_size,
             dtype_size=dtype_size
         ))
         
@@ -726,7 +701,6 @@ class WanDiTModel(BaseModel):
         return kernel_result_to_layer(
             name="unpatchify",
             result=linear_result,
-            params=cfg.hidden_size * out_dim,
             dtype_size=dtype_size
         )
 
@@ -935,12 +909,9 @@ class WanVAEModel(BaseModel):
             dtype=self.config.dtype
         )
         
-        params = out_channels * in_channels * kt * kh * kw
-        
         return kernel_result_to_layer(
             name=name,
             result=conv_result,
-            params=params,
             dtype_size=dtype_size
         )
     

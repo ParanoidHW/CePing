@@ -163,9 +163,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="embedding",
-            result=emb_result,
-            params=cfg.vocab_size * cfg.hidden_size,
-            dtype_size=dtype_size
+            result=emb_result,dtype_size=dtype_size
         ))
         
         # Build each transformer layer
@@ -180,9 +178,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="final_norm",
-            result=final_norm_result,
-            params=cfg.hidden_size,
-            dtype_size=dtype_size
+            result=final_norm_result,dtype_size=dtype_size
         ))
         
         # LM head using linear kernel
@@ -194,9 +190,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="lm_head",
-            result=lm_head_result,
-            params=cfg.hidden_size * cfg.vocab_size,
-            dtype_size=dtype_size
+            result=lm_head_result,dtype_size=dtype_size
         ))
         
         return layers
@@ -258,9 +252,7 @@ class DeepSeekModel(BaseModel):
             )
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_q_down_proj",
-                result=q_down_result,
-                params=cfg.hidden_size * cfg.q_lora_rank,
-                dtype_size=dtype_size
+                result=q_down_result,dtype_size=dtype_size
             ))
             
             # W_UQ: Up-projection to Q heads
@@ -273,9 +265,7 @@ class DeepSeekModel(BaseModel):
             )
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_q_up_proj",
-                result=q_up_result,
-                params=cfg.q_lora_rank * q_up_dim,
-                dtype_size=dtype_size
+                result=q_up_result,dtype_size=dtype_size
             ))
         
         # KV compression (the key innovation of MLA)
@@ -288,9 +278,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_kv_down_proj",
-            result=kv_down_result,
-            params=cfg.hidden_size * cfg.kv_lora_rank,
-            dtype_size=dtype_size
+            result=kv_down_result,dtype_size=dtype_size
         ))
         
         # W_UK: Decompress latent KV to key heads
@@ -303,9 +291,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_k_up_proj",
-            result=uk_result,
-            params=cfg.kv_lora_rank * uk_dim,
-            dtype_size=dtype_size
+            result=uk_result,dtype_size=dtype_size
         ))
         
         # W_UV: Decompress latent KV to value heads
@@ -318,9 +304,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_v_up_proj",
-            result=uv_result,
-            params=cfg.kv_lora_rank * uv_dim,
-            dtype_size=dtype_size
+            result=uv_result,dtype_size=dtype_size
         ))
         
         # RoPE projections for position encoding
@@ -332,9 +316,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_q_rope_proj",
-            result=q_rope_result,
-            params=cfg.hidden_size * cfg.qk_rope_head_dim,
-            dtype_size=dtype_size
+            result=q_rope_result,dtype_size=dtype_size
         ))
         
         k_rope_result = linear(
@@ -345,9 +327,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_k_rope_proj",
-            result=k_rope_result,
-            params=cfg.hidden_size * cfg.qk_rope_head_dim,
-            dtype_size=dtype_size
+            result=k_rope_result,dtype_size=dtype_size
         ))
         
         # Attention computation using scaled_dot_product_attention kernel
@@ -366,9 +346,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_mla_attention",
-            result=attn_result,
-            params=0,
-            dtype_size=dtype_size
+            result=attn_result,dtype_size=dtype_size
         ))
         
         # Output projection
@@ -381,9 +359,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
-            result=o_result,
-            params=o_dim * cfg.hidden_size,
-            dtype_size=dtype_size
+            result=o_result,dtype_size=dtype_size
         ))
         
         # Attention norm/residual using rms_norm kernel
@@ -394,9 +370,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attn_norm",
-            result=attn_norm_result,
-            params=cfg.hidden_size,
-            dtype_size=dtype_size
+            result=attn_norm_result,dtype_size=dtype_size
         ))
         
         return layers
@@ -426,9 +400,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_up_proj",
-            result=up_result,
-            params=cfg.hidden_size * ffn_intermediate,
-            dtype_size=dtype_size
+            result=up_result,dtype_size=dtype_size
         ))
         
         # Gate projection
@@ -440,9 +412,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_gate_proj",
-            result=gate_result,
-            params=cfg.hidden_size * ffn_intermediate,
-            dtype_size=dtype_size
+            result=gate_result,dtype_size=dtype_size
         ))
         
         # SwiGLU activation using silu kernel
@@ -452,9 +422,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_swiglu",
-            result=swiglu_result,
-            params=0,
-            dtype_size=dtype_size
+            result=swiglu_result,dtype_size=dtype_size
         ))
         
         # Down projection
@@ -466,9 +434,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_down_proj",
-            result=down_result,
-            params=ffn_intermediate * cfg.hidden_size,
-            dtype_size=dtype_size
+            result=down_result,dtype_size=dtype_size
         ))
         
         # FFN norm using rms_norm kernel
@@ -479,9 +445,7 @@ class DeepSeekModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
-            result=ffn_norm_result,
-            params=cfg.hidden_size,
-            dtype_size=dtype_size
+            result=ffn_norm_result,dtype_size=dtype_size
         ))
         
         return layers
@@ -514,9 +478,7 @@ class DeepSeekModel(BaseModel):
 
         router_layer = kernel_result_to_layer(
             name=f"{prefix}_router",
-            result=router_result,
-            params=cfg.hidden_size * cfg.n_routed_experts,
-            dtype_size=dtype_size
+            result=router_result,dtype_size=dtype_size
         )
         router_layer.is_moe = True
         layers.append(router_layer)
@@ -533,9 +495,7 @@ class DeepSeekModel(BaseModel):
         )
         up_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_up",
-            result=up_result,
-            params=cfg.hidden_size * ffn_intermediate * cfg.n_routed_experts,
-            dtype_size=dtype_size
+            result=up_result,dtype_size=dtype_size
         )
         up_layer.flops = int(up_result.flops * cfg.num_experts_per_tok)
         up_layer.is_moe = True
@@ -550,9 +510,7 @@ class DeepSeekModel(BaseModel):
         )
         gate_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_gate",
-            result=gate_result,
-            params=cfg.hidden_size * ffn_intermediate * cfg.n_routed_experts,
-            dtype_size=dtype_size
+            result=gate_result,dtype_size=dtype_size
         )
         gate_layer.flops = int(gate_result.flops * cfg.num_experts_per_tok)
         gate_layer.is_moe = True
@@ -565,9 +523,7 @@ class DeepSeekModel(BaseModel):
         )
         swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_swiglu",
-            result=swiglu_result,
-            params=0,
-            dtype_size=dtype_size
+            result=swiglu_result,dtype_size=dtype_size
         )
         swiglu_layer.flops = int(swiglu_result.flops * cfg.num_experts_per_tok)
         swiglu_layer.is_moe = True
@@ -582,9 +538,7 @@ class DeepSeekModel(BaseModel):
         )
         down_layer = kernel_result_to_layer(
             name=f"{prefix}_routed_down",
-            result=down_result,
-            params=ffn_intermediate * cfg.hidden_size * cfg.n_routed_experts,
-            dtype_size=dtype_size
+            result=down_result,dtype_size=dtype_size
         )
         down_layer.flops = int(down_result.flops * cfg.num_experts_per_tok)
         down_layer.is_moe = True
@@ -602,9 +556,7 @@ class DeepSeekModel(BaseModel):
         )
         shared_up_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_up",
-            result=shared_up_result,
-            params=cfg.hidden_size * shared_intermediate,
-            dtype_size=dtype_size
+            result=shared_up_result,dtype_size=dtype_size
         )
         shared_up_layer.is_moe = True
         layers.append(shared_up_layer)
@@ -618,9 +570,7 @@ class DeepSeekModel(BaseModel):
         )
         shared_gate_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_gate",
-            result=shared_gate_result,
-            params=cfg.hidden_size * shared_intermediate,
-            dtype_size=dtype_size
+            result=shared_gate_result,dtype_size=dtype_size
         )
         shared_gate_layer.is_moe = True
         layers.append(shared_gate_layer)
@@ -632,9 +582,7 @@ class DeepSeekModel(BaseModel):
         )
         shared_swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_swiglu",
-            result=shared_swiglu_result,
-            params=0,
-            dtype_size=dtype_size
+            result=shared_swiglu_result,dtype_size=dtype_size
         )
         shared_swiglu_layer.is_moe = True
         layers.append(shared_swiglu_layer)
@@ -648,9 +596,7 @@ class DeepSeekModel(BaseModel):
         )
         shared_down_layer = kernel_result_to_layer(
             name=f"{prefix}_shared_down",
-            result=shared_down_result,
-            params=shared_intermediate * cfg.hidden_size,
-            dtype_size=dtype_size
+            result=shared_down_result,dtype_size=dtype_size
         )
         shared_down_layer.is_moe = True
         layers.append(shared_down_layer)
@@ -686,9 +632,7 @@ class DeepSeekModel(BaseModel):
         )
         moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
-            result=moe_norm_result,
-            params=cfg.hidden_size,
-            dtype_size=dtype_size
+            result=moe_norm_result,dtype_size=dtype_size
         )
         moe_norm_layer.is_moe = True
         layers.append(moe_norm_layer)
