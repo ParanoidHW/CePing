@@ -4,6 +4,8 @@ Registers all built-in models with the ModelRegistry for dynamic discovery.
 This module should be imported to register all models.
 """
 
+from typing import Optional
+
 from ..core.registry import ModelRegistry
 
 # Import all model classes
@@ -30,13 +32,15 @@ def register_all_models() -> None:
     """
     registry = ModelRegistry()
 
-    # Register LLaMA models
+    # Register LLaMA models (Dense architecture)
     registry.register(
         name="llama",
         config_class=LlamaConfig,
         model_class=LlamaModel,
         description="LLaMA (Large Language Model Meta AI) architecture",
-        category="llm",
+        architecture="llama",
+        sparse_type="dense",
+        attention_features=["gqa"],  # Supports Grouped Query Attention
         default_config={
             "vocab_size": 32000,
             "hidden_size": 4096,
@@ -49,13 +53,15 @@ def register_all_models() -> None:
         },
     )
 
-    # Register MoE models
+    # Register Mixtral-style MoE models (Standard MoE architecture)
     registry.register(
-        name="moe",
+        name="mixtral",
         config_class=MoEConfig,
         model_class=MoEModel,
-        description="Mixture of Experts (MoE) transformer architecture",
-        category="moe",
+        description="Mixtral Mixture of Experts (MoE) transformer architecture",
+        architecture="mixtral",
+        sparse_type="standard_moe",  # Periodic MoE layers
+        attention_features=["gqa"],
         default_config={
             "vocab_size": 32000,
             "hidden_size": 4096,
@@ -70,13 +76,15 @@ def register_all_models() -> None:
         },
     )
 
-    # Register DeepSeek models
+    # Register DeepSeek models (DeepSeek MoE + MLA architecture)
     registry.register(
         name="deepseek",
         config_class=DeepSeekConfig,
         model_class=DeepSeekModel,
-        description="DeepSeek-V2 architecture with MLA attention",
-        category="llm",
+        description="DeepSeek-V2 architecture with MLA attention and MoE",
+        architecture="deepseek",
+        sparse_type="deepseek_moe",  # First-K Dense + MoE pattern
+        attention_features=["mla"],  # Multi-Head Latent Attention
         default_config={
             "vocab_size": 32000,
             "hidden_size": 4096,
@@ -95,8 +103,10 @@ def register_all_models() -> None:
         name="deepseek-v3",
         config_class=DeepSeekV3Config,
         model_class=DeepSeekV3Model,
-        description="DeepSeek-V3 architecture with auxiliary-loss-free load balancing",
-        category="moe",
+        description="DeepSeek-V3 architecture with MLA and auxiliary-loss-free load balancing",
+        architecture="deepseek",
+        sparse_type="deepseek_moe",
+        attention_features=["mla"],
         default_config={
             "vocab_size": 32000,
             "hidden_size": 7168,
@@ -111,13 +121,15 @@ def register_all_models() -> None:
         },
     )
 
-    # Register ResNet models
+    # Register ResNet models (Vision Dense architecture)
     registry.register(
         name="resnet",
         config_class=ResNetConfig,
         model_class=ResNetModel,
         description="ResNet CNN architecture for image classification",
-        category="vision",
+        architecture="resnet",
+        sparse_type="dense",
+        attention_features=[],  # No attention layers
         default_config={
             "vocab_size": 1000,  # ImageNet classes
             "hidden_size": 512,
@@ -131,13 +143,15 @@ def register_all_models() -> None:
         },
     )
 
-    # Register VAE models
+    # Register VAE models (Dense architecture)
     registry.register(
         name="vae",
         config_class=VAEConfig,
         model_class=VAEModel,
         description="Variational Autoencoder for image generation (Stable Diffusion style)",
-        category="vae",
+        architecture="vae",
+        sparse_type="dense",
+        attention_features=[],  # Convolutional layers, no attention
         default_config={
             "vocab_size": 1,
             "hidden_size": 512,
@@ -158,7 +172,9 @@ def register_all_models() -> None:
         config_class=WanTextEncoderConfig,
         model_class=WanTextEncoder,
         description="Wan2.1 Text Encoder (umT5-XXL) for video generation",
-        category="text_encoder",
+        architecture="wan_text_encoder",
+        sparse_type="dense",
+        attention_features=["standard"],
         default_config={
             "vocab_size": 256384,
             "hidden_size": 4096,
@@ -175,7 +191,9 @@ def register_all_models() -> None:
         config_class=WanDiTConfig,
         model_class=WanDiTModel,
         description="Wan2.1 DiT (Diffusion Transformer) for video generation",
-        category="dit",
+        architecture="wan_dit",
+        sparse_type="dense",
+        attention_features=["standard"],
         default_config={
             "vocab_size": 1,
             "hidden_size": 5120,
@@ -197,7 +215,9 @@ def register_all_models() -> None:
         config_class=WanVAEConfig,
         model_class=WanVAEModel,
         description="Wan2.1 VAE (3D Causal) for video generation",
-        category="vae",
+        architecture="wan_vae",
+        sparse_type="dense",
+        attention_features=[],  # Convolutional layers
         default_config={
             "vocab_size": 1,
             "hidden_size": 256,
@@ -217,40 +237,16 @@ def register_all_models() -> None:
         },
     )
 
-
-def get_model_presets() -> dict:
-    """Get preset configurations for common model variants.
-
-    Returns:
-        Dictionary of preset configurations
-    """
-    return {
-        # LLaMA presets
-        "llama-7b": {
-            "type": "llama",
-            "vocab_size": 32000,
-            "hidden_size": 4096,
-            "num_layers": 32,
-            "num_attention_heads": 32,
-            "num_key_value_heads": 32,
-            "intermediate_size": 11008,
-            "max_seq_len": 4096,
-            "dtype": "fp16",
-        },
-        "llama-70b": {
-            "type": "llama",
-            "vocab_size": 32000,
-            "hidden_size": 8192,
-            "num_layers": 80,
-            "num_attention_heads": 64,
-            "num_key_value_heads": 8,
-            "intermediate_size": 28672,
-            "max_seq_len": 4096,
-            "dtype": "fp16",
-        },
-        # MoE presets
-        "mixtral-8x7b": {
-            "type": "moe",
+    # Backward compatibility: register "moe" alias for mixtral
+    registry.register(
+        name="moe",
+        config_class=MoEConfig,
+        model_class=MoEModel,
+        description="[Alias] Mixtral MoE transformer architecture",
+        architecture="mixtral",
+        sparse_type="standard_moe",
+        attention_features=["gqa"],
+        default_config={
             "vocab_size": 32000,
             "hidden_size": 4096,
             "num_layers": 32,
@@ -262,8 +258,72 @@ def get_model_presets() -> dict:
             "num_experts": 8,
             "num_experts_per_token": 2,
         },
+    )
+
+
+def get_model_presets() -> dict:
+    """Get preset configurations for common model variants.
+
+    Presets include architecture and sparse_type fields for automatic classification.
+    Users only need to select a preset without setting type manually.
+
+    Returns:
+        Dictionary of preset configurations grouped by sparse_type
+    """
+    return {
+        # ===== Dense Model Presets =====
+        "llama-7b": {
+            "architecture": "llama",
+            "sparse_type": "dense",
+            "attention_features": ["gqa"],
+            "vocab_size": 32000,
+            "hidden_size": 4096,
+            "num_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 32,
+            "intermediate_size": 11008,
+            "max_seq_len": 4096,
+            "dtype": "fp16",
+            "description": "LLaMA 7B - Dense transformer with GQA",
+        },
+        "llama-70b": {
+            "architecture": "llama",
+            "sparse_type": "dense",
+            "attention_features": ["gqa"],
+            "vocab_size": 32000,
+            "hidden_size": 8192,
+            "num_layers": 80,
+            "num_attention_heads": 64,
+            "num_key_value_heads": 8,
+            "intermediate_size": 28672,
+            "max_seq_len": 4096,
+            "dtype": "fp16",
+            "description": "LLaMA 70B - Dense transformer with GQA",
+        },
+
+        # ===== Sparse (Standard MoE) Presets =====
+        "mixtral-8x7b": {
+            "architecture": "mixtral",
+            "sparse_type": "standard_moe",
+            "attention_features": ["gqa"],
+            "vocab_size": 32000,
+            "hidden_size": 4096,
+            "num_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 8,
+            "intermediate_size": 14336,
+            "max_seq_len": 32768,
+            "dtype": "fp16",
+            "num_experts": 8,
+            "num_experts_per_token": 2,
+            "description": "Mixtral 8x7B - Standard MoE (periodic layers) with GQA",
+        },
+
+        # ===== Sparse (DeepSeek MoE) Presets =====
         "deepseek-v3": {
-            "type": "deepseek-v3",
+            "architecture": "deepseek",
+            "sparse_type": "deepseek_moe",
+            "attention_features": ["mla"],
             "vocab_size": 32000,
             "hidden_size": 7168,
             "num_layers": 61,
@@ -274,16 +334,47 @@ def get_model_presets() -> dict:
             "dtype": "fp16",
             "num_experts": 256,
             "num_experts_per_token": 8,
+            "description": "DeepSeek V3 - DeepSeek MoE + MLA attention",
         },
-        # Video generation presets
+
+        # ===== Video Generation Pipeline Preset =====
         "wan-t2v-14b": {
-            "type": "wan-pipeline",
+            "architecture": "wan_pipeline",
+            "sparse_type": "dense",
+            "attention_features": [],
             "text_encoder": "wan-text-encoder",
             "dit": "wan-dit",
             "vae": "wan-vae",
-            "description": "Wan2.1 Text-to-Video 14B model",
+            "description": "Wan2.1 Text-to-Video 14B pipeline",
         },
     }
+
+
+def get_presets_by_sparse_type() -> dict:
+    """Get presets grouped by sparse_type for UI display.
+
+    Returns:
+        Dictionary with 'dense' and 'sparse' keys containing preset lists
+    """
+    presets = get_model_presets()
+    result = {
+        "dense": [],
+        "sparse_standard_moe": [],
+        "sparse_deepseek_moe": [],
+    }
+
+    for name, config in presets.items():
+        sparse_type = config.get("sparse_type", "dense")
+        # Add preset info with name
+        preset_info = {"name": name, **config}
+        if sparse_type == "dense":
+            result["dense"].append(preset_info)
+        elif sparse_type == "standard_moe":
+            result["sparse_standard_moe"].append(preset_info)
+        elif sparse_type == "deepseek_moe":
+            result["sparse_deepseek_moe"].append(preset_info)
+
+    return result
 
 
 def create_model_from_config(config: dict):
@@ -291,8 +382,8 @@ def create_model_from_config(config: dict):
 
     This is the unified factory function used by CLI and Web interface.
     Supports three modes:
-    1. Preset mode: config contains 'preset' field (e.g., 'llama-7b', 'mixtral-8x7b')
-    2. Type mode: config contains 'type' field (e.g., 'llama', 'moe')
+    1. Preset mode: config contains 'preset' field - architecture/sparse_type auto-filled
+    2. Architecture mode: config contains 'architecture' field
     3. Name mode: config contains 'name' field matching a registered model
 
     Args:
@@ -302,13 +393,13 @@ def create_model_from_config(config: dict):
         Instantiated model from registry
 
     Raises:
-        ValueError: If model type/name/preset is unknown or not registered
+        ValueError: If model architecture/name/preset is unknown or not registered
     """
     registry = ModelRegistry()
     presets = get_model_presets()
 
     # Meta fields that should not be passed to model config
-    meta_fields = {"type", "preset", "description"}
+    meta_fields = {"type", "preset", "description", "architecture", "sparse_type", "attention_features"}
 
     # Check for preset first (e.g., "llama-7b", "mixtral-8x7b")
     preset_name = config.get("preset")
@@ -317,13 +408,30 @@ def create_model_from_config(config: dict):
         # Merge preset with user overrides
         merged_config = dict(preset_config)
         merged_config.update(config)
+        # Get architecture from merged config (preset provides it)
+        architecture = merged_config.get("architecture", preset_name)
         # Remove meta fields before passing to model
-        model_type = merged_config.get("type", preset_name)
         for field in meta_fields:
             merged_config.pop(field, None)
-        return registry.create(model_type, **merged_config)
+        # Find registered model by architecture
+        model_name = _find_model_by_architecture(registry, architecture)
+        if model_name:
+            return registry.create(model_name, **merged_config)
+        # Fallback: try preset name as registered name
+        if registry.is_registered(architecture):
+            return registry.create(architecture, **merged_config)
 
-    # Use 'type' field as model identifier (e.g., "llama", "moe")
+    # Use 'architecture' field to find registered model
+    architecture = config.get("architecture")
+    if architecture:
+        model_name = _find_model_by_architecture(registry, architecture)
+        if model_name:
+            model_config = dict(config)
+            for field in meta_fields:
+                model_config.pop(field, None)
+            return registry.create(model_name, **model_config)
+
+    # Backward compatibility: Use 'type' field
     model_type = config.get("type")
     if model_type and registry.is_registered(model_type):
         model_config = dict(config)
@@ -339,13 +447,30 @@ def create_model_from_config(config: dict):
             model_config.pop(field, None)
         return registry.create(model_name, **model_config)
 
-    # Fallback: try to find by category or raise error
+    # Fallback: raise error with available options
     available_models = registry.list_models()
+    available_presets = list(presets.keys())
     raise ValueError(
-        f"Unknown model type/name: '{model_type or model_name}'. "
-        f"Available models: {available_models}. "
-        f"Available presets: {list(presets.keys())}"
+        f"Unknown model: '{preset_name or architecture or model_type or model_name}'. "
+        f"Available presets: {available_presets}. "
+        f"Available models: {available_models}."
     )
+
+
+def _find_model_by_architecture(registry: ModelRegistry, architecture: str) -> Optional[str]:
+    """Find registered model name by architecture.
+
+    Args:
+        registry: ModelRegistry instance
+        architecture: Architecture name (e.g., "llama", "mixtral", "deepseek")
+
+    Returns:
+        Registered model name or None if not found
+    """
+    for name, info in registry.get_all_infos().items():
+        if info.architecture == architecture:
+            return name
+    return None
 
 
 # Auto-register on import

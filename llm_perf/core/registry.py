@@ -6,7 +6,7 @@ Supports dynamic model/pipeline discovery and instantiation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
 # Delayed import to avoid circular imports
@@ -27,15 +27,47 @@ class ModelInfo:
     config_class: Type
     model_class: Type
     description: str
-    category: str  # e.g., "llm", "vae", "dit", "text_encoder"
+    architecture: str  # Model architecture (llama, deepseek, mixtral, wan_dit, etc.)
+    sparse_type: str = "dense"  # FFN type: "dense", "standard_moe", "deepseek_moe"
+    attention_features: List[str] = field(default_factory=list)  # ["mla", "gqa", "standard"]
     default_config: Optional[Dict[str, Any]] = None
+    _explicit_category: Optional[str] = None  # For backward compatibility tests
+
+    @property
+    def category(self) -> str:
+        """Backward compatibility: category from explicit setting or architecture/sparse_type."""
+        # Use explicit category if set
+        if self._explicit_category is not None:
+            return self._explicit_category
+
+        # Special category for specific architectures
+        architecture_to_category = {
+            "wan_text_encoder": "text_encoder",
+            "wan_dit": "dit",
+            "wan_vae": "vae",
+            "vae": "vae",
+            "resnet": "vision",
+        }
+        if self.architecture in architecture_to_category:
+            return architecture_to_category[self.architecture]
+
+        # For LLM models, map by sparse_type
+        sparse_to_category = {
+            "dense": "llm",
+            "standard_moe": "moe",
+            "deepseek_moe": "moe",
+        }
+        return sparse_to_category.get(self.sparse_type, self.sparse_type)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "name": self.name,
             "description": self.description,
-            "category": self.category,
+            "architecture": self.architecture,
+            "sparse_type": self.sparse_type,
+            "attention_features": self.attention_features,
+            "category": self.category,  # Backward compatibility
             "config_class": self.config_class.__name__,
             "model_class": self.model_class.__name__,
             "default_config": self.default_config or {},
@@ -91,8 +123,12 @@ class ModelRegistry:
         config_class: Type,
         model_class: Type,
         description: str = "",
-        category: str = "llm",
+        architecture: str = "",
+        sparse_type: str = "dense",
+        attention_features: Optional[List[str]] = None,
         default_config: Optional[Dict[str, Any]] = None,
+        # Backward compatibility: category can be explicitly set or maps from sparse_type
+        category: Optional[str] = None,
     ) -> None:
         """Register a model with the registry.
 
@@ -101,8 +137,11 @@ class ModelRegistry:
             config_class: Configuration dataclass for the model
             model_class: Model class that inherits from BaseModel
             description: Human-readable description
-            category: Model category (llm, vae, dit, text_encoder, moe, etc.)
+            architecture: Model architecture (llama, deepseek, mixtral, etc.)
+            sparse_type: FFN type - "dense", "standard_moe", "deepseek_moe"
+            attention_features: Attention features ["mla", "gqa", "standard"]
             default_config: Default configuration values
+            category: (Optional) Explicit category override. If not set, inferred from architecture/sparse_type
 
         Raises:
             ValueError: If model name already registered
@@ -110,13 +149,35 @@ class ModelRegistry:
         if name in self._models:
             raise ValueError(f"Model '{name}' is already registered")
 
+        # Backward compatibility: category -> sparse_type mapping if sparse_type not set
+        if category and sparse_type == "dense":
+            category_to_sparse = {
+                "llm": "dense",
+                "moe": "standard_moe",
+            }
+            sparse_type = category_to_sparse.get(category, "dense")
+
+        # Default architecture to name if not provided
+        if not architecture:
+            architecture = name
+
+        # Default attention features
+        if attention_features is None:
+            attention_features = []
+
+        # Store explicit category if provided (for backward compatibility tests)
+        explicit_category = category if category else None
+
         self._models[name] = ModelInfo(
             name=name,
             config_class=config_class,
             model_class=model_class,
             description=description,
-            category=category,
+            architecture=architecture,
+            sparse_type=sparse_type,
+            attention_features=attention_features,
             default_config=default_config,
+            _explicit_category=explicit_category,
         )
 
     def unregister(self, name: str) -> None:
@@ -178,30 +239,66 @@ class ModelRegistry:
             raise KeyError(f"Model '{name}' not found in registry")
         return self._models[name]
 
-    def list_models(self, category: Optional[str] = None) -> List[str]:
+    def list_models(self, sparse_type: Optional[str] = None, category: Optional[str] = None) -> List[str]:
         """List all registered model names.
 
         Args:
-            category: Filter by category (optional)
+            sparse_type: Filter by sparse_type (optional) - "dense", "standard_moe", "deepseek_moe"
+            category: (Deprecated) Filter by category - maps to sparse_type
 
         Returns:
             List of model names
         """
-        if category:
-            return [name for name, info in self._models.items() if info.category == category]
+        # Backward compatibility: category -> sparse_type
+        filter_type = sparse_type
+        if category and not sparse_type:
+            category_to_sparse = {"llm": "dense", "moe": "standard_moe"}
+            filter_type = category_to_sparse.get(category)
+
+        if filter_type:
+            return [name for name, info in self._models.items() if info.sparse_type == filter_type]
         return list(self._models.keys())
 
+    def list_by_sparse_type(self) -> Dict[str, List[str]]:
+        """List models grouped by sparse_type.
+
+        Returns:
+            Dictionary mapping sparse_type to list of model names
+        """
+        result: Dict[str, List[str]] = {}
+        for name, info in self._models.items():
+            if info.sparse_type not in result:
+                result[info.sparse_type] = []
+            result[info.sparse_type].append(name)
+        return result
+
+    def list_by_architecture(self) -> Dict[str, List[str]]:
+        """List models grouped by architecture.
+
+        Returns:
+            Dictionary mapping architecture to list of model names
+        """
+        result: Dict[str, List[str]] = {}
+        for name, info in self._models.items():
+            if info.architecture not in result:
+                result[info.architecture] = []
+            result[info.architecture].append(name)
+        return result
+
     def list_by_category(self) -> Dict[str, List[str]]:
-        """List models grouped by category.
+        """List models grouped by category (backward compatibility).
+
+        Uses the actual category property value from each ModelInfo.
 
         Returns:
             Dictionary mapping category to list of model names
         """
         result: Dict[str, List[str]] = {}
         for name, info in self._models.items():
-            if info.category not in result:
-                result[info.category] = []
-            result[info.category].append(name)
+            cat = info.category
+            if cat not in result:
+                result[cat] = []
+            result[cat].append(name)
         return result
 
     def get_all_infos(self) -> Dict[str, "ModelInfo"]:
@@ -216,7 +313,9 @@ class ModelRegistry:
         """Convert registry to dictionary representation."""
         return {
             "models": {name: info.to_dict() for name, info in self._models.items()},
-            "categories": self.list_by_category(),
+            "by_sparse_type": self.list_by_sparse_type(),
+            "by_architecture": self.list_by_architecture(),
+            "categories": self.list_by_sparse_type(),  # Backward compatibility alias
         }
 
     def clear(self) -> None:

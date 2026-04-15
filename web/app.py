@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import registries - this registers all models and pipelines
 from llm_perf.core.registry import ModelRegistry, PipelineRegistry
 from llm_perf.pipelines.registry import get_pipeline_presets
-from llm_perf.models.registry import get_model_presets, create_model_from_config
+from llm_perf.models.registry import get_model_presets, get_presets_by_sparse_type, create_model_from_config
 
 # Import base classes for type checking
 from llm_perf.hardware.device import Device
@@ -163,75 +163,65 @@ def get_registered_models():
     """Get all registered models from ModelRegistry.
 
     Returns:
-        JSON with all registered models grouped by category
+        JSON with all registered models grouped by sparse_type and architecture
     """
     return jsonify(
         {
             "models": model_registry.to_dict(),
-            "categories": model_registry.list_by_category(),
+            "by_sparse_type": model_registry.list_by_sparse_type(),
+            "by_architecture": model_registry.list_by_architecture(),
+            "categories": model_registry.list_by_category(),  # Backward compatibility
         }
     )
 
 
-@app.route("/api/models/refresh", methods=["POST"])
-def refresh_models():
-    """Refresh model registry.
-
-    Re-imports the registry module to pick up any new registrations.
+@app.route("/api/model/presets", methods=["GET"])
+def get_model_presets_endpoint():
+    """Get model presets grouped by sparse_type for UI display.
 
     Returns:
-        Updated model registry information
+        JSON with presets grouped by: dense, sparse_standard_moe, sparse_deepseek_moe
     """
-    try:
-        # Re-import to refresh
-        from llm_perf.models import registry as _registry_module  # noqa: F401
+    return jsonify({
+        "presets": get_model_presets(),
+        "by_sparse_type": get_presets_by_sparse_type(),
+    })
 
-        return jsonify(
-            {
-                "success": True,
-                "models": model_registry.to_dict(),
-                "categories": model_registry.list_by_category(),
-            }
-        )
+
+@app.route("/api/models/refresh", methods=["POST"])
+def refresh_models():
+    """Refresh model registry."""
+    try:
+        from llm_perf.models import registry as _registry_module  # noqa: F401
+        return jsonify({
+            "success": True,
+            "models": model_registry.to_dict(),
+            "by_sparse_type": model_registry.list_by_sparse_type(),
+            "by_architecture": model_registry.list_by_architecture(),
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/pipelines", methods=["GET"])
 def get_registered_pipelines():
-    """Get all registered pipelines from PipelineRegistry.
-
-    Returns:
-        JSON with all registered pipelines
-    """
-    return jsonify(
-        {
-            "pipelines": pipeline_registry.to_dict(),
-            "presets": get_pipeline_presets(),
-        }
-    )
+    """Get all registered pipelines."""
+    return jsonify({
+        "pipelines": pipeline_registry.to_dict(),
+        "presets": get_pipeline_presets(),
+    })
 
 
 @app.route("/api/pipelines/refresh", methods=["POST"])
 def refresh_pipelines():
-    """Refresh pipeline registry.
-
-    Re-imports the registry module to pick up any new registrations.
-
-    Returns:
-        Updated pipeline registry information
-    """
+    """Refresh pipeline registry."""
     try:
-        # Re-import to refresh
         from llm_perf.pipelines import registry as _pipeline_registry_module  # noqa: F401
-
-        return jsonify(
-            {
-                "success": True,
-                "pipelines": pipeline_registry.to_dict(),
-                "presets": get_pipeline_presets(),
-            }
-        )
+        return jsonify({
+            "success": True,
+            "pipelines": pipeline_registry.to_dict(),
+            "presets": get_pipeline_presets(),
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

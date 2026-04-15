@@ -95,7 +95,7 @@ class TestCreateModel(unittest.TestCase):
         }
         with self.assertRaises(ValueError) as ctx:
             create_model(config)
-        self.assertIn("Unknown model type/name", str(ctx.exception))
+        self.assertIn("Unknown model", str(ctx.exception))
         self.assertIn("available models", str(ctx.exception).lower())
 
     def test_create_model_deepseek(self):
