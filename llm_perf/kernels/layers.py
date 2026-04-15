@@ -11,6 +11,8 @@ from .functional import (
     KernelResult,
     linear,
     scaled_dot_product_attention,
+    flash_attention,
+    mla_attention,
     layer_norm,
     rms_norm,
 )
@@ -71,9 +73,19 @@ def attention_layer(
     kv_seq_len: Optional[int] = None,
     cross_attention: bool = False,
     dtype: str = "fp16",
-    name: str = "attention"
+    name: str = "attention",
+    # GQA support
+    num_kv_heads: Optional[int] = None,  # For GQA: num_kv_heads < num_heads
+    # Flash Attention support
+    use_flash_attention: bool = False,
+    is_causal: bool = False,
 ) -> List[Tuple[LayerConfig, KernelResult]]:
     """Create self-attention or cross-attention layers.
+    
+    Supports:
+    - MHA (Multi-Head Attention): num_kv_heads = num_heads
+    - GQA (Grouped Query Attention): num_kv_heads < num_heads
+    - Flash Attention: optimized kernel with reduced HBM traffic
     
     Args:
         batch_size: Batch size
@@ -84,12 +96,21 @@ def attention_layer(
         cross_attention: Whether this is cross-attention
         dtype: Data type
         name: Layer name prefix
+        num_kv_heads: Number of KV heads (for GQA). If None, equals num_heads
+        use_flash_attention: If True, use Flash Attention kernel
+        is_causal: Whether to apply causal mask (for Flash Attention)
     
     Returns:
         List of (LayerConfig, KernelResult) tuples for each sub-layer
     """
     kv_len = kv_seq_len or seq_len
     hidden_size = num_heads * head_dim
+    
+    # For GQA: num_kv_heads < num_heads
+    num_kv_heads = num_kv_heads or num_heads
+    kv_hidden_size = num_kv_heads * head_dim
+    
+    use_gqa = num_kv_heads < num_heads
     
     layers = []
     
@@ -106,24 +127,37 @@ def attention_layer(
     else:
         kv_in_features = hidden_size  # In self-attn, same as Q
     
+    # For GQA: KV projections output fewer heads
     k_layer, k_result = linear_layer(
-        kv_in_features, hidden_size, batch_size, kv_len,
+        kv_in_features, kv_hidden_size, batch_size, kv_len,
         bias=False, dtype=dtype, name=f"{name}_k"
     )
     layers.append((k_layer, k_result))
     
     v_layer, v_result = linear_layer(
-        kv_in_features, hidden_size, batch_size, kv_len,
+        kv_in_features, kv_hidden_size, batch_size, kv_len,
         bias=False, dtype=dtype, name=f"{name}_v"
     )
     layers.append((v_layer, v_result))
     
     # Attention computation
     q_shape = (batch_size, num_heads, seq_len, head_dim)
-    k_shape = (batch_size, num_heads, kv_len, head_dim)
-    v_shape = (batch_size, num_heads, kv_len, head_dim)
+    k_shape = (batch_size, num_kv_heads, kv_len, head_dim)
+    v_shape = (batch_size, num_kv_heads, kv_len, head_dim)
     
-    attn_result = scaled_dot_product_attention(q_shape, k_shape, v_shape, dtype=dtype)
+    if use_flash_attention:
+        attn_result = flash_attention(
+            q_shape, k_shape, v_shape, 
+            is_causal=is_causal, 
+            dtype=dtype,
+            use_gqa=use_gqa
+        )
+    else:
+        attn_result = scaled_dot_product_attention(
+            q_shape, k_shape, v_shape, 
+            dtype=dtype,
+            use_gqa=use_gqa
+        )
     
     attn_layer = LayerConfig(
         name=f"{name}_compute",
@@ -138,6 +172,144 @@ def attention_layer(
     # Output projection
     o_layer, o_result = linear_layer(
         hidden_size, hidden_size, batch_size, seq_len,
+        bias=False, dtype=dtype, name=f"{name}_o"
+    )
+    layers.append((o_layer, o_result))
+    
+    return layers
+
+
+def mla_attention_layer(
+    batch_size: int,
+    seq_len: int,
+    num_heads: int,
+    qk_head_dim: int,
+    v_head_dim: int,
+    kv_lora_rank: int,
+    hidden_size: int,
+    dtype: str = "fp16",
+    name: str = "mla_attention",
+    use_absorb: bool = False,  # Inference optimization
+) -> List[Tuple[LayerConfig, KernelResult]]:
+    """Create Multi-head Latent Attention (MLA) layers.
+    
+    MLA reduces KV cache memory by compressing KV into a latent vector.
+    
+    Two modes:
+    1. Non-absorb mode (training/standard inference):
+       - Explicit KV compression and decompression
+       - Standard attention on decompressed KV
+    
+    2. Absorb mode (inference optimization):
+       - KV decompression matrices absorbed into Q and O projections
+       - Attention computed directly on compressed representation
+       - Significant memory and compute savings
+    
+    Reference: DeepSeek-V2 Technical Report
+    
+    Args:
+        batch_size: Batch size
+        seq_len: Sequence length
+        num_heads: Number of attention heads
+        qk_head_dim: Dimension for QK (after RoPE)
+        v_head_dim: Dimension for V heads
+        kv_lora_rank: Compressed KV dimension
+        hidden_size: Hidden dimension
+        dtype: Data type
+        name: Layer name prefix
+        use_absorb: If True, use absorb mode (inference optimization)
+    
+    Returns:
+        List of (LayerConfig, KernelResult) tuples
+    """
+    layers = []
+    
+    # Q projection with compression (down-projection)
+    q_down_layer, q_down_result = linear_layer(
+        hidden_size, kv_lora_rank, batch_size, seq_len,
+        bias=False, dtype=dtype, name=f"{name}_q_down"
+    )
+    layers.append((q_down_layer, q_down_result))
+    
+    if not use_absorb:
+        # Non-absorb mode: explicit KV decompression
+        # KV down-projection (compression)
+        kv_down_layer, kv_down_result = linear_layer(
+            hidden_size, kv_lora_rank, batch_size, seq_len,
+            bias=False, dtype=dtype, name=f"{name}_kv_down"
+        )
+        layers.append((kv_down_layer, kv_down_result))
+        
+        # KV up-projection (decompression for K)
+        k_up_dim = num_heads * qk_head_dim
+        k_up_layer, k_up_result = linear_layer(
+            kv_lora_rank, k_up_dim, batch_size, seq_len,
+            bias=False, dtype=dtype, name=f"{name}_k_up"
+        )
+        layers.append((k_up_layer, k_up_result))
+        
+        # KV up-projection (decompression for V)
+        v_up_dim = num_heads * v_head_dim
+        v_up_layer, v_up_result = linear_layer(
+            kv_lora_rank, v_up_dim, batch_size, seq_len,
+            bias=False, dtype=dtype, name=f"{name}_v_up"
+        )
+        layers.append((v_up_layer, v_up_result))
+    else:
+        # Absorb mode: only compressed KV, no explicit decompression
+        # The decompression is implicitly done through Q and O projections
+        kv_down_layer, kv_down_result = linear_layer(
+            hidden_size, kv_lora_rank, batch_size, seq_len,
+            bias=False, dtype=dtype, name=f"{name}_kv_down"
+        )
+        layers.append((kv_down_layer, kv_down_result))
+    
+    # MLA attention computation
+    q_shape = (batch_size, num_heads, seq_len, qk_head_dim)
+    compressed_kv_shape = (batch_size, seq_len, kv_lora_rank)
+    
+    if use_absorb:
+        # Absorb mode: attention on compressed KV
+        attn_result = mla_attention(
+            query=q_shape,
+            compressed_kv=compressed_kv_shape,
+            key=None,  # No explicit K/V in absorb mode
+            value=None,
+            use_absorb=True,
+            qk_head_dim=qk_head_dim,
+            v_head_dim=v_head_dim,
+            kv_lora_rank=kv_lora_rank,
+            dtype=dtype
+        )
+    else:
+        # Non-absorb mode: standard attention on decompressed KV
+        k_shape = (batch_size, num_heads, seq_len, qk_head_dim)
+        v_shape = (batch_size, num_heads, seq_len, v_head_dim)
+        attn_result = mla_attention(
+            query=q_shape,
+            compressed_kv=compressed_kv_shape,
+            key=k_shape,
+            value=v_shape,
+            use_absorb=False,
+            qk_head_dim=qk_head_dim,
+            v_head_dim=v_head_dim,
+            kv_lora_rank=kv_lora_rank,
+            dtype=dtype
+        )
+    
+    attn_layer = LayerConfig(
+        name=f"{name}_compute",
+        input_shape=(batch_size, seq_len, hidden_size),
+        output_shape=(batch_size, seq_len, num_heads * v_head_dim),
+        params_count=0,
+        flops=attn_result.flops,
+        activation_bytes=math.prod(attn_result.output) * (2 if dtype == "fp16" else 4)
+    )
+    layers.append((attn_layer, attn_result))
+    
+    # Output projection
+    o_layer, o_result = linear_layer(
+        num_heads * v_head_dim, hidden_size, batch_size, seq_len,
         bias=False, dtype=dtype, name=f"{name}_o"
     )
     layers.append((o_layer, o_result))

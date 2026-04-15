@@ -187,21 +187,29 @@ def bmm(
 
 def scaled_dot_product_attention(
     query: Tuple[int, ...],    # (batch, num_heads, seq_len, head_dim)
-    key: Tuple[int, ...],      # (batch, num_heads, kv_seq_len, head_dim)
-    value: Tuple[int, ...],    # (batch, num_heads, kv_seq_len, head_dim)
+    key: Tuple[int, ...],      # (batch, kv_num_heads, kv_seq_len, head_dim)
+    value: Tuple[int, ...],    # (batch, kv_num_heads, kv_seq_len, head_dim)
     is_causal: bool = False,
-    dtype: str = "fp16"
+    dtype: str = "fp16",
+    use_gqa: bool = False,     # Whether to use GQA (Group Query Attention)
 ) -> KernelResult:
     """Scaled dot-product attention: softmax(Q @ K^T / sqrt(d)) @ V
     
-    Similar to torch.nn.functional.scaled_dot_product_attention
+    Similar to torch.nn.functional.scaled_dot_product_attention.
+    Supports MHA (Multi-Head Attention) and GQA (Grouped Query Attention).
+    
+    For GQA:
+    - kv_num_heads < num_heads
+    - Each KV head is shared among (num_heads / kv_num_heads) query heads
+    - Memory bandwidth is reduced by the same factor
     
     Args:
         query: Shape (batch, num_heads, seq_len, head_dim)
-        key: Shape (batch, num_heads, kv_seq_len, head_dim)
-        value: Shape (batch, num_heads, kv_seq_len, head_dim)
+        key: Shape (batch, kv_num_heads, kv_seq_len, head_dim)
+        value: Shape (batch, kv_num_heads, kv_seq_len, head_dim)
         is_causal: Whether to apply causal mask
         dtype: Data type string
+        use_gqa: If True, treat as GQA (KV heads may differ from Q heads)
     
     Returns:
         KernelResult with performance metrics
@@ -209,7 +217,12 @@ def scaled_dot_product_attention(
     dtype_size = _compute_dtype_size(dtype)
     
     batch, num_heads, seq_len, head_dim = query
-    _, _, kv_seq_len, _ = key
+    _, kv_num_heads, kv_seq_len, _ = key
+    
+    # For GQA: each KV head is shared among (num_heads / kv_num_heads) Q heads
+    # The computation flops remain the same (we still compute all Q heads)
+    # But memory access for K/V is reduced
+    gqa_factor = num_heads // kv_num_heads if use_gqa and kv_num_heads < num_heads else 1
     
     output_shape = (batch, num_heads, seq_len, head_dim)
     
@@ -225,10 +238,11 @@ def scaled_dot_product_attention(
     flops = qk_flops + softmax_flops + attn_v_flops
     
     # Memory accessed
+    # For GQA: K/V memory access is reduced by gqa_factor
     bytes_accessed = (
         batch * num_heads * seq_len * head_dim * dtype_size +  # query
-        batch * num_heads * kv_seq_len * head_dim * dtype_size +  # key
-        batch * num_heads * kv_seq_len * head_dim * dtype_size +  # value
+        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size +  # key (GQA reduced)
+        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size +  # value (GQA reduced)
         batch * num_heads * seq_len * head_dim * dtype_size  # output
     )
     
@@ -243,6 +257,224 @@ def scaled_dot_product_attention(
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
         memory_bound=True,  # Attention is typically memory bound
         input_shapes=[query, key, value],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube",
+        dtype=dtype
+    )
+
+
+def flash_attention(
+    query: Tuple[int, ...],    # (batch, num_heads, seq_len, head_dim)
+    key: Tuple[int, ...],      # (batch, kv_num_heads, kv_seq_len, head_dim)
+    value: Tuple[int, ...],    # (batch, kv_num_heads, kv_seq_len, head_dim)
+    is_causal: bool = False,
+    dtype: str = "fp16",
+    use_gqa: bool = False,
+    block_size: int = 128,     # Tile size for Flash Attention
+) -> KernelResult:
+    """Flash Attention kernel with tiling optimization.
+    
+    Flash Attention reduces HBM (High Bandwidth Memory) traffic by:
+    1. Tiling the computation into blocks that fit in SRAM
+    2. Fusing Q@K^T, softmax, and @V into a single kernel
+    3. Avoiding materialization of the full attention score matrix in HBM
+    
+    Memory access pattern:
+    - Standard SDPA: O(N^2) HBM traffic for attention scores
+    - Flash Attention: O(N) HBM traffic (linear in sequence length)
+    
+    Reference: "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness"
+    https://arxiv.org/abs/2205.14135
+    
+    Args:
+        query: Shape (batch, num_heads, seq_len, head_dim)
+        key: Shape (batch, kv_num_heads, kv_seq_len, head_dim)
+        value: Shape (batch, kv_num_heads, kv_seq_len, head_dim)
+        is_causal: Whether to apply causal mask
+        dtype: Data type string
+        use_gqa: If True, treat as GQA
+        block_size: Tile size for blocking (typically 64, 128, or 256)
+    
+    Returns:
+        KernelResult with performance metrics
+    """
+    dtype_size = _compute_dtype_size(dtype)
+    
+    batch, num_heads, seq_len, head_dim = query
+    _, kv_num_heads, kv_seq_len, _ = key
+    
+    output_shape = (batch, num_heads, seq_len, head_dim)
+    
+    # FLOPs: same as SDPA (exact same computation)
+    qk_flops = 2 * batch * num_heads * seq_len * kv_seq_len * head_dim
+    softmax_flops = 5 * batch * num_heads * seq_len * kv_seq_len
+    attn_v_flops = 2 * batch * num_heads * seq_len * head_dim * kv_seq_len
+    flops = qk_flops + softmax_flops + attn_v_flops
+    
+    # Memory access for Flash Attention:
+    # 1. Load Q, K, V from HBM (once each)
+    # 2. Store output to HBM (once)
+    # 3. Intermediate attention scores stay in SRAM (no HBM traffic!)
+    # 
+    # For causal attention, we load each block only once (triangular access pattern)
+    
+    if is_causal:
+        # Causal: triangular access pattern
+        # Each query position only attends to keys up to that position
+        # Average number of keys per query: seq_len / 2
+        effective_kv_len = seq_len // 2
+        
+        # Q is loaded seq_len/block_size times (for each KV block it needs)
+        q_loads = (seq_len + block_size - 1) // block_size
+        
+        # K/V are loaded once per query block they serve
+        kv_loads = (seq_len + block_size - 1) // block_size
+    else:
+        # Non-causal: full attention
+        q_loads = 1
+        kv_loads = (kv_seq_len + block_size - 1) // block_size
+    
+    # HBM traffic:
+    # Q: loaded q_loads times
+    # K/V: loaded kv_loads times each
+    # O: written once
+    # Plus some overhead for softmax normalization stats (negligible)
+    bytes_accessed = (
+        batch * num_heads * seq_len * head_dim * dtype_size * q_loads +  # Q loads
+        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * kv_loads +  # K loads
+        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * kv_loads +  # V loads
+        batch * num_heads * seq_len * head_dim * dtype_size  # O write
+    )
+    
+    # Add small overhead for softmax statistics (online softmax algorithm)
+    bytes_accessed += batch * num_heads * seq_len * 4  # m and l statistics (fp32)
+    
+    # Flash Attention has no learnable parameters
+    params = 0
+    param_bytes = 0
+    
+    return KernelResult(
+        output=output_shape,
+        flops=flops,
+        bytes_accessed=bytes_accessed,
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        memory_bound=True,
+        input_shapes=[query, key, value],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube",
+        dtype=dtype
+    )
+
+
+def mla_attention(
+    query: Tuple[int, ...],    # (batch, num_heads, seq_len, qk_head_dim)
+    compressed_kv: Tuple[int, ...],  # (batch, seq_len, kv_lora_rank)
+    key: Optional[Tuple[int, ...]],  # (batch, kv_num_heads, seq_len, head_dim) - for non-absorb
+    value: Optional[Tuple[int, ...]],  # (batch, kv_num_heads, seq_len, v_head_dim) - for non-absorb
+    is_causal: bool = False,
+    dtype: str = "fp16",
+    use_absorb: bool = False,  # True for absorb mode (inference optimization)
+    qk_head_dim: int = 128,
+    v_head_dim: int = 128,
+    kv_lora_rank: int = 512,
+) -> KernelResult:
+    """Multi-head Latent Attention (MLA) kernel.
+    
+    MLA compresses KV cache into a latent vector, reducing memory usage.
+    
+    Two modes:
+    1. Non-absorb mode (training/inference standard):
+       - KV is compressed to kv_lora_rank dimensions
+       - At attention time, KV is decompressed to full head_dim
+       - Requires explicit K and V inputs (decompressed)
+    
+    2. Absorb mode (inference optimization):
+       - The KV decompression matrices are absorbed into Q and O projections
+       - Attention computed directly on compressed KV representation
+       - No explicit K/V decompression needed
+       - Significant memory and compute savings
+    
+    Reference: DeepSeek-V2 Technical Report
+    https://arxiv.org/abs/2405.04434
+    
+    Args:
+        query: Shape (batch, num_heads, seq_len, qk_head_dim)
+        compressed_kv: Shape (batch, seq_len, kv_lora_rank) - compressed KV
+        key: Shape (batch, kv_num_heads, seq_len, head_dim) - for non-absorb
+        value: Shape (batch, kv_num_heads, seq_len, v_head_dim) - for non-absorb
+        is_causal: Whether to apply causal mask
+        dtype: Data type string
+        use_absorb: If True, use absorb mode (inference optimization)
+        qk_head_dim: Dimension for QK (after RoPE and projection)
+        v_head_dim: Dimension for V heads
+        kv_lora_rank: Compressed KV dimension
+    
+    Returns:
+        KernelResult with performance metrics
+    """
+    dtype_size = _compute_dtype_size(dtype)
+    
+    batch, num_heads, seq_len, _ = query
+    _, kv_seq_len, _ = compressed_kv
+    
+    output_shape = (batch, num_heads, seq_len, v_head_dim)
+    
+    if use_absorb:
+        # Absorb mode: attention directly on compressed KV
+        # The KV decompression is implicitly done through Q and O projection
+        # This is mathematically equivalent but more efficient
+        
+        # FLOPs: same as standard attention but with compressed dimensions
+        # Q @ compressed_K^T: (num_heads, seq, qk_dim) @ (kv_rank, seq)^T
+        qk_flops = 2 * batch * num_heads * seq_len * kv_seq_len * kv_lora_rank
+        
+        # Softmax
+        softmax_flops = 5 * batch * num_heads * seq_len * kv_seq_len
+        
+        # Attention @ compressed_V: (num_heads, seq, seq) @ (seq, kv_rank)
+        attn_v_flops = 2 * batch * num_heads * seq_len * kv_lora_rank * kv_seq_len
+        
+        flops = qk_flops + softmax_flops + attn_v_flops
+        
+        # Memory: only compressed KV is accessed
+        bytes_accessed = (
+            batch * num_heads * seq_len * qk_head_dim * dtype_size +  # Q
+            batch * kv_seq_len * kv_lora_rank * dtype_size +  # compressed K
+            batch * kv_seq_len * kv_lora_rank * dtype_size +  # compressed V
+            batch * num_heads * seq_len * v_head_dim * dtype_size  # output
+        )
+    else:
+        # Non-absorb mode: standard attention on decompressed K/V
+        assert key is not None and value is not None, "key/value required for non-absorb mode"
+        _, kv_num_heads, _, _ = key
+        
+        # Standard attention FLOPs
+        qk_flops = 2 * batch * num_heads * seq_len * kv_seq_len * qk_head_dim
+        softmax_flops = 5 * batch * num_heads * seq_len * kv_seq_len
+        attn_v_flops = 2 * batch * num_heads * seq_len * v_head_dim * kv_seq_len
+        
+        flops = qk_flops + softmax_flops + attn_v_flops
+        
+        # Memory: full K/V heads
+        bytes_accessed = (
+            batch * num_heads * seq_len * qk_head_dim * dtype_size +  # Q
+            batch * kv_num_heads * kv_seq_len * qk_head_dim * dtype_size +  # K
+            batch * kv_num_heads * kv_seq_len * v_head_dim * dtype_size +  # V
+            batch * num_heads * seq_len * v_head_dim * dtype_size  # output
+        )
+    
+    params = 0
+    param_bytes = 0
+    
+    return KernelResult(
+        output=output_shape,
+        flops=flops,
+        bytes_accessed=bytes_accessed,
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        memory_bound=True,
+        input_shapes=[query, compressed_kv] + ([key, value] if key else []),
         params=params,
         param_bytes=param_bytes,
         unit_type="cube",
