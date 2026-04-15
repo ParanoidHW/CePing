@@ -30,7 +30,7 @@ class KernelResult:
         flops: Total floating point operations
         bytes_accessed: Total memory bytes read/written
         arithmetic_intensity: FLOPs per byte (flops / bytes_accessed)
-        memory_bound: Whether the kernel is memory bound
+        memory_bound: Whether the kernel is memory bound (computed from arithmetic intensity)
         input_shapes: Input tensor shapes for reference
         params: Number of parameters involved in the kernel
         param_bytes: Bytes occupied by parameters
@@ -41,7 +41,7 @@ class KernelResult:
     flops: int
     bytes_accessed: int
     arithmetic_intensity: float
-    memory_bound: bool
+    memory_bound: bool  # Computed based on arithmetic intensity vs machine balance
     input_shapes: List[Tuple[int, ...]]
     params: int = 0
     param_bytes: int = 0
@@ -54,10 +54,47 @@ class KernelResult:
             self.arithmetic_intensity = self.flops / self.bytes_accessed
         else:
             self.arithmetic_intensity = float('inf')
+        # Compute memory_bound based on arithmetic intensity
+        self.memory_bound = self._compute_memory_bound()
     
     def get_dtype_size(self) -> int:
         """Get bytes per element for the data type."""
         return DTYPE_SIZES.get(self.dtype, 2)
+    
+    def _compute_memory_bound(self) -> bool:
+        """Determine if kernel is memory bound based on arithmetic intensity.
+        
+        A kernel is memory bound when its arithmetic intensity is below the
+        machine's compute-to-memory bandwidth ratio (machine balance).
+        
+        Typical machine balance (peak_FLOPs / memory_BW):
+        - H100 SXM: ~1000 TFLOPS / 3 TB/s = ~333 FLOPs/byte
+        - A100 SXM: ~312 TFLOPS / 2 TB/s = ~156 FLOPs/byte
+        - MI300X: ~1300 TFLOPS / 5.3 TB/s = ~245 FLOPs/byte
+        - Ascend 910B: ~376 TFLOPS / 1.6 TB/s = ~235 FLOPs/byte
+        
+        We use conservative thresholds:
+        - CUBE/Tensor Core ops: 200 FLOPs/byte
+        - VECTOR/CUDA Core ops: 50 FLOPs/byte
+        
+        Returns:
+            True if kernel is memory bound, False if compute bound
+        """
+        if self.bytes_accessed == 0:
+            return False  # No memory access means compute bound
+        
+        # Machine balance thresholds (FLOPs per byte)
+        # These are conservative estimates for typical AI accelerators
+        if self.unit_type == "cube":
+            # CUBE/Tensor Core: high compute capability
+            # Threshold ~200 FLOPs/byte (between A100 and H100)
+            threshold = 200.0
+        else:
+            # VECTOR/CUDA Core: lower compute capability
+            # Threshold ~50 FLOPs/byte
+            threshold = 50.0
+        
+        return self.arithmetic_intensity < threshold
 
 
 def _compute_dtype_size(dtype: str) -> int:
@@ -255,7 +292,7 @@ def scaled_dot_product_attention(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,  # Attention is typically memory bound
+        memory_bound=False,  # Attention is typically memory bound
         input_shapes=[query, key, value],
         params=params,
         param_bytes=param_bytes,
@@ -359,7 +396,7 @@ def flash_attention(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[query, key, value],
         params=params,
         param_bytes=param_bytes,
@@ -473,7 +510,7 @@ def mla_attention(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[query, compressed_kv] + ([key, value] if key else []),
         params=params,
         param_bytes=param_bytes,
@@ -523,7 +560,7 @@ def layer_norm(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -569,7 +606,7 @@ def rms_norm(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -609,7 +646,7 @@ def silu(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -652,7 +689,7 @@ def gelu(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -691,7 +728,7 @@ def relu(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -734,7 +771,7 @@ def softmax(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -776,7 +813,7 @@ def dropout(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
@@ -963,7 +1000,7 @@ def embedding(
         flops=flops,
         bytes_accessed=bytes_accessed,
         arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
-        memory_bound=True,
+        memory_bound=False,
         input_shapes=[input_shape],
         params=params,
         param_bytes=param_bytes,
