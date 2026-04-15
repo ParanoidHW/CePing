@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from ..models.llama import LlamaConfig, LlamaModel
-from ..models.moe import MoEConfig, MoEModel
+from ..core.registry import ModelRegistry
+from ..models.registry import get_model_presets  # Models auto-registered on import
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster, NetworkConfig
 from ..strategy.base import StrategyConfig
@@ -25,42 +25,61 @@ def load_config(path: str) -> dict:
 
 
 def create_model(config: dict):
-    """Create model from configuration."""
-    model_type = config.get("type", "llama")
-    
-    if model_type == "llama":
-        model_config = LlamaConfig(
-            name=config.get("name", "llama"),
-            vocab_size=config.get("vocab_size", 32000),
-            hidden_size=config.get("hidden_size", 4096),
-            num_layers=config.get("num_layers", 32),
-            num_attention_heads=config.get("num_attention_heads", 32),
-            num_key_value_heads=config.get("num_key_value_heads"),
-            intermediate_size=config.get("intermediate_size", 11008),
-            max_seq_len=config.get("max_seq_len", 4096),
-            dtype=config.get("dtype", "fp16"),
-        )
-        return LlamaModel(model_config)
-    
-    elif model_type == "moe":
-        model_config = MoEConfig(
-            name=config.get("name", "moe"),
-            vocab_size=config.get("vocab_size", 32000),
-            hidden_size=config.get("hidden_size", 4096),
-            num_layers=config.get("num_layers", 32),
-            num_attention_heads=config.get("num_attention_heads", 32),
-            num_key_value_heads=config.get("num_key_value_heads"),
-            intermediate_size=config.get("intermediate_size", 11008),
-            max_seq_len=config.get("max_seq_len", 4096),
-            dtype=config.get("dtype", "fp16"),
-            num_experts=config.get("num_experts", 8),
-            num_experts_per_token=config.get("num_experts_per_token", 2),
-            expert_intermediate_size=config.get("expert_intermediate_size"),
-        )
-        return MoEModel(model_config)
-    
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
+    """Create model from configuration using ModelRegistry.
+
+    Supports two modes:
+    1. Preset mode: config contains 'preset' field (e.g., 'llama-7b', 'mixtral-8x7b')
+    2. Type mode: config contains 'type' field (e.g., 'llama', 'moe')
+    3. Name mode: config contains 'name' field matching a registered model
+
+    Args:
+        config: Model configuration dictionary
+
+    Returns:
+        Instantiated model from registry
+    """
+    registry = ModelRegistry()
+    presets = get_model_presets()
+
+    # Meta fields that should not be passed to model config
+    meta_fields = {"type", "preset", "description"}
+
+    # Check for preset first (e.g., "llama-7b", "mixtral-8x7b")
+    preset_name = config.get("preset")
+    if preset_name and preset_name in presets:
+        preset_config = presets[preset_name]
+        # Merge preset with user overrides
+        merged_config = dict(preset_config)
+        merged_config.update(config)
+        # Remove meta fields before passing to model
+        model_type = merged_config.get("type", preset_name)
+        for field in meta_fields:
+            merged_config.pop(field, None)
+        return registry.create(model_type, **merged_config)
+
+    # Use 'type' field as model identifier (e.g., "llama", "moe")
+    model_type = config.get("type")
+    if model_type and registry.is_registered(model_type):
+        model_config = dict(config)
+        for field in meta_fields:
+            model_config.pop(field, None)
+        return registry.create(model_type, **model_config)
+
+    # Use 'name' field as model identifier
+    model_name = config.get("name")
+    if model_name and registry.is_registered(model_name):
+        model_config = dict(config)
+        for field in meta_fields:
+            model_config.pop(field, None)
+        return registry.create(model_name, **model_config)
+
+    # Fallback: try to find by category or raise error
+    available_models = registry.list_models()
+    raise ValueError(
+        f"Unknown model type/name: '{model_type or model_name}'. "
+        f"Available models: {available_models}. "
+        f"Available presets: {list(presets.keys())}"
+    )
 
 
 def create_hardware(config: dict):
