@@ -21,10 +21,11 @@ from ..utils.constants import DTYPE_SIZES
 
 from .detailed_breakdown import DetailedPerformanceResult
 from .breakdown_generator import BreakdownGenerator, PipelineBreakdownGenerator
+from .result_base import BaseResult
 
 
 @dataclass
-class DiffusionVideoResult:
+class DiffusionVideoResult(BaseResult):
     """Result of diffusion video generation performance analysis."""
 
     # Component-specific times (seconds)

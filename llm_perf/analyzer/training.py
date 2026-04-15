@@ -13,10 +13,11 @@ from ..utils.constants import DTYPE_SIZES
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
 from .detailed_breakdown import DetailedPerformanceResult
 from .breakdown_generator import BreakdownGenerator
+from .result_base import BaseResult
 
 
 @dataclass
-class TrainingResult:
+class TrainingResult(BaseResult):
     """Result of training performance analysis."""
     
     # Throughput metrics

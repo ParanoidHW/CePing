@@ -13,10 +13,11 @@ from ..utils.constants import DTYPE_SIZES, PHASE_PREFILL, PHASE_DECODE
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
 from .detailed_breakdown import DetailedPerformanceResult
 from .breakdown_generator import BreakdownGenerator
+from .result_base import BaseResult
 
 
 @dataclass
-class InferenceResult:
+class InferenceResult(BaseResult):
     """Result of inference performance analysis."""
     
     # Phase-specific metrics
