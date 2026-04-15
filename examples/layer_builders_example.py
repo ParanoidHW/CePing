@@ -1,13 +1,14 @@
-"""Layer builders using functional kernels.
+"""Layer builders using functional kernels - EXAMPLE CODE.
 
-This module provides utilities to build model layers using the functional kernel API,
-similar to how torch.nn layers use torch.nn.functional.
+This module provides example utilities to build model layers using the functional kernel API.
+These are example implementations showing how to use the kernel API.
+For production model implementations, see llm_perf/models/
 """
 
 from typing import List, Optional, Tuple
 import math
 
-from .functional import (
+from llm_perf.kernels.functional import (
     KernelResult,
     linear,
     scaled_dot_product_attention,
@@ -16,7 +17,7 @@ from .functional import (
     layer_norm,
     rms_norm,
 )
-from ..models.base import LayerConfig
+from llm_perf.models.base import LayerConfig
 
 
 def linear_layer(

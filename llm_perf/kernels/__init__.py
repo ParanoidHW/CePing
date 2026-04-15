@@ -20,14 +20,6 @@ from .functional import (
     conv3d,
     embedding,
 )
-from .layers import (
-    linear_layer,
-    attention_layer,
-    ffn_layer,
-    norm_layer,
-    transformer_block,
-    summarize_block,
-)
 from .utils import kernel_result_to_layer
 
 __all__ = [
@@ -55,12 +47,6 @@ __all__ = [
     "conv2d",
     "conv3d",
     "embedding",
-    # Layer builders
-    "linear_layer",
-    "attention_layer",
-    "mla_attention_layer",
-    "ffn_layer",
-    "norm_layer",
-    "transformer_block",
-    "summarize_block",
+    # Utilities
+    "kernel_result_to_layer",
 ]

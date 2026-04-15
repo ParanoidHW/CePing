@@ -12,7 +12,10 @@ from llm_perf.kernels import (
     linear,
     scaled_dot_product_attention,
     rms_norm,
-    # Layer builders
+)
+
+# Import layer builders from example module
+from layer_builders_example import (
     transformer_block,
     summarize_block,
     norm_layer,
