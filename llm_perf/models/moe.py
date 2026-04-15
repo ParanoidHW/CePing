@@ -46,9 +46,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="embedding",
-            result=emb_result,
-            dtype_size=dtype_size
-        ))
+            result=emb_result))
         
         # Build each transformer layer (alternating dense and MoE)
         for i in range(cfg.num_layers):
@@ -66,9 +64,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="final_norm",
-            result=final_norm_result,
-            dtype_size=dtype_size
-        ))
+            result=final_norm_result))
         
         # LM head using linear kernel
         lm_head_result = linear(
@@ -79,9 +75,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="lm_head",
-            result=lm_head_result,
-            dtype_size=dtype_size
-        ))
+            result=lm_head_result))
         
         return layers
     
@@ -131,9 +125,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
-            result=input_norm_result,
-            dtype_size=dtype_size
-        ))
+            result=input_norm_result))
         
         # Q, K, V projections using linear kernel
         for proj_name, out_dim, is_q in [
@@ -149,9 +141,7 @@ class MoEModel(BaseModel):
             )
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_{proj_name}",
-                result=proj_result,
-                dtype_size=dtype_size
-            ))
+                result=proj_result))
         
         # Attention computation using scaled_dot_product_attention kernel
         attn_result = scaled_dot_product_attention(
@@ -163,9 +153,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attention",
-            result=attn_result,
-            dtype_size=dtype_size
-        ))
+            result=attn_result))
         
         # O projection using linear kernel
         o_result = linear(
@@ -176,9 +164,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
-            result=o_result,
-            dtype_size=dtype_size
-        ))
+            result=o_result))
         
         # Post-attention RMSNorm
         attn_norm_result = rms_norm(
@@ -188,9 +174,7 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
-            result=attn_norm_result,
-            dtype_size=dtype_size
-        ))
+            result=attn_norm_result))
         
         # === MoE Components ===
         # Router / Gate using linear kernel
@@ -210,9 +194,7 @@ class MoEModel(BaseModel):
         router_layer = kernel_result_to_layer(
             name=f"{prefix}_router",
             result=router_linear_result,
-            dtype_size=dtype_size,
-            is_moe=True
-        )
+            is_moe=True)
         router_layer.flops = router_linear_result.flops + router_softmax_result.flops
         layers.append(router_layer)
         
@@ -228,10 +210,7 @@ class MoEModel(BaseModel):
         )
         expert_up_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_up",
-            result=expert_up_result,
-            dtype_size=dtype_size,
-            is_moe=True
-        )
+            result=expert_up_result)
         expert_up_layer.flops = int(expert_up_result.flops * cfg.num_experts_per_token)
         layers.append(expert_up_layer)
         
@@ -244,10 +223,7 @@ class MoEModel(BaseModel):
         )
         expert_gate_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_gate",
-            result=expert_gate_result,
-            dtype_size=dtype_size,
-            is_moe=True
-        )
+            result=expert_gate_result)
         expert_gate_layer.flops = int(expert_gate_result.flops * cfg.num_experts_per_token)
         layers.append(expert_gate_layer)
         
@@ -258,10 +234,7 @@ class MoEModel(BaseModel):
         )
         swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_swiglu",
-            result=swiglu_result,
-            dtype_size=dtype_size,
-            is_moe=True
-        )
+            result=swiglu_result)
         swiglu_layer.flops = int(swiglu_result.flops * cfg.num_experts_per_token)
         layers.append(swiglu_layer)
         
@@ -274,10 +247,7 @@ class MoEModel(BaseModel):
         )
         expert_down_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_down",
-            result=expert_down_result,
-            dtype_size=dtype_size,
-            is_moe=True
-        )
+            result=expert_down_result)
         expert_down_layer.flops = int(expert_down_result.flops * cfg.num_experts_per_token)
         layers.append(expert_down_layer)
         
@@ -312,10 +282,7 @@ class MoEModel(BaseModel):
         )
         moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
-            result=moe_norm_result,
-            dtype_size=dtype_size,
-            is_moe=True
-        )
+            result=moe_norm_result)
         layers.append(moe_norm_layer)
         
         return layers

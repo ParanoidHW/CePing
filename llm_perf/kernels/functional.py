@@ -35,6 +35,7 @@ class KernelResult:
         params: Number of parameters involved in the kernel
         param_bytes: Bytes occupied by parameters
         unit_type: Compute unit type ("cube" for Tensor Core, "vector" for CUDA Core)
+        dtype: Data type string (e.g., "fp16", "bf16", "fp32")
     """
     output: Tuple[int, ...]  # Output shape
     flops: int
@@ -45,6 +46,7 @@ class KernelResult:
     params: int = 0
     param_bytes: int = 0
     unit_type: str = "vector"
+    dtype: str = "fp16"
     
     def __post_init__(self):
         """Validate and compute derived metrics."""
@@ -52,6 +54,10 @@ class KernelResult:
             self.arithmetic_intensity = self.flops / self.bytes_accessed
         else:
             self.arithmetic_intensity = float('inf')
+    
+    def get_dtype_size(self) -> int:
+        """Get bytes per element for the data type."""
+        return DTYPE_SIZES.get(self.dtype, 2)
 
 
 def _compute_dtype_size(dtype: str) -> int:
@@ -121,7 +127,8 @@ def linear(
         input_shapes=[input, weight] + ([bias] if bias else []),
         params=params,
         param_bytes=param_bytes,
-        unit_type="cube"
+        unit_type="cube",
+        dtype=dtype
     )
 
 
@@ -173,7 +180,8 @@ def bmm(
         input_shapes=[input, mat2],
         params=params,
         param_bytes=param_bytes,
-        unit_type="cube"
+        unit_type="cube",
+        dtype=dtype
     )
 
 
@@ -237,7 +245,8 @@ def scaled_dot_product_attention(
         input_shapes=[query, key, value],
         params=params,
         param_bytes=param_bytes,
-        unit_type="cube"
+        unit_type="cube",
+        dtype=dtype
     )
 
 
@@ -286,7 +295,8 @@ def layer_norm(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -331,7 +341,8 @@ def rms_norm(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -370,7 +381,8 @@ def silu(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -412,7 +424,8 @@ def gelu(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -450,7 +463,8 @@ def relu(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -492,7 +506,8 @@ def softmax(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -533,7 +548,8 @@ def dropout(
         input_shapes=[input],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )
 
 
@@ -601,7 +617,8 @@ def conv2d(
         input_shapes=[input, weight] + ([bias] if bias else []),
         params=params,
         param_bytes=param_bytes,
-        unit_type="cube"
+        unit_type="cube",
+        dtype=dtype
     )
 
 
@@ -667,7 +684,8 @@ def conv3d(
         input_shapes=[input, weight] + ([bias] if bias else []),
         params=params,
         param_bytes=param_bytes,
-        unit_type="cube"
+        unit_type="cube",
+        dtype=dtype
     )
 
 
@@ -717,5 +735,6 @@ def embedding(
         input_shapes=[input_shape],
         params=params,
         param_bytes=param_bytes,
-        unit_type="vector"
+        unit_type="vector",
+        dtype=dtype
     )

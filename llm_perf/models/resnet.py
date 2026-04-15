@@ -83,9 +83,7 @@ class ResNetModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="conv1",
-            result=conv1_result,
-            dtype_size=dtype_size
-        ))
+            result=conv1_result))
 
         # MaxPool (not counted as a learnable layer but has compute)
         # 3x3, stride 2, padding 1 -> Output: 56x56 for 224x224 input
@@ -160,9 +158,7 @@ class ResNetModel(BaseModel):
         # FC layer: flatten input and output
         fc_layer = kernel_result_to_layer(
             name="fc",
-            result=fc_result,
-            dtype_size=dtype_size
-        )
+            result=fc_result)
         # Override shapes for FC layer (flattened)
         fc_layer.input_shape = (1, in_channels)
         fc_layer.output_shape = (1, cfg.vocab_size)
@@ -202,9 +198,7 @@ class ResNetModel(BaseModel):
         output_w = (input_w + 2 * 1 - 3) // stride + 1
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv1",
-            result=conv1_result,
-            dtype_size=dtype_size
-        ))
+            result=conv1_result))
 
         # Second conv 3x3
         conv2_result = conv2d(
@@ -217,9 +211,7 @@ class ResNetModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv2",
-            result=conv2_result,
-            dtype_size=dtype_size
-        ))
+            result=conv2_result))
 
         # Shortcut connection (if needed)
         if stride != 1 or in_channels != out_channels:
@@ -233,9 +225,7 @@ class ResNetModel(BaseModel):
             )
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_shortcut",
-                result=shortcut_result,
-                dtype_size=dtype_size
-            ))
+                result=shortcut_result))
 
         return layers
 
@@ -270,9 +260,7 @@ class ResNetModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv1",
-            result=conv1_result,
-            dtype_size=dtype_size
-        ))
+            result=conv1_result))
 
         # Second conv 3x3 (process)
         conv_h = input_h if stride == 1 else (input_h + 1) // 2
@@ -289,9 +277,7 @@ class ResNetModel(BaseModel):
         output_w = (conv_w + 2 * 1 - 3) // stride + 1 if stride > 1 else conv_w
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv2",
-            result=conv2_result,
-            dtype_size=dtype_size
-        ))
+            result=conv2_result))
 
         # Third conv 1x1 (expand)
         conv3_result = conv2d(
@@ -304,9 +290,7 @@ class ResNetModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_conv3",
-            result=conv3_result,
-            dtype_size=dtype_size
-        ))
+            result=conv3_result))
 
         # Shortcut connection (if needed)
         if stride != 1 or in_channels != expand_channels:
@@ -320,9 +304,7 @@ class ResNetModel(BaseModel):
             )
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_shortcut",
-                result=shortcut_result,
-                dtype_size=dtype_size
-            ))
+                result=shortcut_result))
 
         return layers
 

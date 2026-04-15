@@ -160,9 +160,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="embed_tokens",
-            result=emb_result,
-            dtype_size=dtype_size
-        ))
+            result=emb_result))
         
         # Encoder layers (24 layers for umT5-XXL)
         for i in range(cfg.num_layers):
@@ -177,9 +175,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="final_layer_norm",
-            result=ln_result,
-            dtype_size=dtype_size
-        ))
+            result=ln_result))
         
         return layers
     
@@ -206,9 +202,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_qkv",
-            result=qkv_result,
-            dtype_size=dtype_size
-        ))
+            result=qkv_result))
         
         # Attention computation (Q @ K^T @ V)
         # Using bmm kernel for batch matrix multiply
@@ -224,10 +218,7 @@ class WanTextEncoder(BaseModel):
         
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_compute",
-            result=attn_v_result,
-            params=0,
-            dtype_size=dtype_size
-        ))
+            result=attn_v_result))
         
         # Output projection using linear kernel
         o_result = linear(
@@ -238,9 +229,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_self_attn_o",
-            result=o_result,
-            dtype_size=dtype_size
-        ))
+            result=o_result))
         
         # Layer norm after attention using layer_norm kernel
         ln1_result = layer_norm(
@@ -251,9 +240,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_post_attn_norm",
-            result=ln1_result,
-            dtype_size=dtype_size
-        ))
+            result=ln1_result))
         
         # FFN (T5 uses gated GeLU: wi_0, wi_1 -> wo)
         # Two input projections using linear kernel
@@ -265,9 +252,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_in",
-            result=ffn_in_result,
-            dtype_size=dtype_size
-        ))
+            result=ffn_in_result))
         
         # GeLU activation using gelu kernel
         from ..kernels import gelu
@@ -278,10 +263,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_act",
-            result=gelu_result,
-            params=0,
-            dtype_size=dtype_size
-        ))
+            result=gelu_result))
         
         # Output projection using linear kernel
         ffn_out_result = linear(
@@ -292,9 +274,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_ffn_out",
-            result=ffn_out_result,
-            dtype_size=dtype_size
-        ))
+            result=ffn_out_result))
         
         # Final layer norm using layer_norm kernel
         ln2_result = layer_norm(
@@ -305,9 +285,7 @@ class WanTextEncoder(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"layer_{layer_idx}_final_norm",
-            result=ln2_result,
-            dtype_size=dtype_size
-        ))
+            result=ln2_result))
         
         return layers
 
@@ -364,9 +342,7 @@ class WanDiTModel(BaseModel):
         
         return kernel_result_to_layer(
             name="patchify",
-            result=conv_result,
-            dtype_size=dtype_size
-        )
+            result=conv_result)
     
     def _build_time_embedding_mlp(self, dtype_size: int) -> List[LayerConfig]:
         """Build time embedding MLP (shared across all blocks) using kernel API.
@@ -387,9 +363,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="time_embedding_in",
-            result=te_in_result,
-            dtype_size=dtype_size
-        ))
+            result=te_in_result))
         
         # SiLU activation
         silu_result = silu(
@@ -398,10 +372,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="time_embedding_act",
-            result=silu_result,
-            params=0,
-            dtype_size=dtype_size
-        ))
+            result=silu_result))
         
         # Output projection to shared time embedding
         te_out_result = linear(
@@ -412,9 +383,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="time_embedding_out",
-            result=te_out_result,
-            dtype_size=dtype_size
-        ))
+            result=te_out_result))
         
         # Time projection: projects time embedding to 6 modulation parameters per block
         tp_result = linear(
@@ -425,9 +394,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="time_projection",
-            result=tp_result,
-            dtype_size=dtype_size
-        ))
+            result=tp_result))
         
         return layers
     
@@ -495,9 +462,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_norm1",
-            result=ln1_result,
-            dtype_size=dtype_size
-        ))
+            result=ln1_result))
         
         # QKV projection using linear kernel
         qkv_result = linear(
@@ -508,9 +473,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_qkv",
-            result=qkv_result,
-            dtype_size=dtype_size
-        ))
+            result=qkv_result))
         
         # Q/K RMSNorm using rms_norm kernel
         qk_norm_result = rms_norm(
@@ -520,9 +483,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_qk_norm",
-            result=qk_norm_result,
-            dtype_size=dtype_size
-        ))
+            result=qk_norm_result))
         
         # Self-attention computation using scaled_dot_product_attention kernel
         head_dim = cfg.hidden_size // cfg.num_attention_heads
@@ -535,10 +496,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_compute",
-            result=attn_result,
-            params=0,
-            dtype_size=dtype_size
-        ))
+            result=attn_result))
         
         # Output projection using linear kernel
         o_result = linear(
@@ -549,9 +507,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_self_attn_o",
-            result=o_result,
-            dtype_size=dtype_size
-        ))
+            result=o_result))
         
         # === Cross-Attention (Text Conditioning) ===
         # Pre-cross-attn LayerNorm with elementwise_affine
@@ -563,9 +519,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_norm3",
-            result=ln3_result,
-            dtype_size=dtype_size
-        ))
+            result=ln3_result))
         
         # Q projection for cross-attn
         cross_q_result = linear(
@@ -576,9 +530,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_q",
-            result=cross_q_result,
-            dtype_size=dtype_size
-        ))
+            result=cross_q_result))
         
         # K, V projections from text
         kv_result = linear(
@@ -589,9 +541,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_kv",
-            result=kv_result,
-            dtype_size=dtype_size
-        ))
+            result=kv_result))
         
         # Cross-attention computation
         cross_attn_result = scaled_dot_product_attention(
@@ -602,10 +552,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_compute",
-            result=cross_attn_result,
-            params=0,
-            dtype_size=dtype_size
-        ))
+            result=cross_attn_result))
         
         # Output projection
         cross_o_result = linear(
@@ -616,9 +563,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_cross_attn_o",
-            result=cross_o_result,
-            dtype_size=dtype_size
-        ))
+            result=cross_o_result))
         
         # === FFN with Modulation ===
         # Pre-FFN LayerNorm
@@ -630,9 +575,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_norm2",
-            result=ln2_result,
-            dtype_size=dtype_size
-        ))
+            result=ln2_result))
         
         # FFN input (gated)
         ffn_in_result = linear(
@@ -643,9 +586,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_in",
-            result=ffn_in_result,
-            dtype_size=dtype_size
-        ))
+            result=ffn_in_result))
         
         # GeLU activation
         gelu_result = gelu(
@@ -655,10 +596,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_act",
-            result=gelu_result,
-            params=0,
-            dtype_size=dtype_size
-        ))
+            result=gelu_result))
         
         # FFN output
         ffn_out_result = linear(
@@ -669,9 +607,7 @@ class WanDiTModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"block_{layer_idx}_ffn_out",
-            result=ffn_out_result,
-            dtype_size=dtype_size
-        ))
+            result=ffn_out_result))
         
         return layers
     
@@ -700,9 +636,7 @@ class WanDiTModel(BaseModel):
         
         return kernel_result_to_layer(
             name="unpatchify",
-            result=linear_result,
-            dtype_size=dtype_size
-        )
+            result=linear_result)
 
 
 class WanVAEModel(BaseModel):
@@ -911,9 +845,7 @@ class WanVAEModel(BaseModel):
         
         return kernel_result_to_layer(
             name=name,
-            result=conv_result,
-            dtype_size=dtype_size
-        )
+            result=conv_result)
     
     def _build_resnet_block(
         self,

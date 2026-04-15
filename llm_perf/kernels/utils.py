@@ -9,33 +9,27 @@ from ..models.base import LayerConfig
 def kernel_result_to_layer(
     name: str,
     result: KernelResult,
-    params: Optional[int] = None,
-    dtype_size: int = 2,
     is_moe: bool = False,
 ) -> LayerConfig:
     """Convert KernelResult to LayerConfig with activation from output shape.
     
     Args:
         name: Layer name
-        result: KernelResult from functional API (now includes params and param_bytes)
-        params: Parameter count. If None, uses result.params
-        dtype_size: Bytes per element (for activation calculation)
+        result: KernelResult from functional API (includes params, param_bytes, dtype)
         is_moe: Whether this is an MoE layer
     
     Returns:
         LayerConfig for the model
     """
     output_numel = math.prod(result.output)
+    dtype_size = result.get_dtype_size()
     activation_bytes = output_numel * dtype_size
-    
-    # Use result.params if params not explicitly provided
-    actual_params = result.params if params is None else params
     
     return LayerConfig(
         name=name,
         input_shape=result.input_shapes[0] if result.input_shapes else result.output,
         output_shape=result.output,
-        params_count=actual_params,
+        params_count=result.params,
         flops=result.flops,
         activation_bytes=activation_bytes,
         is_moe=is_moe,
