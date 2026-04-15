@@ -152,10 +152,6 @@ def get_devices():
     )
 
 
-@app.route("/api/model/presets", methods=["GET"])
-def get_model_presets_endpoint():
-    """Get model presets from registry."""
-    return jsonify(get_model_presets())
 
 
 @app.route("/api/models", methods=["GET"])

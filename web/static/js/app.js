@@ -65,10 +65,13 @@ async function loadData() {
 
 function populateModelPresets() {
     const select = elements.modelPreset;
-    Object.keys(state.modelPresets).forEach(key => {
+    const presets = state.modelPresets.presets || state.modelPresets;
+    Object.keys(presets).forEach(key => {
         const option = document.createElement('option');
         option.value = key;
-        option.textContent = key;
+        const preset = presets[key];
+        const desc = preset.description || preset.name || key;
+        option.textContent = `${key} - ${desc}`;
         select.appendChild(option);
     });
 }
@@ -120,22 +123,20 @@ function updateModeUI() {
 
 function loadModelPreset() {
     const presetKey = elements.modelPreset.value;
-    if (!presetKey || !state.modelPresets[presetKey]) return;
-    
-    const preset = state.modelPresets[presetKey];
-    
-    // Update form fields
-    elements.modelType.value = preset.type;
-    
+    const presets = state.modelPresets.presets || state.modelPresets;
+    if (!presetKey || !presets[presetKey]) return;
+
+    const preset = presets[presetKey];
+
     // Handle video generation pipeline presets (e.g., wan-t2v-14b)
-    if (preset.type === 'wan-pipeline') {
+    if (preset.architecture === 'wan_pipeline') {
         // For video generation, set default values for model params
         document.getElementById('hidden-size').value = 4096;
         document.getElementById('num-layers').value = 32;
         document.getElementById('num-heads').value = 32;
         document.getElementById('max-seq-len').value = 512;
         document.getElementById('dtype').value = 'bf16';
-        
+
         // Store pipeline info for evaluate function
         state.currentPipeline = 'diffusion-video';
         state.videoParams = {
@@ -145,29 +146,35 @@ function loadModelPreset() {
             num_inference_steps: 50,
             use_cfg: true
         };
+
+        // Set model type to dense for pipeline
+        elements.modelType.value = 'dense';
     } else {
         // Standard LLM/MoE models
+        // Set model type based on sparse_type
+        elements.modelType.value = preset.sparse_type || 'dense';
+
         document.getElementById('hidden-size').value = preset.hidden_size;
         document.getElementById('num-layers').value = preset.num_layers;
         document.getElementById('num-heads').value = preset.num_attention_heads;
         document.getElementById('max-seq-len').value = preset.max_seq_len;
-        document.getElementById('dtype').value = preset.dtype;
-        
+        document.getElementById('dtype').value = preset.dtype || 'fp16';
+
         // Clear pipeline info
         state.currentPipeline = null;
-        
+
         // MoE params
         if (preset.num_experts) {
             document.getElementById('num-experts').value = preset.num_experts;
             document.getElementById('experts-per-token').value = preset.num_experts_per_token;
         }
     }
-    
+
     updateModelTypeUI();
 }
 
 function updateModelTypeUI() {
-    const isMoE = elements.modelType.value === 'moe';
+    const isMoE = elements.modelType.value.includes('moe');
     const moeFields = document.querySelectorAll('.moe-only');
     moeFields.forEach(el => {
         el.style.display = isMoE ? 'block' : 'none';
@@ -360,14 +367,14 @@ function collectConfig() {
     
     const config = {
         model: {
-            type: elements.modelType.value,
+            sparse_type: elements.modelType.value,
             vocab_size: 32000,
             hidden_size: parseInt(document.getElementById('hidden-size').value),
             num_layers: parseInt(document.getElementById('num-layers').value),
             num_attention_heads: parseInt(document.getElementById('num-heads').value),
             max_seq_len: parseInt(document.getElementById('max-seq-len').value),
             dtype: document.getElementById('dtype').value,
-            ...(elements.modelType.value === 'moe' && {
+            ...(elements.modelType.value.includes('moe') && {
                 num_experts: parseInt(document.getElementById('num-experts').value),
                 num_experts_per_token: parseInt(document.getElementById('experts-per-token').value)
             })
