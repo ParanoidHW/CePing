@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import registries - this registers all models and pipelines
 from llm_perf.core.registry import ModelRegistry, PipelineRegistry
 from llm_perf.pipelines.registry import get_pipeline_presets
-from llm_perf.models.registry import get_model_presets
+from llm_perf.models.registry import get_model_presets, create_model_from_config
 
 # Import base classes for type checking
 from llm_perf.hardware.device import Device
@@ -113,6 +113,8 @@ def create_topology(topology_config: dict) -> NetworkTopology:
 def create_model_from_registry(model_type: str, config: dict):
     """Create a model instance using the ModelRegistry.
 
+    Uses the unified create_model_from_config factory function.
+
     Args:
         model_type: Model type identifier
         config: Model configuration
@@ -120,21 +122,10 @@ def create_model_from_registry(model_type: str, config: dict):
     Returns:
         Model instance
     """
-    # Map frontend types to registry names
-    type_mapping = {
-        "llama": "llama",
-        "moe": "moe",
-        "deepseek": "deepseek",
-        "deepseek-v3": "deepseek-v3",
-    }
-
-    registry_name = type_mapping.get(model_type, model_type)
-
-    # Remove 'type' from config and add name if not present
-    model_kwargs = {k: v for k, v in config.items() if k != "type"}
-    model_kwargs.setdefault("name", model_type.capitalize())
-
-    return model_registry.create(registry_name, **model_kwargs)
+    # Add type to config if not present
+    full_config = dict(config)
+    full_config.setdefault("type", model_type)
+    return create_model_from_config(full_config)
 
 
 # ==================== API Routes ====================

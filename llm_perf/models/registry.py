@@ -286,5 +286,67 @@ def get_model_presets() -> dict:
     }
 
 
+def create_model_from_config(config: dict):
+    """Create model from configuration using ModelRegistry.
+
+    This is the unified factory function used by CLI and Web interface.
+    Supports three modes:
+    1. Preset mode: config contains 'preset' field (e.g., 'llama-7b', 'mixtral-8x7b')
+    2. Type mode: config contains 'type' field (e.g., 'llama', 'moe')
+    3. Name mode: config contains 'name' field matching a registered model
+
+    Args:
+        config: Model configuration dictionary
+
+    Returns:
+        Instantiated model from registry
+
+    Raises:
+        ValueError: If model type/name/preset is unknown or not registered
+    """
+    registry = ModelRegistry()
+    presets = get_model_presets()
+
+    # Meta fields that should not be passed to model config
+    meta_fields = {"type", "preset", "description"}
+
+    # Check for preset first (e.g., "llama-7b", "mixtral-8x7b")
+    preset_name = config.get("preset")
+    if preset_name and preset_name in presets:
+        preset_config = presets[preset_name]
+        # Merge preset with user overrides
+        merged_config = dict(preset_config)
+        merged_config.update(config)
+        # Remove meta fields before passing to model
+        model_type = merged_config.get("type", preset_name)
+        for field in meta_fields:
+            merged_config.pop(field, None)
+        return registry.create(model_type, **merged_config)
+
+    # Use 'type' field as model identifier (e.g., "llama", "moe")
+    model_type = config.get("type")
+    if model_type and registry.is_registered(model_type):
+        model_config = dict(config)
+        for field in meta_fields:
+            model_config.pop(field, None)
+        return registry.create(model_type, **model_config)
+
+    # Use 'name' field as model identifier
+    model_name = config.get("name")
+    if model_name and registry.is_registered(model_name):
+        model_config = dict(config)
+        for field in meta_fields:
+            model_config.pop(field, None)
+        return registry.create(model_name, **model_config)
+
+    # Fallback: try to find by category or raise error
+    available_models = registry.list_models()
+    raise ValueError(
+        f"Unknown model type/name: '{model_type or model_name}'. "
+        f"Available models: {available_models}. "
+        f"Available presets: {list(presets.keys())}"
+    )
+
+
 # Auto-register on import
 register_all_models()

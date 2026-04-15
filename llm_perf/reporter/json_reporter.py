@@ -3,23 +3,37 @@
 import json
 from typing import Dict, Any, Union
 from pathlib import Path
-
+from .base import BaseReporter
 from ..analyzer.training import TrainingResult
 from ..analyzer.inference import InferenceResult
 
 
-class JSONReporter:
+class JSONReporter(BaseReporter):
     """Generate JSON reports."""
-    
+
     def __init__(self, indent: int = 2):
         self.indent = indent
-    
-    def report(
+
+    def report_training(
         self,
-        result: Union[TrainingResult, InferenceResult],
-        metadata: Dict[str, Any] = None
+        result: TrainingResult,
+        metadata: Dict[str, Any] = None,
+        **kwargs
     ) -> str:
-        """Generate JSON report."""
+        """Generate training JSON report."""
+        data = {
+            "metadata": metadata or {},
+            "result": result.to_dict()
+        }
+        return json.dumps(data, indent=self.indent, ensure_ascii=False)
+
+    def report_inference(
+        self,
+        result: InferenceResult,
+        metadata: Dict[str, Any] = None,
+        **kwargs
+    ) -> str:
+        """Generate inference JSON report."""
         data = {
             "metadata": metadata or {},
             "result": result.to_dict()
@@ -45,14 +59,41 @@ class JSONReporter:
         self,
         result: Union[TrainingResult, InferenceResult],
         path: Union[str, Path],
-        metadata: Dict[str, Any] = None
-    ):
-        """Save report to file."""
+        metadata: Dict[str, Any] = None,
+        **kwargs
+    ) -> None:
+        """Save report to file.
+
+        Args:
+            result: Analysis result (Training or Inference)
+            path: Output file path
+            metadata: Optional metadata to include
+            **kwargs: Additional options
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        report_str = self.report(result, metadata=metadata, **kwargs)
         with open(path, 'w', encoding='utf-8') as f:
-            f.write(self.report(result, metadata))
+            f.write(report_str)
+
+    def report(
+        self,
+        result: Union[TrainingResult, InferenceResult],
+        metadata: Dict[str, Any] = None,
+        **kwargs
+    ) -> str:
+        """Generate JSON report (convenience method).
+
+        Args:
+            result: Analysis result (Training or Inference)
+            metadata: Optional metadata to include
+            **kwargs: Additional options
+
+        Returns:
+            JSON string
+        """
+        return super().report(result, metadata=metadata, **kwargs)
     
     def save_batch(
         self,

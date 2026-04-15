@@ -1,18 +1,25 @@
 """Table-based console reporter."""
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
+from pathlib import Path
+from .base import BaseReporter
 from ..analyzer.training import TrainingResult
 from ..analyzer.inference import InferenceResult
 from ..utils.helpers import format_bytes, format_time, format_throughput
 
 
-class TableReporter:
+class TableReporter(BaseReporter):
     """Generate formatted table reports for console output."""
-    
+
     def __init__(self, max_width: int = 100):
         self.max_width = max_width
-    
-    def report_training(self, result: TrainingResult, title: str = "Training Performance") -> str:
+
+    def report_training(
+        self,
+        result: TrainingResult,
+        title: str = "Training Performance",
+        **kwargs
+    ) -> str:
         """Generate training report."""
         lines = []
         lines.append(self._header(title))
@@ -39,7 +46,12 @@ class TableReporter:
         lines.append(self._footer())
         return "\n".join(lines)
     
-    def report_inference(self, result: InferenceResult, title: str = "Inference Performance") -> str:
+    def report_inference(
+        self,
+        result: InferenceResult,
+        title: str = "Inference Performance",
+        **kwargs
+    ) -> str:
         """Generate inference report."""
         lines = []
         lines.append(self._header(title))
@@ -148,3 +160,23 @@ class TableReporter:
             elif metric == "memory":
                 return result.memory_per_gpu_gb
         return 0.0
+
+    def save(
+        self,
+        result: Union[TrainingResult, InferenceResult],
+        path: Union[str, Path],
+        **kwargs
+    ) -> None:
+        """Save table report to file.
+
+        Args:
+            result: Analysis result (Training or Inference)
+            path: Output file path
+            **kwargs: Additional options (title, etc.)
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        report_str = self.report(result, **kwargs)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(report_str)

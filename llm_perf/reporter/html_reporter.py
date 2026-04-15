@@ -2,12 +2,12 @@
 
 from typing import Dict, Any, Union
 from pathlib import Path
-
+from .base import BaseReporter
 from ..analyzer.training import TrainingResult
 from ..analyzer.inference import InferenceResult
 
 
-class HTMLReporter:
+class HTMLReporter(BaseReporter):
     """Generate HTML reports with interactive visualizations."""
     
     def __init__(self):
@@ -138,28 +138,64 @@ class HTMLReporter:
 </body>
 </html>
 """
-    
-    def report(
+
+    def report_training(
         self,
-        result: Union[TrainingResult, InferenceResult],
-        title: str = "Performance Report",
-        config: Dict[str, Any] = None
+        result: TrainingResult,
+        title: str = "Training Performance Report",
+        config: Dict[str, Any] = None,
+        **kwargs
     ) -> str:
-        """Generate HTML report."""
+        """Generate training HTML report."""
         import json
-        
-        if isinstance(result, TrainingResult):
-            content = self._training_content(result)
-        else:
-            content = self._inference_content(result)
-        
+
+        content = self._training_content(result)
         config_json = json.dumps(config or {}, indent=2)
-        
+
         return self.template.format(
             title=title,
             content=content,
             config_json=config_json
         )
+
+    def report_inference(
+        self,
+        result: InferenceResult,
+        title: str = "Inference Performance Report",
+        config: Dict[str, Any] = None,
+        **kwargs
+    ) -> str:
+        """Generate inference HTML report."""
+        import json
+
+        content = self._inference_content(result)
+        config_json = json.dumps(config or {}, indent=2)
+
+        return self.template.format(
+            title=title,
+            content=content,
+            config_json=config_json
+        )
+
+    def report(
+        self,
+        result: Union[TrainingResult, InferenceResult],
+        title: str = "Performance Report",
+        config: Dict[str, Any] = None,
+        **kwargs
+    ) -> str:
+        """Generate HTML report (convenience method).
+
+        Args:
+            result: Analysis result (Training or Inference)
+            title: Report title
+            config: Optional configuration dict
+            **kwargs: Additional options
+
+        Returns:
+            HTML string
+        """
+        return super().report(result, title=title, config=config, **kwargs)
     
     def _training_content(self, result: TrainingResult) -> str:
         """Generate training report content."""
@@ -293,11 +329,20 @@ class HTMLReporter:
         result: Union[TrainingResult, InferenceResult],
         path: Union[str, Path],
         title: str = "Performance Report",
-        config: Dict[str, Any] = None
-    ):
-        """Save HTML report to file."""
+        config: Dict[str, Any] = None,
+        **kwargs
+    ) -> None:
+        """Save HTML report to file.
+
+        Args:
+            result: Analysis result (Training or Inference)
+            path: Output file path
+            title: Report title
+            config: Optional configuration dict
+            **kwargs: Additional options
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         with open(path, 'w', encoding='utf-8') as f:
-            f.write(self.report(result, title, config))
+            f.write(self.report(result, title=title, config=config, **kwargs))
