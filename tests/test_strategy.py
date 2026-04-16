@@ -96,6 +96,78 @@ class TestStrategyConfig(unittest.TestCase):
         self.assertEqual(config.dp_degree, 1)
         self.assertEqual(config.pipeline_schedule, "1f1b")
 
+    def test_get_communication_domain_mapping(self):
+        """Test communication domain mapping."""
+        config = StrategyConfig(tp_degree=4, pp_degree=2, dp_degree=2)
+        mapping = config.get_communication_domain_mapping(devices_per_node=8)
+
+        # TP should be intra_node (level 0)
+        self.assertEqual(mapping["tp"]["topology_level"], 0)
+        self.assertEqual(mapping["tp"]["bandwidth_domain"], "intra_node")
+
+        # DP should be intra_rack (level 1)
+        self.assertEqual(mapping["dp"]["topology_level"], 1)
+        self.assertEqual(mapping["dp"]["bandwidth_domain"], "intra_rack")
+
+        # PP should be intra_rack (level 1)
+        self.assertEqual(mapping["pp"]["topology_level"], 1)
+        self.assertEqual(mapping["pp"]["bandwidth_domain"], "intra_rack")
+
+    def test_get_communication_domain_mapping_large_tp(self):
+        """Test communication domain mapping when TP exceeds node size."""
+        config = StrategyConfig(tp_degree=16)  # 16 GPUs in TP, exceeds 8/node
+        mapping = config.get_communication_domain_mapping(devices_per_node=8)
+
+        # TP should be intra_rack (level 1) when > devices_per_node
+        self.assertEqual(mapping["tp"]["topology_level"], 1)
+        self.assertEqual(mapping["tp"]["bandwidth_domain"], "intra_rack")
+
+    def test_get_communication_domain_mapping_with_ep(self):
+        """Test communication domain mapping with expert parallelism."""
+        config = StrategyConfig(tp_degree=2, ep_degree=8)  # MoE config
+        mapping = config.get_communication_domain_mapping(devices_per_node=8)
+
+        # EP should be intra_node when <= devices_per_node
+        self.assertEqual(mapping["ep"]["topology_level"], 0)
+        self.assertEqual(mapping["ep"]["bandwidth_domain"], "intra_node")
+
+    def test_get_communication_domain_mapping_large_dp(self):
+        """Test communication domain mapping when DP is large."""
+        config = StrategyConfig(dp_degree=32)  # Large DP
+        mapping = config.get_communication_domain_mapping(devices_per_node=8, nodes_per_rack=16)
+
+        # DP should be inter_rack (level 2) when > nodes_per_rack
+        self.assertEqual(mapping["dp"]["topology_level"], 2)
+        self.assertEqual(mapping["dp"]["bandwidth_domain"], "inter_rack")
+
+    def test_get_rank_assignment(self):
+        """Test rank assignment generation."""
+        config = StrategyConfig(tp_degree=4, pp_degree=2, dp_degree=2)
+        assignment = config.get_rank_assignment(devices_per_node=8)
+
+        self.assertEqual(assignment["total_devices"], 16)
+        self.assertEqual(assignment["topology"]["devices_per_node"], 8)
+
+        # Check TP groups
+        self.assertEqual(len(assignment["parallel_groups"]["tp_groups"]), 4)  # 2 PP * 2 DP
+
+        # Check rank_to_position
+        self.assertIn(0, assignment["rank_to_position"])
+        self.assertEqual(assignment["rank_to_position"][0]["node"], 0)
+
+    def test_get_rank_assignment_physical_mapping(self):
+        """Test physical mapping of ranks to nodes/racks."""
+        config = StrategyConfig(tp_degree=8, pp_degree=2)  # 16 devices
+        assignment = config.get_rank_assignment(devices_per_node=8, nodes_per_rack=16)
+
+        # First 8 ranks should be in node 0
+        for rank in range(8):
+            self.assertEqual(assignment["rank_to_position"][rank]["node"], 0)
+
+        # Ranks 8-15 should be in node 1
+        for rank in range(8, 16):
+            self.assertEqual(assignment["rank_to_position"][rank]["node"], 1)
+
 
 class TestParallelStrategy(unittest.TestCase):
     """Test ParallelStrategy class."""

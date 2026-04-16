@@ -1,7 +1,7 @@
 """Base analyzer with shared estimation logic."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 from ..models.base import BaseModel
 from ..hardware.device import Device
@@ -49,6 +49,70 @@ class BaseAnalyzer(ABC):
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
 
+        # Cache communication domain mapping
+        self._comm_domain_cache: Optional[Dict[str, Dict[str, Any]]] = None
+
+    def _get_communication_domain_mapping(self) -> Dict[str, Dict[str, Any]]:
+        """Get cached communication domain mapping."""
+        if self._comm_domain_cache is None:
+            self._comm_domain_cache = self.strategy.get_communication_domain_mapping(
+                devices_per_node=self.cluster.devices_per_node,
+                nodes_per_rack=self.cluster.num_nodes,
+                total_devices=self.cluster.num_devices,
+            )
+        return self._comm_domain_cache
+
+    def _get_communication_bandwidth(self, domain_type: str) -> float:
+        """Get bandwidth for a specific communication domain type.
+
+        Args:
+            domain_type: Communication domain type ("tp", "pp", "dp", "ep", "sp",
+                        "ulysses", "ring")
+
+        Returns:
+            Bandwidth in Gbps (gigabits per second)
+        """
+        comm_domain = self._get_communication_domain_mapping()
+
+        if domain_type in comm_domain:
+            domain_info = comm_domain[domain_type]
+            bandwidth_domain = domain_info.get("bandwidth_domain", "inter_node")
+            devices_per_group = domain_info.get("devices_per_group", 1)
+            return self.cluster.get_bandwidth_for_topology_level(
+                bandwidth_domain, devices_per_group
+            )
+
+        # Fallback: use domain_type directly with strategy
+        return self.cluster.get_bandwidth_for_communication_domain(
+            domain_type, self.strategy
+        )
+
+    def _get_communication_ranks(self, domain_type: str) -> List[int]:
+        """Get ranks for a specific communication domain type.
+
+        Args:
+            domain_type: Communication domain type ("tp", "pp", "dp", "ep", "sp",
+                        "ulysses", "ring")
+
+        Returns:
+            List of ranks in the domain
+        """
+        comm_domain = self._get_communication_domain_mapping()
+
+        if domain_type in comm_domain:
+            return comm_domain[domain_type].get("ranks", [])
+
+        # Fallback: return logical ranks
+        degree_map = {
+            "tp": self.strategy.tp_degree,
+            "pp": self.strategy.pp_degree,
+            "dp": self.strategy.dp_degree,
+            "ep": self.strategy.ep_degree,
+            "sp": self.strategy.sp_degree,
+        }
+        degree = degree_map.get(domain_type, 1)
+        return list(range(degree)) if degree > 1 else []
+
     @abstractmethod
     def analyze(self, **kwargs) -> Any:
         """Analyze performance. Subclasses implement specific logic."""
@@ -77,7 +141,11 @@ class BaseAnalyzer(ABC):
         # For inference, only 1 all-reduce per layer
         tp_bytes = activation_bytes * 2 * num_layers
 
-        tp_ranks = list(range(self.strategy.tp_degree))
+        # Use correct rank mapping from communication domain
+        tp_ranks = self._get_communication_ranks("tp")
+        if not tp_ranks:
+            tp_ranks = list(range(self.strategy.tp_degree))
+
         tp_time = self.cluster.estimate_allreduce_time(tp_bytes, tp_ranks)
 
         per_layer_time = tp_time / num_layers
@@ -100,8 +168,10 @@ class BaseAnalyzer(ABC):
         if self.strategy.pp_degree <= 1:
             return 0.0
 
-        # P2P communication for activation transfer
-        pp_time = activation_bytes / (self.cluster.network.intra_node_bandwidth_gbps * 1e9)
+        # P2P communication for activation transfer between pipeline stages
+        # PP typically uses inter-node bandwidth (cross-node communication)
+        pp_bw_gbps = self._get_communication_bandwidth("pp")
+        pp_time = activation_bytes / (pp_bw_gbps * 1e9)
         pp_time *= num_micro_batches
 
         return pp_time
@@ -125,7 +195,11 @@ class BaseAnalyzer(ABC):
         zero_factor = {0: 1.0, 1: 1.0, 2: 1.0 / self.strategy.dp_degree, 3: 0}
         effective_bytes = grad_bytes * zero_factor.get(self.strategy.zero_stage, 1.0)
 
-        dp_ranks = list(range(self.strategy.dp_degree))
+        # Use correct rank mapping from communication domain
+        dp_ranks = self._get_communication_ranks("dp")
+        if not dp_ranks:
+            dp_ranks = list(range(self.strategy.dp_degree))
+
         dp_time = self.cluster.estimate_allreduce_time(effective_bytes, dp_ranks)
 
         return dp_time
@@ -145,7 +219,10 @@ class BaseAnalyzer(ABC):
         if self.strategy.ep_degree <= 1:
             return 0.0, 0.0
 
-        ep_ranks = list(range(self.strategy.ep_degree))
+        # Use correct rank mapping from communication domain
+        ep_ranks = self._get_communication_ranks("ep")
+        if not ep_ranks:
+            ep_ranks = list(range(self.strategy.ep_degree))
 
         # Dispatch and combine (2 all-to-alls)
         dispatch_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
@@ -185,7 +262,11 @@ class BaseAnalyzer(ABC):
             return 0.0
 
         sp_type = self.strategy.sp_type
-        sp_ranks = list(range(sp_degree))
+
+        # Get correct rank mapping from communication domain
+        sp_ranks = self._get_communication_ranks("sp")
+        if not sp_ranks:
+            sp_ranks = list(range(sp_degree))
 
         # Activation bytes for all-to-all (Ulysses)
         activation_bytes = batch_size * seq_len * hidden_size * dtype_size
@@ -219,8 +300,15 @@ class BaseAnalyzer(ABC):
 
         elif sp_type == SPType.UNIFIED_2D:
             ulysses_degree, ring_degree = self._resolve_2d_sp_config(sp_degree)
-            ulysses_ranks = list(range(ulysses_degree))
-            ring_ranks = list(range(ring_degree))
+
+            # Use correct rank mapping from communication domain for ulysses and ring
+            ulysses_ranks = self._get_communication_ranks("ulysses")
+            if not ulysses_ranks:
+                ulysses_ranks = list(range(ulysses_degree))
+
+            ring_ranks = self._get_communication_ranks("ring")
+            if not ring_ranks:
+                ring_ranks = list(range(ring_degree))
 
             # Ulysses part
             ulysses_time = self.cluster.estimate_alltoall_time(

@@ -395,72 +395,90 @@ class InferenceAnalyzer:
         return total_kv_bytes / mem_bw
     
     def _estimate_communication_time_for_phase(self, phase: str) -> tuple:
-        """Estimate communication time for a phase."""
+        """Estimate communication time for a phase using topology-aware bandwidth."""
         comm_time = 0.0
         breakdown = {}
-        
+
         dtype = self.model.config.dtype
         dtype_size = DTYPE_SIZES.get(dtype, 2)
         hidden_size = self.model.config.hidden_size
-        
+
+        # Get communication domain mapping
+        comm_mapping = self.strategy.get_communication_domain_mapping(
+            devices_per_node=self.cluster.devices_per_node,
+            total_devices=self.cluster.num_devices,
+        )
+
         # TP communication (same as training, less data in decode)
         if self.strategy.tp_degree > 1:
-            hidden_size = self.model.config.hidden_size
             batch_size = 1  # Per device for decode
-            
+
             if phase == PHASE_PREFILL:
                 seq_len = self.model.config.max_seq_len
                 activation_bytes = batch_size * seq_len * hidden_size * dtype_size
             else:
                 seq_len = 1
                 activation_bytes = batch_size * seq_len * hidden_size * dtype_size
-            
+
             num_layers = self.model.config.num_layers
             tp_bytes = activation_bytes * 2 * num_layers
-            
-            tp_ranks = list(range(self.strategy.tp_degree))
+
+            # Use communication domain mapping for topology-aware ranks
+            tp_info = comm_mapping.get("tp", {})
+            tp_ranks = tp_info.get("ranks", list(range(self.strategy.tp_degree)))
+
             tp_time = self.cluster.estimate_allreduce_time(tp_bytes, tp_ranks)
-            
+
             comm_time += tp_time
             breakdown["tensor_parallel"] = tp_time
-        
-        # PP communication
+
+        # PP communication (P2P between pipeline stages)
         if self.strategy.pp_degree > 1:
-            hidden_size = self.model.config.hidden_size
             batch_size = 1
-            
+
             pp_bytes = batch_size * hidden_size * dtype_size
-            
-            # P2P communication
-            pp_time = pp_bytes / (self.cluster.network.intra_node_bandwidth_gbps * 1e9)
-            
+
+            # Use communication domain mapping for topology-aware bandwidth
+            pp_info = comm_mapping.get("pp", {})
+            topology_level = pp_info.get("topology_level", "inter_node")
+            devices_per_group = pp_info.get("devices_per_group", self.cluster.num_devices)
+
+            pp_bw = self.cluster.get_bandwidth_for_communication_domain(
+                topology_level, devices_per_group
+            )
+
+            # P2P communication time
+            pp_time = pp_bytes / (pp_bw * 1e9)
+
             comm_time += pp_time
             breakdown["pipeline_parallel"] = pp_time
-        
+
         # EP communication for MoE
         if self.strategy.ep_degree > 1:
-            hidden_size = self.model.config.hidden_size
             batch_size = 1
             seq_len = 1 if phase == PHASE_DECODE else self.model.config.max_seq_len
-            
+
             token_bytes = batch_size * seq_len * hidden_size * dtype_size
-            ep_ranks = list(range(self.strategy.ep_degree))
-            
+
+            # Use communication domain mapping for topology-aware ranks
+            ep_info = comm_mapping.get("ep", {})
+            ep_ranks = ep_info.get("ranks", list(range(self.strategy.ep_degree)))
+
             dispatch_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
             combine_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
-            
+
             ep_time = dispatch_time + combine_time
             comm_time += ep_time
             breakdown["expert_parallel"] = ep_time
-        
+
         # SP communication (Sequence Parallelism)
         if self.strategy.sp_degree > 1:
             sp_time = self._estimate_sp_communication_time_for_phase(
-                phase, hidden_size, dtype_size
+                phase, hidden_size, dtype_size, comm_mapping
             )
             comm_time += sp_time
             breakdown["sequence_parallel"] = sp_time
-        
+
         return comm_time, breakdown
     
     def _estimate_sp_communication_time_for_phase(
@@ -468,11 +486,13 @@ class InferenceAnalyzer:
         phase: str,
         hidden_size: int,
         dtype_size: int,
+        comm_mapping: dict = None,
     ) -> float:
         """
         Estimate sequence parallelism communication time for inference.
 
         Supports ulysses-SP, ring-SP (p2p/allgather), and unified-2D-SP.
+        Uses topology-aware bandwidth from communication domain mapping.
         """
         sp_degree = self.strategy.sp_degree
         sp_type = self.strategy.sp_type
@@ -484,16 +504,27 @@ class InferenceAnalyzer:
         head_dim = hidden_size // self.model.config.num_attention_heads
         batch_size = 1
         seq_len = 1 if phase == PHASE_DECODE else self.model.config.max_seq_len
-        
+
         activation_bytes = batch_size * seq_len * hidden_size * dtype_size
         kv_bytes_per_step = (
             batch_size * (seq_len // sp_degree) *
             num_kv_heads * head_dim * 2 * dtype_size
         )
-        
-        sp_ranks = list(range(sp_degree))
+
+        # Get SP info from communication domain mapping
+        if comm_mapping is None:
+            comm_mapping = self.strategy.get_communication_domain_mapping(
+                devices_per_node=self.cluster.devices_per_node,
+                total_devices=self.cluster.num_devices,
+            )
+
+        sp_info = comm_mapping.get("sp", {})
+        sp_ranks = sp_info.get("ranks", list(range(sp_degree)))
+        sp_topology_level = sp_info.get("topology_level", "node")
+        sp_devices_per_group = sp_info.get("devices_per_group", self.cluster.devices_per_node)
+
         total_time = 0.0
-        
+
         if sp_type == SPType.ULYSSES:
             # 4 all-to-all per attention layer:
             # pre-attention: Q, K, V each needs one all-to-all
@@ -502,30 +533,25 @@ class InferenceAnalyzer:
                 activation_bytes, sp_ranks
             )
             total_time = alltoall_time * 4 * num_layers
-            
+
         elif sp_type == SPType.RING_P2P:
+            # (sp_degree - 1) P2P steps per layer
+            # Each step moves kv_bytes_per_step
             if sp_degree > 1:
-                bw_values = []
-                for i in range(sp_degree):
-                    for j in range(i + 1, sp_degree):
-                        bw = self.cluster.get_bandwidth_between(
-                            sp_ranks[i], sp_ranks[j]
-                        )
-                        if bw > 0:
-                            bw_values.append(bw)
-                avg_bw = (
-                    len(bw_values) / sum(1.0 / bw for bw in bw_values)
-                    if bw_values else 100.0
+                # Use topology-aware bandwidth
+                sp_bw = self.cluster.get_bandwidth_for_communication_domain(
+                    sp_topology_level, sp_devices_per_group
                 )
-                step_time = kv_bytes_per_step / (avg_bw * 1e9)
+                step_time = kv_bytes_per_step / (sp_bw * 1e9)
                 total_time = step_time * (sp_degree - 1) * num_layers
-                
+
         elif sp_type == SPType.RING_ALLGATHER:
+            # 1 allgather per layer for KV aggregation
             allgather_time = self.cluster.estimate_allgather_time(
                 kv_bytes_per_step * sp_degree, sp_ranks
             )
             total_time = allgather_time * num_layers
-            
+
         elif sp_type == SPType.UNIFIED_2D:
             ulysses_degree = self.strategy.ulysses_degree or 1
             ring_degree = self.strategy.ring_degree or 1
@@ -536,8 +562,17 @@ class InferenceAnalyzer:
                     ulysses_degree -= 1
                     ring_degree = sp_degree // ulysses_degree
 
-            ulysses_ranks = list(range(ulysses_degree))
-            ring_ranks = list(range(ring_degree))
+            # Get ulysses and ring info from communication domain mapping
+            ulysses_info = comm_mapping.get("ulysses", {})
+            ring_info = comm_mapping.get("ring", {})
+
+            ulysses_ranks = ulysses_info.get("ranks", list(range(ulysses_degree)))
+            ulysses_level = ulysses_info.get("topology_level", "node")
+            ulysses_dpg = ulysses_info.get("devices_per_group", self.cluster.devices_per_node)
+
+            ring_ranks = ring_info.get("ranks", list(range(ring_degree)))
+            ring_level = ring_info.get("topology_level", "rack")
+            ring_dpg = ring_info.get("devices_per_group", self.cluster.devices_per_node * 16)
 
             # Ulysses part: 4 all-to-all (Q/K/V pre + O post)
             ulysses_time = self.cluster.estimate_alltoall_time(
@@ -549,19 +584,11 @@ class InferenceAnalyzer:
                 num_kv_heads * head_dim * 2 * dtype_size
             )
             if ring_degree > 1:
-                bw_values = []
-                for i in range(ring_degree):
-                    for j in range(i + 1, ring_degree):
-                        bw = self.cluster.get_bandwidth_between(
-                            ring_ranks[i], ring_ranks[j]
-                        )
-                        if bw > 0:
-                            bw_values.append(bw)
-                avg_bw = (
-                    len(bw_values) / sum(1.0 / bw for bw in bw_values)
-                    if bw_values else 100.0
+                # Use topology-aware bandwidth for ring
+                ring_bw = self.cluster.get_bandwidth_for_communication_domain(
+                    ring_level, ring_dpg
                 )
-                ring_step_time = ring_kv_bytes / (avg_bw * 1e9)
+                ring_step_time = ring_kv_bytes / (ring_bw * 1e9)
                 ring_time = ring_step_time * (ring_degree - 1) * num_layers
             else:
                 ring_time = 0.0

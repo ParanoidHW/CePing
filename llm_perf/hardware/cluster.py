@@ -1,9 +1,12 @@
 """Cluster and network topology definitions."""
 
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Tuple, Union, TYPE_CHECKING
 from .device import Device, DeviceConfig
 from .topology import NetworkTopology, TopologyLevel, TopologyType
+
+if TYPE_CHECKING:
+    from ..strategy.base import StrategyConfig
 
 
 @dataclass
@@ -397,18 +400,18 @@ class Cluster:
     ) -> float:
         """
         Estimate all-to-all communication time with topology awareness.
-        
+
         Args:
             num_bytes: Size of data per rank
             participating_ranks: List of participating ranks
-        
+
         Returns:
             Estimated time in seconds
         """
         n = len(participating_ranks)
         if n <= 1:
             return 0.0
-        
+
         # Find the highest topology level needed
         max_level = 0
         for i in range(n):
@@ -418,7 +421,7 @@ class Cluster:
                 )
                 if level:
                     max_level = max(max_level, level.level)
-        
+
         # Use bandwidth from highest level
         level = self.topology.get_level_for_distance(max_level)
         if level:
@@ -426,12 +429,223 @@ class Cluster:
         else:
             # Average across levels
             avg_bw = sum(l.bandwidth_gbps for l in self.topology.levels) / len(self.topology.levels) * 1e9
-        
+
         # Total data moved per rank in all-to-all
         total_data = num_bytes * (n - 1) / n
-        
+
         return total_data / avg_bw
-    
+
+    def build_communication_domain_groups(
+        self,
+        strategy: "StrategyConfig",
+    ) -> Dict[str, List[List[int]]]:
+        """
+        Build communication domain groups based on strategy and topology.
+
+        This method computes the actual physical rank assignments for each
+        parallelism domain, considering the cluster topology.
+
+        Args:
+            strategy: StrategyConfig defining parallelism degrees
+
+        Returns:
+            Dict with keys: "tp_groups", "pp_groups", "dp_groups", "ep_groups", "sp_groups"
+            Each contains a list of rank groups for that parallelism type.
+        """
+        result = {}
+
+        world_size = strategy.world_size
+        if world_size > self.num_devices:
+            world_size = self.num_devices
+
+        # TP groups: ranks within the same TP group
+        if strategy.tp_degree > 1:
+            tp_groups = []
+            # TP groups are formed within each DP replica
+            tp_size = strategy.tp_degree
+            num_tp_groups = world_size // tp_size
+            for g in range(num_tp_groups):
+                start = g * tp_size
+                tp_groups.append(list(range(start, start + tp_size)))
+            result["tp_groups"] = tp_groups
+
+        # PP groups: ranks in the same PP position across stages
+        if strategy.pp_degree > 1:
+            pp_groups = []
+            pp_size = strategy.pp_degree
+            ranks_per_stage = world_size // pp_size
+            # Each PP group contains all stages for a given position
+            for pos in range(ranks_per_stage):
+                pp_group = []
+                for stage in range(pp_size):
+                    rank = stage * ranks_per_stage + pos
+                    pp_group.append(rank)
+                pp_groups.append(pp_group)
+            result["pp_groups"] = pp_groups
+
+        # DP groups: ranks in the same DP position across replicas
+        if strategy.dp_degree > 1:
+            dp_groups = []
+            tp_size = strategy.tp_degree
+            pp_size = strategy.pp_degree
+            dp_size = strategy.dp_degree
+            # Ranks in the same TP+PP position but different DP replicas
+            ranks_per_dp = world_size // dp_size
+            for pos in range(ranks_per_dp):
+                dp_group = []
+                for dp in range(dp_size):
+                    rank = dp * ranks_per_dp + pos
+                    dp_group.append(rank)
+                dp_groups.append(dp_group)
+            result["dp_groups"] = dp_groups
+
+        # EP groups: ranks in the same EP domain (for MoE)
+        if strategy.ep_degree > 1:
+            ep_groups = []
+            ep_size = strategy.ep_degree
+            num_ep_groups = world_size // ep_size
+            for g in range(num_ep_groups):
+                start = g * ep_size
+                ep_groups.append(list(range(start, start + ep_size)))
+            result["ep_groups"] = ep_groups
+
+        # SP groups: ranks in the same SP domain
+        if strategy.sp_degree > 1:
+            sp_groups = []
+            sp_size = strategy.sp_degree
+            num_sp_groups = world_size // sp_size
+            for g in range(num_sp_groups):
+                start = g * sp_size
+                sp_groups.append(list(range(start, start + sp_size)))
+            result["sp_groups"] = sp_groups
+
+        return result
+
+    def get_bandwidth_for_communication_domain(
+        self,
+        domain_type: str,
+        strategy: Optional["StrategyConfig"] = None,
+    ) -> float:
+        """
+        根据通信域类型返回对应的带宽（GB/s）。
+
+        Args:
+            domain_type: 通信域类型，可以是：
+                - "tp": Tensor Parallelism
+                - "ep": Expert Parallelism
+                - "sp_ulysses": Ulysses Sequence Parallelism
+                - "sp_ring": Ring Sequence Parallelism
+                - "sp": General Sequence Parallelism
+                - "dp": Data Parallelism
+                - "pp": Pipeline Parallelism
+            strategy: Optional StrategyConfig for degree-based bandwidth lookup
+
+        Returns:
+            Bandwidth in GB/s (gigabytes per second)
+        """
+        # 通信域带宽层级映射
+        # 优先级：TP(高带宽) > EP > Ulysses > Ring > DP(低带宽) > PP
+        bandwidth_by_domain = {
+            "tp": 0,          # Level 0: intra_node (NVLink)
+            "ep": 0,          # Level 0 or 1: depends on ep_degree
+            "sp_ulysses": 0,  # Level 0: intra_node
+            "sp_ring": 1,     # Level 1: intra_rack
+            "sp": 0,          # Default: Level 0
+            "dp": 1,          # Level 1 or 2: intra_rack or inter_rack
+            "pp": 1,          # Level 1 or 2: intra_rack or inter_rack
+        }
+
+        level_idx = bandwidth_by_domain.get(domain_type, 0)
+
+        # 如果提供了 strategy，可以根据并行度动态调整拓扑层级
+        if strategy:
+            devices_per_node = self.devices_per_node
+            devices_per_rack = devices_per_node * 16  # 默认16节点/rack
+
+            if domain_type == "tp":
+                level_idx = 0 if strategy.tp_degree <= devices_per_node else 1
+            elif domain_type == "ep":
+                level_idx = 0 if strategy.ep_degree <= devices_per_node else (
+                    1 if strategy.ep_degree <= devices_per_rack else 2
+                )
+            elif domain_type == "sp_ulysses":
+                ulysses_degree = strategy.ulysses_degree if strategy.sp_type.value == "ulysses" else 1
+                level_idx = 0 if ulysses_degree <= devices_per_node else 1
+            elif domain_type == "sp_ring":
+                ring_degree = strategy.ring_degree if strategy.sp_type.value in ("ring_p2p", "ring_allgather") else 1
+                level_idx = 1 if ring_degree > 1 else 0
+            elif domain_type == "sp":
+                level_idx = 0 if strategy.sp_degree <= devices_per_node else 1
+            elif domain_type == "dp":
+                level_idx = 2 if strategy.dp_degree > 16 else (1 if strategy.dp_degree > 1 else 0)
+            elif domain_type == "pp":
+                level_idx = 2 if strategy.pp_degree > 16 else (1 if strategy.pp_degree > 1 else 0)
+
+        # 查找对应的拓扑层级带宽
+        for level in self.topology.levels:
+            if level.level == level_idx:
+                return level.bandwidth_gbps
+
+        # 如果找不到精确匹配，找最接近的层级
+        if self.topology.levels:
+            # 按 level 排序，找最接近的
+            sorted_levels = sorted(self.topology.levels, key=lambda l: l.level)
+            for level in sorted_levels:
+                if level.level <= level_idx:
+                    continue
+                # 返回不超过请求层级的最高层级的带宽
+                prev_level = sorted_levels[sorted_levels.index(level) - 1] if sorted_levels.index(level) > 0 else level
+                return prev_level.bandwidth_gbps
+            # 如果请求层级比所有定义的层级都高，返回最高层级的带宽
+            return sorted_levels[-1].bandwidth_gbps
+
+        # 默认 fallback
+        return 100.0
+
+    def get_bandwidth_for_topology_level(
+        self,
+        topology_level: str,
+        devices_per_group: int = 8,
+    ) -> float:
+        """
+        根据拓扑层级名称获取带宽。
+
+        Args:
+            topology_level: 层级名称 ("node", "rack", "inter_node", "cluster", "intra_node", "intra_rack", "inter_rack")
+            devices_per_group: 该层级设备数（用于 fallback）
+
+        Returns:
+            Bandwidth in GB/s (gigabytes per second)
+        """
+        # 拓扑层级名称映射
+        level_map = {
+            "node": 0,
+            "intra_node": 0,
+            "rack": 1,
+            "intra_rack": 1,
+            "inter_node": 1,
+            "cluster": 2,
+            "inter_rack": 2,
+        }
+
+        level_idx = level_map.get(topology_level, 0)
+
+        # 查找对应的拓扑层级带宽
+        for level in self.topology.levels:
+            if level.level == level_idx:
+                return level.bandwidth_gbps
+
+        # Fallback: 按 devices_per_group 查找
+        for level in self.topology.levels:
+            if level.devices_per_group >= devices_per_group:
+                return level.bandwidth_gbps
+
+        # Final fallback
+        if self.topology.levels:
+            return max(self.topology.levels, key=lambda l: l.bandwidth_gbps).bandwidth_gbps
+
+        return 100.0
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {

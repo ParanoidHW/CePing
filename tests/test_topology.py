@@ -9,6 +9,7 @@ from llm_perf.hardware.topology import (
 )
 from llm_perf.hardware import Cluster
 from llm_perf.hardware.device import Device
+from llm_perf.strategy.base import StrategyConfig, SPType
 
 
 class TestTopologyLevel(unittest.TestCase):
@@ -295,9 +296,148 @@ class TestClusterWithTopology(unittest.TestCase):
             switch_radix=32,
             oversubscription=4.0,
         )
-        
+
         self.assertEqual(cluster.num_devices, 128)
         self.assertEqual(cluster.topology.topology_type, TopologyType.CLOS)
+
+    def test_build_communication_domain_groups(self):
+        """Test building communication domain groups."""
+        topology = NetworkTopology.create_clos_3tier(
+            node_bw_gbps=900.0,
+            rack_bw_gbps=200.0,
+            cluster_bw_gbps=100.0,
+        )
+
+        cluster = Cluster.create_from_preset(
+            preset_name="H100-SXM-80GB",
+            num_devices=16,
+            topology=topology,
+            devices_per_node=8,
+        )
+
+        # Create strategy config
+        strategy = StrategyConfig(tp_degree=4, pp_degree=2, dp_degree=2)
+
+        # Build communication domain groups
+        groups = cluster.build_communication_domain_groups(strategy)
+
+        # Check TP groups
+        self.assertIn("tp_groups", groups)
+        self.assertEqual(len(groups["tp_groups"]), 4)  # 2 PP * 2 DP
+        self.assertEqual(len(groups["tp_groups"][0]), 4)  # Each TP group has 4 ranks
+
+        # Check PP groups
+        self.assertIn("pp_groups", groups)
+        self.assertEqual(len(groups["pp_groups"]), 8)  # 4 TP * 2 DP positions
+
+        # Check DP groups
+        self.assertIn("dp_groups", groups)
+        self.assertEqual(len(groups["dp_groups"]), 8)  # 4 TP * 2 PP positions
+
+    def test_get_bandwidth_for_communication_domain(self):
+        """Test getting bandwidth for communication domain types."""
+        topology = NetworkTopology.create_clos_3tier(
+            node_bw_gbps=900.0,
+            rack_bw_gbps=200.0,
+            cluster_bw_gbps=100.0,
+        )
+
+        cluster = Cluster.create_from_preset(
+            preset_name="H100-SXM-80GB",
+            num_devices=64,
+            topology=topology,
+            devices_per_node=8,
+        )
+
+        # TP should use level 0 (node) bandwidth
+        tp_bw = cluster.get_bandwidth_for_communication_domain("tp")
+        self.assertEqual(tp_bw, 900.0)
+
+        # DP should use level 1 (rack) bandwidth by default
+        dp_bw = cluster.get_bandwidth_for_communication_domain("dp")
+        self.assertEqual(dp_bw, 200.0)
+
+        # PP should use level 1 (rack) bandwidth by default
+        pp_bw = cluster.get_bandwidth_for_communication_domain("pp")
+        self.assertEqual(pp_bw, 200.0)
+
+    def test_get_bandwidth_for_communication_domain_with_strategy(self):
+        """Test bandwidth lookup with strategy-based level adjustment."""
+        topology = NetworkTopology.create_clos_3tier(
+            node_bw_gbps=900.0,
+            rack_bw_gbps=200.0,
+            cluster_bw_gbps=100.0,
+        )
+
+        cluster = Cluster.create_from_preset(
+            preset_name="H100-SXM-80GB",
+            num_devices=256,
+            topology=topology,
+            devices_per_node=8,
+        )
+
+        # Small TP (fits in node)
+        strategy_small_tp = StrategyConfig(tp_degree=4)
+        bw = cluster.get_bandwidth_for_communication_domain("tp", strategy_small_tp)
+        self.assertEqual(bw, 900.0)  # Level 0 (node)
+
+        # Large DP (crosses rack)
+        strategy_large_dp = StrategyConfig(dp_degree=32)
+        bw = cluster.get_bandwidth_for_communication_domain("dp", strategy_large_dp)
+        self.assertEqual(bw, 100.0)  # Level 2 (cluster/inter_rack)
+
+    def test_get_bandwidth_for_topology_level(self):
+        """Test getting bandwidth by topology level name."""
+        topology = NetworkTopology.create_clos_3tier(
+            node_bw_gbps=900.0,
+            rack_bw_gbps=200.0,
+            cluster_bw_gbps=100.0,
+        )
+
+        cluster = Cluster.create_from_preset(
+            preset_name="H100-SXM-80GB",
+            num_devices=64,
+            topology=topology,
+            devices_per_node=8,
+        )
+
+        # Test various topology level names
+        self.assertEqual(cluster.get_bandwidth_for_topology_level("node"), 900.0)
+        self.assertEqual(cluster.get_bandwidth_for_topology_level("intra_node"), 900.0)
+        self.assertEqual(cluster.get_bandwidth_for_topology_level("rack"), 200.0)
+        self.assertEqual(cluster.get_bandwidth_for_topology_level("intra_rack"), 200.0)
+        self.assertEqual(cluster.get_bandwidth_for_topology_level("cluster"), 100.0)
+        self.assertEqual(cluster.get_bandwidth_for_topology_level("inter_rack"), 100.0)
+
+    def test_communication_domain_priority(self):
+        """Test communication domain bandwidth priority ordering."""
+        topology = NetworkTopology.create_clos_3tier(
+            node_bw_gbps=900.0,
+            rack_bw_gbps=200.0,
+            cluster_bw_gbps=100.0,
+        )
+
+        cluster = Cluster.create_from_preset(
+            preset_name="H100-SXM-80GB",
+            num_devices=256,
+            topology=topology,
+            devices_per_node=8,
+        )
+
+        strategy = StrategyConfig(tp_degree=4, ep_degree=4, dp_degree=4, pp_degree=4)
+        mapping = strategy.get_communication_domain_mapping(devices_per_node=8)
+
+        # Priority: TP > EP > Ulysses > Ring > DP > PP
+        # Higher bandwidth means higher priority (lower level)
+        tp_level = mapping["tp"]["topology_level"]
+        ep_level = mapping["ep"]["topology_level"]
+        dp_level = mapping["dp"]["topology_level"]
+        pp_level = mapping["pp"]["topology_level"]
+
+        # TP should have lowest (best) topology level
+        self.assertLessEqual(tp_level, ep_level)
+        self.assertLessEqual(tp_level, dp_level)
+        self.assertLessEqual(tp_level, pp_level)
 
 
 if __name__ == "__main__":
