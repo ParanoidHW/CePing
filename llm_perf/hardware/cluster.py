@@ -442,8 +442,15 @@ class Cluster:
         """
         Build communication domain groups based on strategy and topology.
 
-        This method computes the actual physical rank assignments for each
-        parallelism domain, considering the cluster topology.
+        This method delegates to StrategyConfig's unified rank assignment logic
+        to ensure consistency across all components.
+
+        嵌套 rank 公式:
+        rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank
+        其中:
+        - stage_size = TP * EP * SP
+        - replica_size = stage_size * PP
+        - in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
 
         Args:
             strategy: StrategyConfig defining parallelism degrees
@@ -452,72 +459,23 @@ class Cluster:
             Dict with keys: "tp_groups", "pp_groups", "dp_groups", "ep_groups", "sp_groups"
             Each contains a list of rank groups for that parallelism type.
         """
-        result = {}
+        # Use StrategyConfig's unified rank assignment logic
+        rank_assignment = strategy.get_rank_assignment(
+            devices_per_node=self.devices_per_node,
+            nodes_per_rack=self.num_nodes,  # Approximate nodes_per_rack
+            total_devices=self.num_devices,
+        )
 
-        world_size = strategy.world_size
-        if world_size > self.num_devices:
-            world_size = self.num_devices
+        parallel_groups = rank_assignment["parallel_groups"]
 
-        # TP groups: ranks within the same TP group
-        if strategy.tp_degree > 1:
-            tp_groups = []
-            # TP groups are formed within each DP replica
-            tp_size = strategy.tp_degree
-            num_tp_groups = world_size // tp_size
-            for g in range(num_tp_groups):
-                start = g * tp_size
-                tp_groups.append(list(range(start, start + tp_size)))
-            result["tp_groups"] = tp_groups
-
-        # PP groups: ranks in the same PP position across stages
-        if strategy.pp_degree > 1:
-            pp_groups = []
-            pp_size = strategy.pp_degree
-            ranks_per_stage = world_size // pp_size
-            # Each PP group contains all stages for a given position
-            for pos in range(ranks_per_stage):
-                pp_group = []
-                for stage in range(pp_size):
-                    rank = stage * ranks_per_stage + pos
-                    pp_group.append(rank)
-                pp_groups.append(pp_group)
-            result["pp_groups"] = pp_groups
-
-        # DP groups: ranks in the same DP position across replicas
-        if strategy.dp_degree > 1:
-            dp_groups = []
-            tp_size = strategy.tp_degree
-            pp_size = strategy.pp_degree
-            dp_size = strategy.dp_degree
-            # Ranks in the same TP+PP position but different DP replicas
-            ranks_per_dp = world_size // dp_size
-            for pos in range(ranks_per_dp):
-                dp_group = []
-                for dp in range(dp_size):
-                    rank = dp * ranks_per_dp + pos
-                    dp_group.append(rank)
-                dp_groups.append(dp_group)
-            result["dp_groups"] = dp_groups
-
-        # EP groups: ranks in the same EP domain (for MoE)
-        if strategy.ep_degree > 1:
-            ep_groups = []
-            ep_size = strategy.ep_degree
-            num_ep_groups = world_size // ep_size
-            for g in range(num_ep_groups):
-                start = g * ep_size
-                ep_groups.append(list(range(start, start + ep_size)))
-            result["ep_groups"] = ep_groups
-
-        # SP groups: ranks in the same SP domain
-        if strategy.sp_degree > 1:
-            sp_groups = []
-            sp_size = strategy.sp_degree
-            num_sp_groups = world_size // sp_size
-            for g in range(num_sp_groups):
-                start = g * sp_size
-                sp_groups.append(list(range(start, start + sp_size)))
-            result["sp_groups"] = sp_groups
+        # Return only the core parallelism groups (excluding ulysses/ring which are SP variants)
+        result = {
+            "tp_groups": parallel_groups.get("tp_groups", []),
+            "pp_groups": parallel_groups.get("pp_groups", []),
+            "dp_groups": parallel_groups.get("dp_groups", []),
+            "ep_groups": parallel_groups.get("ep_groups", []),
+            "sp_groups": parallel_groups.get("sp_groups", []),
+        }
 
         return result
 

@@ -151,6 +151,13 @@ class StrategyConfig:
 
         划分顺序：TP(node内) > EP(node/rack内) > Ulysses(node内) > Ring(rack内) > DP(跨节点) > PP(跨节点)
 
+        嵌套 rank 公式:
+        rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank
+        其中:
+        - replica_size = TP * EP * SP * PP
+        - stage_size = TP * EP * SP
+        - in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+
         Args:
             devices_per_node: 每节点设备数
             nodes_per_rack: 每机架节点数（默认16）
@@ -158,12 +165,10 @@ class StrategyConfig:
 
         Returns:
             {
-                "tp": {"degree": ..., "topology_level": 0, "bandwidth_domain": "intra_node"},
-                "ep": {"degree": ..., "topology_level": 0, "bandwidth_domain": "intra_node"},
-                "ulysses": {"degree": ..., "topology_level": 0, "bandwidth_domain": "intra_node"},
-                "ring": {"degree": ..., "topology_level": 1, "bandwidth_domain": "intra_rack"},
-                "dp": {"degree": ..., "topology_level": 2, "bandwidth_domain": "inter_rack"},
-                "pp": {"degree": ..., "topology_level": 2, "bandwidth_domain": "inter_rack"},
+                "tp": {"degree": ..., "groups": [[...], ...], "topology_level": ..., ...},
+                "dp": {"degree": ..., "groups": [[...], ...], ...},
+                "pp": {"degree": ..., "groups": [[...], ...], ...},
+                ...
             }
         """
         total_devices = total_devices or self.world_size
@@ -175,6 +180,11 @@ class StrategyConfig:
         # 计算每个 DP replica 的设备数（包含完整的 TP x PP x EP x SP）
         replica_size = stage_size * self.pp_degree
 
+        # 获取各并行维度的分组
+        rank_assignment = self._build_parallel_groups(
+            total_devices, stage_size, replica_size
+        )
+
         result = {}
 
         # TP 通信域映射
@@ -185,7 +195,7 @@ class StrategyConfig:
             "degree": self.tp_degree,
             "topology_level": tp_topology_level,
             "bandwidth_domain": tp_bandwidth_domain,
-            "ranks": list(range(self.tp_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["tp_groups"],
             "description": "Tensor Parallelism - highest bandwidth, within node preferred",
         }
 
@@ -203,7 +213,7 @@ class StrategyConfig:
             "degree": self.ep_degree,
             "topology_level": ep_topology_level,
             "bandwidth_domain": ep_bandwidth_domain,
-            "ranks": list(range(self.ep_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["ep_groups"],
             "description": "Expert Parallelism - high bandwidth for MoE",
         }
 
@@ -215,7 +225,7 @@ class StrategyConfig:
             "degree": ulysses_degree,
             "topology_level": ulysses_topology_level,
             "bandwidth_domain": ulysses_bandwidth_domain,
-            "ranks": list(range(ulysses_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["ulysses_groups"],
             "description": "Ulysses Sequence Parallelism - within node preferred",
         }
 
@@ -227,7 +237,7 @@ class StrategyConfig:
             "degree": ring_degree,
             "topology_level": ring_topology_level,
             "bandwidth_domain": ring_bandwidth_domain,
-            "ranks": list(range(ring_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["ring_groups"],
             "description": "Ring Sequence Parallelism - can span racks",
         }
 
@@ -237,7 +247,7 @@ class StrategyConfig:
             "sp_type": self.sp_type.value,
             "topology_level": max(ulysses_topology_level, ring_topology_level),
             "bandwidth_domain": ulysses_bandwidth_domain if self.sp_type == SPType.ULYSSES else ring_bandwidth_domain,
-            "ranks": list(range(self.sp_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["sp_groups"],
             "description": f"Sequence Parallelism ({self.sp_type.value})",
         }
 
@@ -255,7 +265,7 @@ class StrategyConfig:
             "degree": self.dp_degree,
             "topology_level": dp_topology_level,
             "bandwidth_domain": dp_bandwidth_domain,
-            "ranks": list(range(self.dp_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["dp_groups"],
             "description": "Data Parallelism - spans across nodes/racks",
         }
 
@@ -273,11 +283,198 @@ class StrategyConfig:
             "degree": self.pp_degree,
             "topology_level": pp_topology_level,
             "bandwidth_domain": pp_bandwidth_domain,
-            "ranks": list(range(self.pp_degree)),  # Logical ranks for communication
+            "groups": rank_assignment["pp_groups"],
             "description": "Pipeline Parallelism - spans across nodes for stage isolation",
         }
 
         return result
+
+    def _build_parallel_groups(
+        self,
+        total_devices: int,
+        stage_size: int,
+        replica_size: int,
+    ) -> Dict[str, List[List[int]]]:
+        """
+        构建各并行维度的 rank 分组。
+
+        嵌套 rank 公式:
+        rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank
+        其中:
+        - stage_size = TP * EP * SP
+        - replica_size = stage_size * PP
+        - in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+
+        Args:
+            total_devices: 总设备数
+            stage_size: 每个 PP stage 的设备数 (TP * EP * SP)
+            replica_size: 每个 DP replica 的设备数 (TP * EP * SP * PP)
+
+        Returns:
+            {
+                "tp_groups": [[r1, r2, ...], ...],
+                "ep_groups": [...],
+                "sp_groups": [...],
+                "ulysses_groups": [...],
+                "ring_groups": [...],
+                "dp_groups": [...],
+                "pp_groups": [...],
+            }
+        """
+        tp_size = self.tp_degree
+        ep_size = self.ep_degree
+        sp_size = self.sp_degree
+        pp_size = self.pp_degree
+        dp_size = self.dp_degree
+
+        # TP groups: 每个 (DP replica, PP stage) 组合一个 TP group
+        # 在每个 stage 内，连续的 tp_size 个 rank 组成一个 TP group
+        tp_groups = []
+        for dp_replica in range(dp_size):
+            for pp_stage in range(pp_size):
+                base = dp_replica * replica_size + pp_stage * stage_size
+                # 在每个 stage 内，TP ranks 按 tp_pos * (ep_size * sp_size) 间隔
+                # 但更简单的方式是：按 tp_pos 分组
+                for ep_pos in range(ep_size):
+                    for sp_pos in range(sp_size):
+                        tp_group = []
+                        for tp_pos in range(tp_size):
+                            in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+                            rank = base + in_stage_rank
+                            if rank < total_devices:
+                                tp_group.append(rank)
+                        if len(tp_group) == tp_size:
+                            tp_groups.append(tp_group)
+                # 如果 ep_size == 1 and sp_size == 1，上面的循环会退化成简单的连续 ranks
+        # 简化版本：当 ep_size == 1 and sp_size == 1 时，TP groups 是连续的
+        if ep_size == 1 and sp_size == 1:
+            tp_groups = []
+            for dp_replica in range(dp_size):
+                for pp_stage in range(pp_size):
+                    base = dp_replica * replica_size + pp_stage * stage_size
+                    tp_group = list(range(base, base + tp_size))
+                    if all(r < total_devices for r in tp_group):
+                        tp_groups.append(tp_group)
+
+        # EP groups: 每个 (DP replica, PP stage, TP position, SP position) 组合一个 EP group
+        ep_groups = []
+        for dp_replica in range(dp_size):
+            for pp_stage in range(pp_size):
+                base = dp_replica * replica_size + pp_stage * stage_size
+                for tp_pos in range(tp_size):
+                    for sp_pos in range(sp_size):
+                        ep_group = []
+                        for ep_pos in range(ep_size):
+                            in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+                            rank = base + in_stage_rank
+                            if rank < total_devices:
+                                ep_group.append(rank)
+                        if len(ep_group) == ep_size:
+                            ep_groups.append(ep_group)
+        # 简化版本：当 sp_size == 1 且 tp_size == 1 时
+        if sp_size == 1 and tp_size == 1:
+            ep_groups = []
+            for dp_replica in range(dp_size):
+                for pp_stage in range(pp_size):
+                    base = dp_replica * replica_size + pp_stage * stage_size
+                    ep_group = list(range(base, base + ep_size))
+                    if all(r < total_devices for r in ep_group):
+                        ep_groups.append(ep_group)
+
+        # SP groups (general): 每个 (DP replica, PP stage, TP position, EP position) 组合一个 SP group
+        sp_groups = []
+        for dp_replica in range(dp_size):
+            for pp_stage in range(pp_size):
+                base = dp_replica * replica_size + pp_stage * stage_size
+                for tp_pos in range(tp_size):
+                    for ep_pos in range(ep_size):
+                        sp_group = []
+                        for sp_pos in range(sp_size):
+                            in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+                            rank = base + in_stage_rank
+                            if rank < total_devices:
+                                sp_group.append(rank)
+                        if len(sp_group) == sp_size:
+                            sp_groups.append(sp_group)
+        # 简化版本
+        if tp_size == 1 and ep_size == 1:
+            sp_groups = []
+            for dp_replica in range(dp_size):
+                for pp_stage in range(pp_size):
+                    base = dp_replica * replica_size + pp_stage * stage_size
+                    sp_group = list(range(base, base + sp_size))
+                    if all(r < total_devices for r in sp_group):
+                        sp_groups.append(sp_group)
+
+        # Ulysses SP groups (当 sp_type == ULYSSES 时使用)
+        ulysses_degree = self.ulysses_degree if self.sp_type == SPType.ULYSSES else 1
+        ulysses_groups = []
+        if ulysses_degree > 1:
+            # Ulysses 与 TP 共享通信域，每个 TP group 内的连续 ranks
+            for tp_group in (tp_groups if tp_groups else [[i] for i in range(total_devices)]):
+                for i in range(0, len(tp_group), ulysses_degree):
+                    ulysses_group = tp_group[i:i + ulysses_degree]
+                    if len(ulysses_group) == ulysses_degree:
+                        ulysses_groups.append(ulysses_group)
+        else:
+            ulysses_groups = [[r] for r in range(total_devices)]
+
+        # Ring SP groups (当 sp_type in (RING_P2P, RING_ALLGATHER) 时使用)
+        ring_degree = self.ring_degree if self.sp_type in (SPType.RING_P2P, SPType.RING_ALLGATHER) else 1
+        ring_groups = []
+        if ring_degree > 1:
+            for dp_replica in range(dp_size):
+                for pp_stage in range(pp_size):
+                    base = dp_replica * replica_size + pp_stage * stage_size
+                    ring_group = list(range(base, base + ring_degree))
+                    if all(r < total_devices for r in ring_group):
+                        ring_groups.append(ring_group)
+        else:
+            ring_groups = [[r] for r in range(total_devices)]
+
+        # DP groups: 每个 (TP position, EP position, SP position, PP stage) 组合一个 DP group
+        # DP 同一位置跨 DP replicas 的 ranks
+        dp_groups = []
+        in_group_size = ep_size * sp_size
+        for pp_stage in range(pp_size):
+            for tp_pos in range(tp_size):
+                for in_group_pos in range(in_group_size):
+                    ep_pos = in_group_pos // sp_size
+                    sp_pos = in_group_pos % sp_size
+                    dp_group = []
+                    for dp_replica in range(dp_size):
+                        in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+                        rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank
+                        if rank < total_devices:
+                            dp_group.append(rank)
+                    if dp_group:
+                        dp_groups.append(dp_group)
+
+        # PP groups: 每个 (TP position, EP position, SP position, DP replica) 组合一个 PP group
+        # PP 同一位置跨 PP stages 的 ranks
+        pp_groups = []
+        for dp_replica in range(dp_size):
+            for tp_pos in range(tp_size):
+                for ep_pos in range(ep_size):
+                    for sp_pos in range(sp_size):
+                        pp_group = []
+                        for pp_stage in range(pp_size):
+                            in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
+                            rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank
+                            if rank < total_devices:
+                                pp_group.append(rank)
+                        if pp_group:
+                            pp_groups.append(pp_group)
+
+        return {
+            "tp_groups": tp_groups,
+            "ep_groups": ep_groups,
+            "sp_groups": sp_groups,
+            "ulysses_groups": ulysses_groups,
+            "ring_groups": ring_groups,
+            "dp_groups": dp_groups,
+            "pp_groups": pp_groups,
+        }
 
     def get_rank_assignment(
         self,
@@ -287,6 +484,13 @@ class StrategyConfig:
     ) -> Dict[str, Any]:
         """
         生成详细的 rank 分配方案，将逻辑 rank 映射到物理拓扑位置。
+
+        嵌套 rank 公式:
+        rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank
+        其中:
+        - stage_size = TP * EP * SP
+        - replica_size = stage_size * PP
+        - in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos
 
         Args:
             devices_per_node: 每节点设备数
@@ -301,10 +505,13 @@ class StrategyConfig:
                     "tp_groups": [[r1, r2, ...], ...],  # TP 分组
                     "ep_groups": [...],
                     "sp_groups": [...],
+                    "ulysses_groups": [...],
+                    "ring_groups": [...],
                     "dp_groups": [...],
                     "pp_groups": [...],
                 },
                 "rank_to_position": {rank: {"node": int, "rack": int, ...}},
+                "nested_rank_formula": "...",  # 嵌套公式说明
             }
         """
         total_devices = total_devices or self.world_size
@@ -316,86 +523,43 @@ class StrategyConfig:
         # 计算每个 DP replica 的设备数
         replica_size = stage_size * self.pp_degree
 
-        # 构建 TP 分组
-        tp_groups = []
-        num_stages = self.pp_degree
-        num_replicas = self.dp_degree
-
-        for pp_stage in range(num_stages):
-            for dp_replica in range(num_replicas):
-                # 每个 TP group 的起始 rank
-                base_rank = pp_stage * stage_size + dp_replica * replica_size
-                tp_group = list(range(base_rank, base_rank + self.tp_degree))
-                tp_groups.append(tp_group)
-
-        # 构建 EP 分组（在每个 TP group 内）
-        ep_groups = []
-        for tp_group in tp_groups:
-            if self.ep_degree > 1:
-                for i in range(0, len(tp_group), self.ep_degree):
-                    ep_group = tp_group[i:i + self.ep_degree]
-                    ep_groups.append(ep_group)
-            else:
-                ep_groups.append(tp_group[:1] if tp_group else [])
-
-        # 构建 SP 分组
-        sp_groups = []
-        if self.sp_type == SPType.ULYSSES:
-            # Ulysses SP 与 TP 共享通信域
-            sp_groups = tp_groups.copy() if self.ulysses_degree > 1 else [[r] for r in range(total_devices)]
-        elif self.sp_type in (SPType.RING_P2P, SPType.RING_ALLGATHER):
-            # Ring SP 可以更大范围
-            for pp_stage in range(num_stages):
-                for dp_replica in range(num_replicas):
-                    base_rank = pp_stage * stage_size + dp_replica * replica_size
-                    ring_group = list(range(base_rank, base_rank + self.ring_degree))
-                    sp_groups.append(ring_group)
-        else:
-            sp_groups = [[r] for r in range(total_devices)]
-
-        # 构建 DP 分组
-        dp_groups = []
-        for pp_stage in range(num_stages):
-            # 同一个 PP stage 内，按 TP+EP+SP 位置分组
-            for local_idx in range(stage_size):
-                dp_group = []
-                for dp_replica in range(num_replicas):
-                    rank = pp_stage * stage_size + dp_replica * replica_size + local_idx
-                    if rank < total_devices:
-                        dp_group.append(rank)
-                dp_groups.append(dp_group)
-
-        # 构建 PP 分组
-        pp_groups = []
-        for dp_replica in range(num_replicas):
-            for local_idx in range(stage_size):
-                pp_group = []
-                for pp_stage in range(num_stages):
-                    rank = pp_stage * stage_size + dp_replica * replica_size + local_idx
-                    if rank < total_devices:
-                        pp_group.append(rank)
-                pp_groups.append(pp_group)
+        # 构建并行分组
+        parallel_groups = self._build_parallel_groups(
+            total_devices, stage_size, replica_size
+        )
 
         # 构建 rank 到物理位置的映射
         rank_to_position = {}
         for rank in range(total_devices):
+            # 物理拓扑位置
             node = rank // devices_per_node
             rack = rank // devices_per_rack
             position_in_node = rank % devices_per_node
             position_in_rack = rank % devices_per_rack
 
             # 计算在并行组中的位置
-            pp_stage = rank // stage_size % self.pp_degree
             dp_replica = rank // replica_size
+            remaining = rank % replica_size
+            pp_stage = remaining // stage_size
+            in_stage_rank = remaining % stage_size
+
+            # 计算 TP/EP/SP 位置
+            in_group_size = self.ep_degree * self.sp_degree
+            tp_pos = in_stage_rank // in_group_size
+            in_group_remaining = in_stage_rank % in_group_size
+            ep_pos = in_group_remaining // self.sp_degree
+            sp_pos = in_group_remaining % self.sp_degree
 
             rank_to_position[rank] = {
                 "node": node,
                 "rack": rack,
                 "position_in_node": position_in_node,
                 "position_in_rack": position_in_rack,
-                "pp_stage": pp_stage if self.pp_degree > 1 else 0,
-                "dp_replica": dp_replica if self.dp_degree > 1 else 0,
-                "tp_rank": rank % self.tp_degree if self.tp_degree > 1 else 0,
+                "dp_replica": dp_replica,
+                "pp_stage": pp_stage,
+                "tp_position": tp_pos,
+                "ep_position": ep_pos,
+                "sp_position": sp_pos,
             }
 
         return {
@@ -405,14 +569,15 @@ class StrategyConfig:
                 "nodes_per_rack": nodes_per_rack,
                 "devices_per_rack": devices_per_rack,
             },
-            "parallel_groups": {
-                "tp_groups": tp_groups,
-                "ep_groups": ep_groups,
-                "sp_groups": sp_groups,
-                "dp_groups": dp_groups,
-                "pp_groups": pp_groups,
-            },
+            "parallel_groups": parallel_groups,
             "rank_to_position": rank_to_position,
+            "nested_rank_formula": (
+                "rank = dp_replica * replica_size + pp_stage * stage_size + in_stage_rank\n"
+                "其中:\n"
+                f"  stage_size = {stage_size} (TP={self.tp_degree} * EP={self.ep_degree} * SP={self.sp_degree})\n"
+                f"  replica_size = {replica_size} (stage_size * PP={self.pp_degree})\n"
+                "  in_stage_rank = tp_pos * ep_size * sp_size + ep_pos * sp_size + sp_pos"
+            ),
         }
 
 
