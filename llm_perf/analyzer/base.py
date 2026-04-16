@@ -299,6 +299,32 @@ class BaseAnalyzer(ABC):
 
         return ulysses_degree, ring_degree
 
+    # ==================== Effective Dimension Helpers ====================
+
+    def _get_effective_seq_len(self, seq_len: int) -> int:
+        """获取考虑 SP 后的有效 seq_len"""
+        return seq_len // max(self.strategy.sp_degree, 1)
+
+    def _get_effective_num_heads(self, num_heads: int) -> int:
+        """获取考虑 TP 后的有效 attention heads"""
+        return num_heads // max(self.strategy.tp_degree, 1)
+
+    def _get_effective_intermediate_size(self, intermediate_size: int) -> int:
+        """获取考虑 TP 后的有效 FFN intermediate size"""
+        return intermediate_size // max(self.strategy.tp_degree, 1)
+
+    def _get_effective_num_layers(self) -> int:
+        """获取考虑 PP 后的有效层数（每 stage）"""
+        return self.model.config.num_layers // max(self.strategy.pp_degree, 1)
+
+    def _get_effective_num_experts(self, num_experts: int) -> int:
+        """获取考虑 EP 后的有效 expert 数（每 GPU）"""
+        return num_experts // max(self.strategy.ep_degree, 1)
+
+    def _get_total_gpus(self) -> int:
+        """获取总 GPU 数 = tp × pp × dp × ep × sp"""
+        return self.strategy.world_size
+
     # ==================== Memory Estimation Helpers ====================
 
     def _get_base_param_memory(self) -> int:

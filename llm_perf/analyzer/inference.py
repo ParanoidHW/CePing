@@ -19,30 +19,35 @@ from .result_base import BaseResult
 @dataclass
 class InferenceResult(BaseResult):
     """Result of inference performance analysis."""
-    
+
     # Phase-specific metrics
     prefill_time_sec: float  # TTFT (Time To First Token)
     decode_time_per_step_sec: float  # TPOT (Time Per Output Token)
-    
+
     # Throughput
     prefill_tokens_per_sec: float
     decode_tokens_per_sec: float  # TPS (Tokens Per Second)
-    
+
     # End-to-end metrics
     total_time_sec: float  # For full generation
     total_tokens: int
-    
+
     # Memory
     memory_per_gpu_gb: float
     kv_cache_memory_gb: float
-    
+
+    # Per-GPU throughput (must come after non-default fields)
+    prefill_tokens_per_sec_per_gpu: float = 0.0
+    decode_tokens_per_sec_per_gpu: float = 0.0
+    total_gpus: int = 1
+
     # Detailed breakdown
     prefill_breakdown: PerformanceBreakdown = None
     decode_breakdown: PerformanceBreakdown = None
-    
+
     # Detailed performance breakdown with memory/communication breakdown
     detailed_breakdown: Optional[DetailedPerformanceResult] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         result = {
@@ -50,11 +55,13 @@ class InferenceResult(BaseResult):
                 "ttft_sec": self.prefill_time_sec,
                 "ttft_ms": self.prefill_time_sec * 1000,
                 "tokens_per_sec": self.prefill_tokens_per_sec,
+                "tokens_per_sec_per_gpu": self.prefill_tokens_per_sec_per_gpu,
             },
             "decode": {
                 "tpot_sec": self.decode_time_per_step_sec,
                 "tpot_ms": self.decode_time_per_step_sec * 1000,
                 "tps": self.decode_tokens_per_sec,
+                "tps_per_gpu": self.decode_tokens_per_sec_per_gpu,
             },
             "end_to_end": {
                 "total_time_sec": self.total_time_sec,
@@ -64,6 +71,9 @@ class InferenceResult(BaseResult):
             "memory": {
                 "memory_per_gpu_gb": self.memory_per_gpu_gb,
                 "kv_cache_gb": self.kv_cache_memory_gb,
+            },
+            "parallelism": {
+                "total_gpus": self.total_gpus,
             },
             "prefill_breakdown": self.prefill_breakdown.to_dict() if self.prefill_breakdown else None,
             "decode_breakdown": self.decode_breakdown.to_dict() if self.decode_breakdown else None,
@@ -75,7 +85,7 @@ class InferenceResult(BaseResult):
 
 class InferenceAnalyzer:
     """Analyzes inference performance for prefill and decode phases."""
-    
+
     def __init__(
         self,
         model: BaseModel,
@@ -87,9 +97,59 @@ class InferenceAnalyzer:
         self.device = device
         self.cluster = cluster
         self.strategy = strategy
-        
+
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
+
+    def _get_effective_seq_len(self, seq_len: int) -> int:
+        """Get sequence length after SP/CP sharding."""
+        # SP cuts along sequence dimension
+        sp_degree = self.strategy.sp_degree
+        cp_degree = self.strategy.cp_degree
+        # Take the maximum of SP and CP since they both partition sequence
+        seq_parallel_degree = max(sp_degree, cp_degree)
+        if seq_parallel_degree > 1:
+            return max(1, seq_len // seq_parallel_degree)
+        return seq_len
+
+    def _get_effective_num_heads(self) -> tuple:
+        """Get attention heads after TP sharding.
+
+        Returns:
+            tuple: (effective_num_heads, effective_num_kv_heads)
+        """
+        tp_degree = self.strategy.tp_degree
+        num_heads = self.model.config.num_attention_heads
+        num_kv_heads = self.model.config.num_key_value_heads or num_heads
+
+        if tp_degree > 1:
+            effective_num_heads = max(1, num_heads // tp_degree)
+            effective_num_kv_heads = max(1, num_kv_heads // tp_degree)
+            return effective_num_heads, effective_num_kv_heads
+        return num_heads, num_kv_heads
+
+    def _get_effective_num_layers(self) -> int:
+        """Get number of layers for current PP stage."""
+        pp_degree = self.strategy.pp_degree
+        num_layers = self.model.config.num_layers
+
+        if pp_degree > 1:
+            # Each PP stage handles a subset of layers
+            return max(1, num_layers // pp_degree)
+        return num_layers
+
+    def _get_effective_intermediate_size(self) -> int:
+        """Get FFN intermediate size after TP sharding."""
+        tp_degree = self.strategy.tp_degree
+        intermediate_size = self.model.config.intermediate_size
+
+        if intermediate_size > 0 and tp_degree > 1:
+            return max(1, intermediate_size // tp_degree)
+        return intermediate_size
+
+    def _get_total_gpus(self) -> int:
+        """Get total number of GPUs used."""
+        return self.strategy.world_size
     
     def analyze(
         self,
@@ -99,43 +159,48 @@ class InferenceAnalyzer:
     ) -> InferenceResult:
         """
         Analyze inference performance.
-        
+
         Args:
             batch_size: Number of concurrent requests
             prompt_len: Input prompt length
             generation_len: Number of tokens to generate
-        
+
         Returns:
             InferenceResult with performance metrics
         """
         # Prefill phase (process prompt)
         prefill_time = self._estimate_prefill_time(batch_size, prompt_len)
-        
+
         # Decode phase (generate tokens one by one)
         decode_time_per_step = self._estimate_decode_time(batch_size)
-        
+
         # Memory estimation
         memory_bytes, kv_cache_bytes = self._estimate_memory(batch_size, prompt_len + generation_len)
-        
+
         # Calculate throughput metrics
         prefill_tokens = batch_size * prompt_len
         decode_tokens = batch_size * generation_len
-        
+
         prefill_tps = prefill_tokens / prefill_time if prefill_time > 0 else 0
         decode_tps = batch_size / decode_time_per_step if decode_time_per_step > 0 else 0
-        
+
+        # Calculate per-GPU throughput
+        total_gpus = self._get_total_gpus()
+        prefill_tps_per_gpu = prefill_tps / total_gpus if total_gpus > 0 else prefill_tps
+        decode_tps_per_gpu = decode_tps / total_gpus if total_gpus > 0 else decode_tps
+
         # End-to-end time
         total_time = prefill_time + decode_time_per_step * generation_len
-        
+
         # Build breakdowns
         prefill_breakdown = self._build_prefill_breakdown(batch_size, prompt_len, prefill_time)
         decode_breakdown = self._build_decode_breakdown(batch_size, decode_time_per_step)
-        
+
         # Generate detailed breakdown
         detailed_breakdown = self._generate_detailed_breakdown(
             prefill_time, decode_time_per_step, generation_len, memory_bytes
         )
-        
+
         return InferenceResult(
             prefill_time_sec=prefill_time,
             decode_time_per_step_sec=decode_time_per_step,
@@ -148,6 +213,10 @@ class InferenceAnalyzer:
             prefill_breakdown=prefill_breakdown,
             decode_breakdown=decode_breakdown,
             detailed_breakdown=detailed_breakdown,
+            # Add per-GPU metrics
+            prefill_tokens_per_sec_per_gpu=prefill_tps_per_gpu,
+            decode_tokens_per_sec_per_gpu=decode_tps_per_gpu,
+            total_gpus=total_gpus,
         )
     
     def _generate_detailed_breakdown(
@@ -204,16 +273,26 @@ class InferenceAnalyzer:
         )
     
     def _estimate_prefill_time(self, batch_size: int, seq_len: int) -> float:
-        """Estimate prefill phase time (prompt processing)."""
+        """Estimate prefill phase time (prompt processing).
+
+        Takes into account parallel sharding strategies:
+        - TP: Each GPU handles sharded heads
+        - SP: Each GPU handles sharded sequence
+        - PP: Each GPU handles subset of layers
+        """
         dtype = self.model.config.dtype
         total_time = 0.0
-        
+
+        # Get effective parameters considering parallelism
+        effective_seq_len = self._get_effective_seq_len(seq_len)
+        effective_num_layers = self._get_effective_num_layers()
+
         # Prefill processes the full sequence at once
-        # Attention is O(batch * seq^2 * heads * dim)
-        
+        # Attention is O(batch * effective_seq^2 * effective_heads * dim)
+
         for layer in self.model.layers:
             kernel = self._get_compute_kernel_for_phase(
-                layer, batch_size, seq_len, dtype, PHASE_PREFILL
+                layer, batch_size, effective_seq_len, dtype, PHASE_PREFILL
             )
             if kernel:
                 time = kernel.estimate_time(
@@ -222,25 +301,41 @@ class InferenceAnalyzer:
                     dtype
                 )
                 total_time += time
-        
+
+        # Scale compute time by effective layers (for PP)
+        # We've iterated through all layers, but PP only runs on a subset
+        original_num_layers = self.model.config.num_layers
+        if original_num_layers > 0:
+            total_time = total_time * effective_num_layers / original_num_layers
+
         # Add communication overhead
         comm_time, _ = self._estimate_communication_time_for_phase(PHASE_PREFILL)
-        
+
         # Apply overlap factor
         overlap_factor = 0.8
         total_time = max(total_time, comm_time * (1 - overlap_factor) + max(total_time, comm_time * overlap_factor))
-        
+
         return total_time
     
     def _estimate_decode_time(self, batch_size: int) -> float:
-        """Estimate decode phase time (single token generation)."""
+        """Estimate decode phase time (single token generation).
+
+        Takes into account parallel sharding strategies:
+        - TP: Each GPU handles sharded heads
+        - SP: For decode, seq_len=1, SP communication still applies
+        - PP: Each GPU handles subset of layers
+        """
         dtype = self.model.config.dtype
         total_time = 0.0
-        
+
+        # Get effective parameters considering parallelism
+        # For decode, seq_len=1, but we need effective heads and layers
+        effective_num_layers = self._get_effective_num_layers()
+
         # Decode processes one token at a time (seq_len=1)
         # But attention still needs to access full KV cache
         seq_len = 1
-        
+
         for layer in self.model.layers:
             kernel = self._get_compute_kernel_for_phase(
                 layer, batch_size, seq_len, dtype, PHASE_DECODE
@@ -252,38 +347,49 @@ class InferenceAnalyzer:
                     dtype
                 )
                 total_time += time
-        
+
+        # Scale compute time by effective layers (for PP)
+        original_num_layers = self.model.config.num_layers
+        if original_num_layers > 0:
+            total_time = total_time * effective_num_layers / original_num_layers
+
         # KV cache read overhead (memory bandwidth bound)
+        # Uses effective heads for TP sharding
         kv_read_time = self._estimate_kv_cache_read_time(batch_size)
         total_time += kv_read_time
-        
+
         # Communication overhead
         comm_time, _ = self._estimate_communication_time_for_phase(PHASE_DECODE)
-        
+
         # Apply overlap factor
         overlap_factor = 0.7
         total_time = max(total_time, comm_time * (1 - overlap_factor) + max(total_time, comm_time * overlap_factor))
-        
+
         return total_time
     
     def _estimate_kv_cache_read_time(self, batch_size: int) -> float:
-        """Estimate time to read KV cache during decode."""
+        """Estimate time to read KV cache during decode.
+
+        Takes into account TP sharding (heads are distributed).
+        """
         dtype = self.model.config.dtype
         dtype_size = DTYPE_SIZES.get(dtype, 2)
-        
+
+        # Get effective parameters for TP sharding
+        _, effective_num_kv_heads = self._get_effective_num_heads()
+        effective_num_layers = self._get_effective_num_layers()
+
         # KV cache size per token per layer
         hidden_size = self.model.config.hidden_size
-        num_layers = self.model.config.num_layers
-        num_kv_heads = self.model.config.num_key_value_heads or self.model.config.num_attention_heads
         head_dim = hidden_size // self.model.config.num_attention_heads
-        
-        # K and V per token per layer
-        kv_per_token = 2 * num_kv_heads * head_dim * dtype_size
-        
+
+        # K and V per token per layer (using effective heads for TP)
+        kv_per_token = 2 * effective_num_kv_heads * head_dim * dtype_size
+
         # Read all previous tokens (average case)
         avg_seq_len = self.model.config.max_seq_len // 2
-        total_kv_bytes = batch_size * avg_seq_len * num_layers * kv_per_token
-        
+        total_kv_bytes = batch_size * avg_seq_len * effective_num_layers * kv_per_token
+
         # Memory bandwidth bound
         mem_bw = self.device.get_memory_bw_gbps() * 1e9
         return total_kv_bytes / mem_bw
@@ -477,30 +583,47 @@ class InferenceAnalyzer:
         return total_time
     
     def _estimate_memory(self, batch_size: int, max_seq_len: int) -> tuple:
-        """Estimate memory per GPU. Returns (total_memory, kv_cache_memory)."""
+        """Estimate memory per GPU. Returns (total_memory, kv_cache_memory).
+
+        Takes into account parallel sharding strategies:
+        - TP: Parameters and KV cache are sharded across TP ranks
+        - PP: Parameters and layers are distributed, only own stage's KV cache
+        - SP: Activations are sharded along sequence dimension
+        """
         dtype = self.model.config.dtype
         dtype_size = DTYPE_SIZES.get(dtype, 2)
-        
-        # Model parameters
+
+        # Get effective parameters
+        effective_num_layers = self._get_effective_num_layers()
+        _, effective_num_kv_heads = self._get_effective_num_heads()
+        effective_seq_len = self._get_effective_seq_len(max_seq_len)
+        tp_degree = self.strategy.tp_degree
+        pp_degree = self.strategy.pp_degree
+        sp_degree = self.strategy.sp_degree
+        cp_degree = self.strategy.cp_degree
+
+        # Model parameters - sharded by TP and PP
         param_memory = self.model.total_params * dtype_size
-        param_memory //= self.strategy.tp_degree
-        
-        # KV cache
+        param_memory //= tp_degree  # TP sharding
+        if pp_degree > 1:
+            param_memory //= pp_degree  # PP sharding
+
+        # KV cache - sharded by TP (heads) and PP (layers)
         hidden_size = self.model.config.hidden_size
-        num_layers = self.model.config.num_layers
-        num_kv_heads = self.model.config.num_key_value_heads or self.model.config.num_attention_heads
         head_dim = hidden_size // self.model.config.num_attention_heads
-        
-        # K and V per token per layer
-        kv_per_token = 2 * num_kv_heads * head_dim * dtype_size
-        kv_cache_memory = batch_size * max_seq_len * num_layers * kv_per_token
-        kv_cache_memory //= self.strategy.tp_degree
-        
+
+        # K and V per token per layer using effective heads
+        kv_per_token = 2 * effective_num_kv_heads * head_dim * dtype_size
+
+        # KV cache for all tokens and effective layers (PP stage only)
+        kv_cache_memory = batch_size * max_seq_len * effective_num_layers * kv_per_token
+
         # Activations - use inference mode estimate
         is_distributed = (
             self.strategy.tp_degree > 1
             or self.strategy.dp_degree > 1
             or self.strategy.pp_degree > 1
+            or self.strategy.sp_degree > 1
         )
         base_memory = self.model.estimate_memory(
             inference_mode=True,  # Inference mode
@@ -508,16 +631,25 @@ class InferenceAnalyzer:
             is_distributed=is_distributed,
             apply_calibration=False,  # Handle manually for fine-grained control
         )
-        dtype_size = 2 if self.model.config.dtype == "fp16" else 4
         param_memory_total = self.model.total_params * dtype_size
         activation_memory = base_memory - param_memory_total
+
+        # Apply parallelism sharding to activation memory
+        if tp_degree > 1:
+            activation_memory //= tp_degree  # TP sharding
+        if sp_degree > 1 or cp_degree > 1:
+            # SP/CP sharding along sequence dimension
+            seq_parallel_degree = max(sp_degree, cp_degree)
+            activation_memory //= seq_parallel_degree
+        if pp_degree > 1:
+            activation_memory //= pp_degree  # PP sharding
 
         total_memory = param_memory + kv_cache_memory + activation_memory
 
         # Apply calibration factors from model config
         calib = self.model.config.memory_calibration
         total_memory = calib.apply(total_memory, is_distributed)
-        
+
         return total_memory, kv_cache_memory
     
     def _get_compute_kernel_for_phase(
@@ -528,26 +660,45 @@ class InferenceAnalyzer:
         dtype: str,
         phase: str
     ):
-        """Get appropriate compute kernel for a layer and phase."""
+        """Get appropriate compute kernel for a layer and phase.
+
+        Uses effective parameters considering parallelism:
+        - m = batch × effective_seq_len (for prefill) or batch × 1 (for decode)
+        - n = effective_heads × head_dim (attention) or effective_intermediate_size (ffn)
+        - k = hidden_size
+        """
         name = layer.name
-        
+        hidden_size = self.model.config.hidden_size
+
+        # Get effective parameters
+        effective_num_heads, _ = self._get_effective_num_heads()
+        head_dim = hidden_size // self.model.config.num_attention_heads
+        effective_intermediate_size = self._get_effective_intermediate_size()
+
         if "proj" in name or "up" in name or "gate" in name or "down" in name:
+            # FFN layers - m × k @ k × n
             m = batch_size * seq_len
-            n = layer.output_shape[-1]
-            k = layer.input_shape[-1]
+            k = layer.input_shape[-1] if layer.input_shape else hidden_size
+            # For FFN, use effective intermediate size (TP sharded)
+            n = layer.output_shape[-1] if layer.output_shape else effective_intermediate_size
+            if effective_intermediate_size > 0:
+                n = effective_intermediate_size
             return self.compute_registry.get_or_create_matmul(m, n, k, dtype)
         elif "attention" in name:
             # Different attention pattern for prefill vs decode
+            # Use effective heads for TP sharding
+            effective_head_dim = head_dim
+            effective_n = effective_num_heads * effective_head_dim
             if phase == PHASE_PREFILL:
-                return self.compute_registry.get(f"flash_attn_{batch_size}_{seq_len}_32_128_{dtype}")
+                return self.compute_registry.get(f"flash_attn_{batch_size}_{seq_len}_{effective_num_heads}_{effective_head_dim}_{dtype}")
             else:
                 # Decode: seq_len=1 but accesses full KV
-                return self.compute_registry.get(f"flash_attn_{batch_size}_1_32_128_{dtype}")
+                return self.compute_registry.get(f"flash_attn_{batch_size}_1_{effective_num_heads}_{effective_head_dim}_{dtype}")
         elif "norm" in name:
             return self.compute_registry.get(f"rmsnorm_{layer.input_shape[-1]}_{dtype}")
         elif "swiglu" in name or "activation" in name:
             return self.compute_registry.get(f"swiglu_{layer.input_shape[-1]}_{dtype}")
-        
+
         return None
     
     def _build_prefill_breakdown(

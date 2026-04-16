@@ -75,9 +75,26 @@ class BreakdownGenerator:
         memory_by_type: Dict[MemoryType, int] = {}
 
         # Parameters
+        # Apply TP sharding for all parameters
+        # Apply PP sharding (each stage only holds its portion of parameters)
+        # Apply EP sharding for MoE expert parameters
         param_memory = self.model.total_params * self.dtype_size
-        # Apply TP sharding
         param_memory //= max(self.strategy.tp_degree, 1)
+        param_memory //= max(self.strategy.pp_degree, 1)
+
+        # Handle MoE expert parameter sharding by EP
+        # Note: EP only shards expert parameters, non-expert params are replicated across EP
+        if self.strategy.ep_degree > 1 and self._has_moe_experts():
+            # Calculate expert parameter portion for EP sharding
+            expert_param_memory = self._estimate_expert_param_memory()
+            non_expert_param_memory = param_memory - expert_param_memory
+
+            # Expert params are sharded by EP
+            expert_param_memory //= max(self.strategy.ep_degree, 1)
+
+            # Reconstruct total param memory
+            param_memory = non_expert_param_memory + expert_param_memory
+
         memory_by_type[MemoryType.PARAMETER] = param_memory
 
         # Activations (use model's estimate)
@@ -111,7 +128,13 @@ class BreakdownGenerator:
         return memory_by_type
 
     def _estimate_activation_memory(self) -> int:
-        """Estimate activation memory."""
+        """Estimate activation memory.
+
+        Activation memory is sharded by:
+        - TP: QKV/FFN activations are sharded across TP ranks
+        - SP: Sequence dimension is sharded across SP ranks
+        - PP: Each PP stage only holds activations for its own layers
+        """
         # Use inference mode for activation (layer-wise reuse)
         # This gives the max single-layer activation
         if not self.model.layers:
@@ -121,14 +144,27 @@ class BreakdownGenerator:
             layer.activation_bytes for layer in self.model.layers
         )
 
-        # Apply SP reduction
-        if self.strategy.sp_degree > 1:
-            max_activation //= self.strategy.sp_degree
+        # TP sharding: QKV/FFN activations are sharded across TP ranks
+        activation_memory = max_activation // max(self.strategy.tp_degree, 1)
 
-        return max_activation
+        # SP sharding: Sequence dimension is sharded across SP ranks
+        activation_memory //= max(self.strategy.sp_degree, 1)
+
+        # PP sharding: Each stage only holds activations for its own layers
+        # Note: In training, all activations need to be saved for backward pass,
+        # but with PP each stage only processes a portion of layers
+        # Here we estimate the per-stage activation memory
+        activation_memory //= max(self.strategy.pp_degree, 1)
+
+        return activation_memory
 
     def _estimate_kv_cache_memory(self) -> int:
-        """Estimate KV cache memory for transformer models."""
+        """Estimate KV cache memory for transformer models.
+
+        KV Cache is sharded by:
+        - TP: KV heads are sharded across TP ranks
+        - PP: Each PP stage only needs to cache KV for its own layers
+        """
         cfg = self.model.config
 
         # Check if this is a transformer model with KV cache
@@ -146,8 +182,16 @@ class BreakdownGenerator:
         kv_per_token = 2 * num_kv_heads * head_dim * self.dtype_size
         kv_cache = batch_size * seq_len * cfg.num_layers * kv_per_token
 
-        # Apply TP sharding
+        # Apply TP sharding: KV heads are distributed across TP ranks
         kv_cache //= max(self.strategy.tp_degree, 1)
+
+        # Apply PP sharding: Each stage only caches KV for its own layers
+        # Calculate effective layers per PP stage
+        effective_layers = cfg.num_layers // max(self.strategy.pp_degree, 1)
+        if effective_layers > 0:
+            # Recalculate KV cache for effective layers only
+            kv_cache = batch_size * seq_len * effective_layers * kv_per_token
+            kv_cache //= max(self.strategy.tp_degree, 1)
 
         return kv_cache
 
@@ -236,7 +280,14 @@ class BreakdownGenerator:
     def _estimate_block_memory(
         self, block_type: str, layer_indices: List[int]
     ) -> Dict[MemoryType, int]:
-        """Estimate memory for a block."""
+        """Estimate memory for a block.
+
+        Memory is sharded by:
+        - TP: Parameters and activations are sharded across TP ranks
+        - SP: Sequence dimension activations are sharded across SP ranks
+        - PP: Each stage only holds its portion of layers
+        - EP: MoE expert parameters are sharded across EP ranks
+        """
         memory: Dict[MemoryType, int] = {}
 
         # Parameters
@@ -244,7 +295,19 @@ class BreakdownGenerator:
             self.model.layers[i].params_count * self.dtype_size
             for i in layer_indices if i < len(self.model.layers)
         )
+
+        # Apply TP sharding
         param_memory //= max(self.strategy.tp_degree, 1)
+
+        # Apply PP sharding (each stage holds its portion)
+        param_memory //= max(self.strategy.pp_degree, 1)
+
+        # Handle EP sharding for MoE blocks
+        if self.strategy.ep_degree > 1 and block_type == "moe":
+            # MoE expert parameters are sharded by EP
+            # Approximate: assume all params in MoE block are expert params
+            param_memory //= max(self.strategy.ep_degree, 1)
+
         memory[MemoryType.PARAMETER] = param_memory
 
         # Activations
@@ -252,7 +315,17 @@ class BreakdownGenerator:
             self.model.layers[i].activation_bytes
             for i in layer_indices if i < len(self.model.layers)
         ) if layer_indices else 0
-        memory[MemoryType.ACTIVATION] = max_activation
+
+        # Apply TP sharding (QKV/FFN activations)
+        activation_memory = max_activation // max(self.strategy.tp_degree, 1)
+
+        # Apply SP sharding (sequence dimension)
+        activation_memory //= max(self.strategy.sp_degree, 1)
+
+        # Apply PP sharding (each stage processes its own layers)
+        activation_memory //= max(self.strategy.pp_degree, 1)
+
+        memory[MemoryType.ACTIVATION] = activation_memory
 
         return memory
 
@@ -367,6 +440,44 @@ class BreakdownGenerator:
             or self.strategy.ep_degree > 1
             or self.strategy.sp_degree > 1
         )
+
+    def _has_moe_experts(self) -> bool:
+        """Check if the model has MoE expert layers."""
+        cfg = self.model.config
+        return (
+            hasattr(cfg, 'num_experts') and
+            cfg.num_experts is not None and
+            cfg.num_experts > 0
+        )
+
+    def _estimate_expert_param_memory(self) -> int:
+        """Estimate expert parameter memory (already sharded by TP and PP).
+
+        This returns the expert parameter memory after TP and PP sharding,
+        which can then be further sharded by EP.
+        """
+        if not self._has_moe_experts():
+            return 0
+
+        cfg = self.model.config
+
+        # Sum parameters from MoE layers (identified by is_moe flag or submodule_type)
+        expert_param_count = sum(
+            layer.params_count
+            for layer in self.model.layers
+            if layer.is_moe or (
+                hasattr(layer, 'submodule_type') and
+                layer.submodule_type.value == "moe"
+            )
+        )
+
+        expert_param_memory = expert_param_count * self.dtype_size
+
+        # Apply the same TP and PP sharding as regular parameters
+        expert_param_memory //= max(self.strategy.tp_degree, 1)
+        expert_param_memory //= max(self.strategy.pp_degree, 1)
+
+        return expert_param_memory
 
 
 class PipelineBreakdownGenerator:

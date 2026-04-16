@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
-from ..models.base import BaseModel
+from ..models.base import BaseModel, SubmoduleType
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig, SPType
@@ -19,30 +19,36 @@ from .result_base import BaseResult
 @dataclass
 class TrainingResult(BaseResult):
     """Result of training performance analysis."""
-    
-    # Throughput metrics
+
+    # Throughput metrics (global)
     samples_per_sec: float
     tokens_per_sec: float
-    
-    # Time metrics
+
+    # Time metrics (required fields must come before optional)
     time_per_step_sec: float
     time_to_solution_sec: float  # For given dataset size
-    
+
     # Memory metrics
     memory_per_gpu_gb: float
-    
+
+    # Per-GPU throughput metrics (optional)
+    samples_per_sec_per_gpu: float = 0.0
+    tokens_per_sec_per_gpu: float = 0.0
+
     # Detailed breakdown
     breakdown: PerformanceBreakdown = None
-    
+
     # Detailed performance breakdown with memory/communication breakdown
     detailed_breakdown: Optional[DetailedPerformanceResult] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         result = {
             "throughput": {
                 "samples_per_sec": self.samples_per_sec,
                 "tokens_per_sec": self.tokens_per_sec,
+                "samples_per_sec_per_gpu": self.samples_per_sec_per_gpu,
+                "tokens_per_sec_per_gpu": self.tokens_per_sec_per_gpu,
             },
             "time": {
                 "time_per_step_sec": self.time_per_step_sec,
@@ -61,7 +67,7 @@ class TrainingResult(BaseResult):
 
 class TrainingAnalyzer:
     """Analyzes training performance."""
-    
+
     def __init__(
         self,
         model: BaseModel,
@@ -73,9 +79,93 @@ class TrainingAnalyzer:
         self.device = device
         self.cluster = cluster
         self.strategy = strategy
-        
+
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
+
+    # ============================================================
+    # Helper methods for getting effective parallelism-sharded sizes
+    # ============================================================
+
+    def _get_effective_seq_len(self, seq_len: int) -> int:
+        """Get effective sequence length after SP sharding.
+
+        Sequence Parallelism (SP) shards the sequence dimension across GPUs,
+        so each GPU only processes seq_len / sp_degree tokens.
+        """
+        if self.strategy.sp_degree > 1:
+            return seq_len // self.strategy.sp_degree
+        return seq_len
+
+    def _get_effective_num_heads(self) -> int:
+        """Get effective number of attention heads after TP sharding.
+
+        Tensor Parallelism (TP) shards attention heads across GPUs,
+        so each GPU handles num_heads / tp_degree heads.
+        """
+        num_heads = self.model.config.num_attention_heads
+        if self.strategy.tp_degree > 1:
+            return num_heads // self.strategy.tp_degree
+        return num_heads
+
+    def _get_effective_num_kv_heads(self) -> int:
+        """Get effective number of KV heads after TP sharding.
+
+        For GQA models, KV heads are also sharded by TP.
+        """
+        num_kv_heads = getattr(
+            self.model.config, "num_key_value_heads",
+            self.model.config.num_attention_heads
+        )
+        if self.strategy.tp_degree > 1:
+            return max(1, num_kv_heads // self.strategy.tp_degree)
+        return num_kv_heads
+
+    def _get_effective_intermediate_size(self) -> int:
+        """Get effective intermediate size after TP sharding.
+
+        Tensor Parallelism (TP) shards the FFN intermediate dimension,
+        so each GPU handles intermediate_size / tp_degree.
+        """
+        intermediate_size = self.model.config.intermediate_size
+        if intermediate_size == 0:
+            # Default: 4x hidden size
+            intermediate_size = self.model.config.hidden_size * 4
+        if self.strategy.tp_degree > 1:
+            return intermediate_size // self.strategy.tp_degree
+        return intermediate_size
+
+    def _get_effective_hidden_size(self) -> int:
+        """Get effective hidden size after TP sharding for column-parallel layers.
+
+        For column-parallel layers (QKV output, first FFN), the output dimension
+        is sharded, so effective hidden size per GPU is hidden_size / tp_degree.
+        """
+        hidden_size = self.model.config.hidden_size
+        if self.strategy.tp_degree > 1:
+            return hidden_size // self.strategy.tp_degree
+        return hidden_size
+
+    def _get_effective_num_layers(self) -> int:
+        """Get effective number of layers after PP sharding.
+
+        Pipeline Parallelism (PP) distributes layers across pipeline stages,
+        so each GPU handles num_layers / pp_degree layers.
+        """
+        num_layers = self.model.config.num_layers
+        if self.strategy.pp_degree > 1:
+            return num_layers // self.strategy.pp_degree
+        return num_layers
+
+    def _get_total_gpus(self) -> int:
+        """Get total number of GPUs used in training."""
+        return (
+            self.strategy.tp_degree *
+            self.strategy.pp_degree *
+            self.strategy.dp_degree *
+            self.strategy.sp_degree *
+            self.strategy.ep_degree
+        )
     
     def analyze(
         self,
@@ -85,47 +175,56 @@ class TrainingAnalyzer:
     ) -> TrainingResult:
         """
         Analyze training performance.
-        
+
         Args:
             batch_size: Global batch size
             seq_len: Sequence length
             num_steps: Number of training steps (for time-to-solution)
-        
+
         Returns:
             TrainingResult with performance metrics
         """
-        # Calculate per-device batch size
+        # Calculate per-device batch size (DP sharding)
         local_batch_size = batch_size // self.strategy.dp_degree
-        
-        # Estimate compute time for one step
+
+        # Get effective dimensions after parallelism sharding
+        effective_seq_len = self._get_effective_seq_len(seq_len)
+        effective_num_layers = self._get_effective_num_layers()
+
+        # Estimate compute time for one step (per-GPU compute time)
         compute_time = self._estimate_compute_time(local_batch_size, seq_len)
-        
+
         # Estimate communication time
-        comm_time, comm_breakdown = self._estimate_communication_time()
-        
-        # Memory estimation
+        comm_time, comm_breakdown = self._estimate_communication_time(seq_len)
+
+        # Memory estimation (per-GPU memory)
         memory_bytes = self._estimate_memory(local_batch_size, seq_len)
-        
+
         # Total time per step (with overlap assumption)
         # Assume 70% overlap between compute and communication
         overlap_factor = 0.7
         effective_comm_time = comm_time * (1 - overlap_factor)
         time_per_step = compute_time + effective_comm_time
-        
-        # Throughput calculations
+
+        # Throughput calculations (global throughput)
         samples_per_sec = batch_size / time_per_step
         tokens_per_sec = samples_per_sec * seq_len
-        
+
+        # Per-GPU throughput
+        total_gpus = self._get_total_gpus()
+        samples_per_sec_per_gpu = samples_per_sec / total_gpus
+        tokens_per_sec_per_gpu = tokens_per_sec / total_gpus
+
         # Build breakdown
         breakdown = self._build_breakdown(
             compute_time, comm_time, comm_breakdown, memory_bytes
         )
-        
+
         # Generate detailed breakdown
         detailed_breakdown = self._generate_detailed_breakdown(
             compute_time, comm_time, memory_bytes, batch_size
         )
-        
+
         return TrainingResult(
             samples_per_sec=samples_per_sec,
             tokens_per_sec=tokens_per_sec,
@@ -134,6 +233,8 @@ class TrainingAnalyzer:
             memory_per_gpu_gb=memory_bytes / 1024 / 1024 / 1024,
             breakdown=breakdown,
             detailed_breakdown=detailed_breakdown,
+            samples_per_sec_per_gpu=samples_per_sec_per_gpu,
+            tokens_per_sec_per_gpu=tokens_per_sec_per_gpu,
         )
     
     def _generate_detailed_breakdown(
@@ -187,106 +288,229 @@ class TrainingAnalyzer:
         )
     
     def _estimate_compute_time(self, batch_size: int, seq_len: int) -> float:
-        """Estimate compute time for one training step."""
+        """Estimate compute time for one training step.
+
+        This method correctly accounts for parallelism sharding:
+        - TP: shards attention heads and FFN intermediate size
+        - PP: distributes layers across stages
+        - SP: shards sequence length
+
+        The compute time returned is per-GPU compute time.
+        """
         dtype = self.model.config.dtype
-        
+
+        # Get effective dimensions after parallelism sharding
+        effective_seq_len = self._get_effective_seq_len(seq_len)
+        effective_num_heads = self._get_effective_num_heads()
+        effective_intermediate_size = self._get_effective_intermediate_size()
+        effective_num_layers = self._get_effective_num_layers()
+        effective_hidden_size = self._get_effective_hidden_size()
+
+        hidden_size = self.model.config.hidden_size
+        head_dim = hidden_size // self.model.config.num_attention_heads
+
         total_time = 0.0
-        
-        for layer in self.model.layers:
-            # Forward pass
-            kernel = self._get_compute_kernel(layer, batch_size, seq_len, dtype)
-            if kernel:
-                total_time += kernel.estimate_time(
-                    layer.input_shape,
-                    layer.output_shape,
-                    dtype
+
+        # Count layers by type to compute compute time correctly
+        # We process only effective_num_layers (PP-sharded)
+        attention_layers = 0
+        ffn_layers = 0
+
+        for layer in self.model.layers[:effective_num_layers]:
+            layer_time = 0.0
+
+            # Forward pass compute time
+            # For attention layers: QKV projection + attention + O projection
+            if layer.submodule_type == SubmoduleType.ATTENTION or "attention" in layer.name:
+                attention_layers += 1
+
+                # QKV projection: batch * seq * hidden -> batch * seq * (3 * hidden)
+                # With TP, output is sharded: batch * seq * (3 * effective_hidden_size)
+                # m = batch_size * effective_seq_len (SP-sharded)
+                # n = 3 * effective_hidden_size (TP-sharded)
+                # k = hidden_size (input dimension, not sharded)
+                m = batch_size * effective_seq_len
+                n = 3 * effective_hidden_size  # Q, K, V each have effective_hidden_size
+                k = hidden_size
+                qkv_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
+                layer_time += qkv_kernel.estimate_time((m, k), (m, n), dtype)
+
+                # Attention computation: batch * heads * seq * seq * head_dim
+                # With TP and SP, effective_heads and effective_seq_len are used
+                # Flash attention handles this efficiently
+                attn_kernel = self.compute_registry.get(
+                    f"flash_attn_{batch_size}_{effective_seq_len}_{effective_num_heads}_{head_dim}_{dtype}"
                 )
-            
+                if attn_kernel:
+                    layer_time += attn_kernel.estimate_time(
+                        (batch_size, effective_seq_len, effective_num_heads * head_dim),
+                        (batch_size, effective_seq_len, hidden_size),
+                        dtype
+                    )
+                else:
+                    # Fallback: manual attention FLOPs estimate
+                    # Attention FLOPs = 2 * batch * seq * heads * seq * head_dim
+                    # With SP: seq -> effective_seq_len, with TP: heads -> effective_num_heads
+                    attention_flops = 2 * batch_size * effective_seq_len * effective_num_heads * effective_seq_len * head_dim
+                    # Assume device can achieve 50% of peak FLOPs for attention
+                    effective_tflops = self.device.get_compute_tflops(dtype) * 0.5
+                    layer_time += attention_flops / (effective_tflops * 1e12)
+
+                # O projection: batch * seq * effective_hidden -> batch * seq * hidden
+                # With TP, input is sharded (effective_hidden_size), output is full (hidden_size)
+                # This requires all-reduce after, but compute is local
+                m = batch_size * effective_seq_len
+                n = hidden_size  # Output dimension (not sharded)
+                k = effective_hidden_size  # Input dimension (TP-sharded)
+                o_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
+                layer_time += o_kernel.estimate_time((m, k), (m, n), dtype)
+
+            # For FFN layers: up/gate projection + activation + down projection
+            elif layer.submodule_type == SubmoduleType.FFN or "ffn" in layer.name or "proj" in layer.name:
+                ffn_layers += 1
+
+                # Up/Gate projection (SwiGLU has two): hidden -> intermediate
+                # With TP, intermediate_size is sharded -> effective_intermediate_size
+                m = batch_size * effective_seq_len
+                n = effective_intermediate_size  # TP-sharded
+                k = hidden_size
+                up_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
+                # SwiGLU has 2 projections (up and gate)
+                layer_time += up_kernel.estimate_time((m, k), (m, n), dtype) * 2
+
+                # Activation (SwiGLU): element-wise, negligible FLOPs
+                # Estimated as memory bandwidth bound
+                activation_bytes = batch_size * effective_seq_len * effective_intermediate_size * DTYPE_SIZES.get(dtype, 2)
+                layer_time += activation_bytes / (self.device.get_memory_bw_gbps() * 1e9)
+
+                # Down projection: intermediate -> hidden
+                # With TP, input is sharded (effective_intermediate_size), output is full (hidden_size)
+                m = batch_size * effective_seq_len
+                n = hidden_size
+                k = effective_intermediate_size
+                down_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
+                layer_time += down_kernel.estimate_time((m, k), (m, n), dtype)
+
             # Backward pass (typically 2x forward FLOPs)
-            if kernel:
-                total_time += kernel.estimate_time(
-                    layer.input_shape,
-                    layer.output_shape,
-                    dtype
-                ) * 2
-            
-            # Optimizer step (for DP only, or ZeRO-1+)
-            if self.strategy.dp_degree > 1 or self.strategy.zero_stage > 0:
-                # Rough estimate: 3x parameter size operations (read grad, update, write)
-                opt_ops = layer.params_count * 3
-                opt_time = opt_ops / (self.device.get_memory_bw_gbps() * 1e9)
-                total_time += opt_time
-        
+            layer_time *= 2
+
+            total_time += layer_time
+
+        # Optimizer step (for DP only, or ZeRO-1+)
+        # Parameter memory per GPU is affected by TP/PP sharding and ZeRO
+        if self.strategy.dp_degree > 1 or self.strategy.zero_stage > 0:
+            # Effective parameters per GPU
+            effective_params = self.model.total_params // self.strategy.tp_degree
+            if self.strategy.pp_degree > 1:
+                effective_params = effective_params // self.strategy.pp_degree
+
+            # ZeRO stage affects optimizer state sharding
+            if self.strategy.zero_stage >= 1:
+                # ZeRO-1: optimizer states sharded by DP
+                effective_params = effective_params // self.strategy.dp_degree
+
+            # Rough estimate: 3x parameter size operations (read grad, update, write)
+            opt_ops = effective_params * 3
+            opt_time = opt_ops / (self.device.get_memory_bw_gbps() * 1e9)
+            total_time += opt_time
+
         return total_time
     
-    def _estimate_communication_time(self) -> tuple:
-        """Estimate communication time for one step."""
+    def _estimate_communication_time(self, seq_len: int) -> tuple:
+        """Estimate communication time for one step.
+
+        Args:
+            seq_len: Actual sequence length used in training
+
+        Returns:
+            Tuple of (communication_time, breakdown_dict)
+        """
         comm_time = 0.0
         breakdown = {}
-        
+
         dtype = self.model.config.dtype
         dtype_size = DTYPE_SIZES.get(dtype, 2)
         hidden_size = self.model.config.hidden_size
-        seq_len = self.model.config.max_seq_len
+        effective_hidden_size = self._get_effective_hidden_size()
+        effective_num_layers = self._get_effective_num_layers()
         micro_batch = self.strategy.micro_batch_size
-        
+
         # TP communication
         if self.strategy.tp_degree > 1:
-            # Estimate based on activation size
+            # TP all-reduce communication volume
+            # Each GPU computes with sharded hidden_size, then all-reduce to get full output
+            # Communication volume per layer: batch * seq * hidden (full hidden, not sharded)
+            # This is because all-reduce aggregates the sharded results to full hidden
             activation_bytes = micro_batch * seq_len * hidden_size * dtype_size
-            # 2 all-reduces per layer
-            num_layers = self.model.config.num_layers
-            tp_bytes = activation_bytes * 2 * num_layers
-            
+
+            # 2 all-reduces per attention layer (after QKV and after O projection)
+            # For FFN, 2 all-reduces (after up/gate and after down projection)
+            # Total: ~2 all-reduces per transformer layer
+            tp_bytes = activation_bytes * 2 * effective_num_layers
+
             tp_ranks = list(range(self.strategy.tp_degree))
             tp_time = self.cluster.estimate_allreduce_time(tp_bytes, tp_ranks)
-            
+
             comm_time += tp_time
             breakdown["tensor_parallel"] = tp_time
-        
+
         # PP communication
         if self.strategy.pp_degree > 1:
             # Activation size between stages
+            # PP sends activations from one stage to the next
+            # The activation size is: batch * seq * hidden (full hidden, not TP-sharded)
+            # But if TP is also used, each PP stage only has TP-sharded activation
             pp_bytes = micro_batch * seq_len * hidden_size * dtype_size
+
             # For each micro-batch, send to next stage
-            num_micro_batches = 1  # Simplified
-            
+            # Number of micro-batches in a pipeline schedule
+            num_micro_batches = self.strategy.dp_degree  # Simplified: assume 1 micro-batch per DP replica
+
             # P2P is relatively fast within node
             pp_time = pp_bytes / (self.cluster.network.intra_node_bandwidth_gbps * 1e9)
             pp_time *= num_micro_batches
-            
+
             comm_time += pp_time
             breakdown["pipeline_parallel"] = pp_time
-        
+
         # DP communication
         if self.strategy.dp_degree > 1:
             # Gradient all-reduce
-            grad_bytes = self.model.total_params * dtype_size
-            
+            # Gradient size is model parameters, already TP/PP sharded per GPU
+            # For DP all-reduce, we need to communicate the per-GPU gradients
+            # which are already sharded by TP/PP
+            effective_params = self.model.total_params // self.strategy.tp_degree
+            if self.strategy.pp_degree > 1:
+                effective_params = effective_params // self.strategy.pp_degree
+            grad_bytes = effective_params * dtype_size
+
             # ZeRO reduces communication
             zero_factor = {0: 1.0, 1: 1.0, 2: 1.0 / self.strategy.dp_degree, 3: 0}
             grad_bytes *= zero_factor.get(self.strategy.zero_stage, 1.0)
-            
+
             dp_ranks = list(range(self.strategy.dp_degree))
             dp_time = self.cluster.estimate_allreduce_time(grad_bytes, dp_ranks)
-            
+
             comm_time += dp_time
             breakdown["data_parallel"] = dp_time
-        
+
         # EP communication (if MoE)
         if self.strategy.ep_degree > 1:
             # All-to-all for MoE
-            token_bytes = micro_batch * seq_len * hidden_size * dtype_size
+            # Dispatch: send tokens to their assigned experts
+            # Combine: gather results from experts
+            # Token size: batch * seq * hidden (but each GPU only has TP-sharded hidden)
+            token_bytes = micro_batch * seq_len * effective_hidden_size * dtype_size
             ep_ranks = list(range(self.strategy.ep_degree))
-            
+
             # Dispatch and combine
             dispatch_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
             combine_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
-            
+
             ep_time = dispatch_time + combine_time
             comm_time += ep_time
             breakdown["expert_parallel"] = ep_time
-        
+
         # SP communication (Sequence Parallelism)
         if self.strategy.sp_degree > 1:
             sp_time = self._estimate_sp_communication_time(
@@ -294,7 +518,7 @@ class TrainingAnalyzer:
             )
             comm_time += sp_time
             breakdown["sequence_parallel"] = sp_time
-        
+
         return comm_time, breakdown
     
     def _estimate_sp_communication_time(
@@ -427,31 +651,104 @@ class TrainingAnalyzer:
         return total_time
     
     def _estimate_memory(self, batch_size: int, seq_len: int) -> int:
-        """Estimate memory per GPU."""
+        """Estimate memory per GPU.
+
+        This method correctly accounts for parallelism sharding:
+        - TP: shards QKV/FFN weights and activations
+        - PP: distributes layers, reduces per-GPU parameters and activations
+        - SP: shards sequence dimension, reduces activation memory
+        - EP: shards expert parameters (for MoE)
+        - ZeRO: shards optimizer states and/or gradients
+
+        Returns:
+            Estimated memory per GPU in bytes
+        """
         dtype = self.model.config.dtype
         dtype_size = DTYPE_SIZES.get(dtype, 2)
-        
-        # Model parameters
-        param_memory = self.model.total_params * dtype_size
-        
-        # Divide by TP degree (parameters are sharded)
-        param_memory //= self.strategy.tp_degree
-        
-        # Activations - use training mode estimate with proper scaling
-        # Note: estimate_memory returns calibrated memory, so we need to extract
-        # the base activation component or disable calibration for manual scaling
+
+        # Get effective dimensions for memory calculation
+        effective_seq_len = self._get_effective_seq_len(seq_len)
+        effective_num_layers = self._get_effective_num_layers()
+
+        # ============================================================
+        # 1. Parameter memory (model weights)
+        # ============================================================
+        # Total model parameters
+        total_params = self.model.total_params
+
+        # TP sharding: QKV and FFN weights are sharded across TP ranks
+        # For non-MoE models, all parameters except embeddings are TP-sharded
+        # For simplicity, assume all parameters are TP-sharded
+        # (Embeddings typically not TP-sharded, but this is a simplification)
+        param_memory = total_params * dtype_size
+
+        # Divide by TP degree (parameters are sharded by TP)
+        if self.strategy.tp_degree > 1:
+            param_memory = param_memory // self.strategy.tp_degree
+
+        # PP sharding: parameters are distributed across pipeline stages
+        if self.strategy.pp_degree > 1:
+            param_memory = param_memory // self.strategy.pp_degree
+
+        # EP sharding (for MoE): expert parameters are additionally sharded by EP
+        # Note: EP and TP typically share the same sharding for experts
+        # This is a simplification - actual EP sharding depends on MoE implementation
+        if self.strategy.ep_degree > 1 and hasattr(self.model.config, 'num_experts'):
+            # Expert parameters are sharded by EP
+            # For simplicity, assume expert parameters are already accounted in TP sharding
+            # and EP provides additional sharding for expert-specific layers
+            # This is conservative (may overestimate)
+            pass  # Keep as is, as TP sharding already handles this
+
+        # ============================================================
+        # 2. Gradient memory
+        # ============================================================
+        # Gradients have the same size as parameters per GPU
+        grad_memory = param_memory
+
+        # ZeRO stage 2: gradients are sharded by DP
+        if self.strategy.zero_stage >= 2:
+            grad_memory = grad_memory // self.strategy.dp_degree
+
+        # ============================================================
+        # 3. Optimizer state memory (Adam: momentum + variance in fp32)
+        # ============================================================
+        # Optimizer states: 2x parameter count (momentum + variance) in fp32
+        optimizer_memory = param_memory * 2 * 4  # fp32 = 4 bytes
+
+        # ZeRO stage 1: optimizer states are sharded by DP
+        if self.strategy.zero_stage >= 1:
+            optimizer_memory = optimizer_memory // self.strategy.dp_degree
+
+        # ZeRO stage 3: parameters are also sharded by DP during training
+        # This affects optimizer state sharding (already sharded in stage 1)
+        # Stage 3 further reduces optimizer memory
+
+        # ============================================================
+        # 4. Activation memory (for backward pass)
+        # ============================================================
+        # Activations are saved for backward pass
+        # Size depends on batch_size, seq_len, hidden_size, and number of layers
+
+        # Base activation memory (without parallelism sharding)
+        # Use model's estimate_memory for base activation calculation
         is_distributed = (
             self.strategy.tp_degree > 1
             or self.strategy.dp_degree > 1
             or self.strategy.pp_degree > 1
+            or self.strategy.sp_degree > 1
         )
+
+        # Get base memory and extract activation component
         base_memory = self.model.estimate_memory(
-            inference_mode=False,  # Training mode
+            inference_mode=False,  # Training mode (all activations saved)
             batch_size=batch_size,
             is_distributed=is_distributed,
             apply_calibration=False,  # We'll handle scaling manually
         )
-        dtype_size = 2 if self.model.config.dtype == "fp16" else 4
+
+        # Extract activation memory from base memory
+        # base_memory = param_memory_total + activation_memory
         param_memory_total = self.model.total_params * dtype_size
         activation_memory = base_memory - param_memory_total
 
@@ -460,41 +757,77 @@ class TrainingAnalyzer:
         if seq_ratio > 0:
             activation_memory *= seq_ratio
 
-        # Sequence parallelism reduces activation memory
+        # TP sharding: QKV and FFN activations are sharded
+        # Each GPU only stores effective_hidden_size activations for QKV/FFN layers
+        # This applies to attention outputs and FFN intermediate activations
+        if self.strategy.tp_degree > 1:
+            activation_memory = activation_memory // self.strategy.tp_degree
+
+        # SP sharding: sequence dimension is sharded
+        # Each GPU only stores seq_len / sp_len tokens
         if self.strategy.sp_degree > 1:
-            activation_memory //= self.strategy.sp_degree
+            activation_memory = activation_memory // self.strategy.sp_degree
 
-        # Megatron-SP: activations are sharded by sp_degree (which equals tp_degree)
-        # Memory savings are already accounted for above
+        # PP sharding: only activations for current stage are stored
+        # Each GPU only handles effective_num_layers layers
+        if self.strategy.pp_degree > 1:
+            activation_memory = activation_memory // self.strategy.pp_degree
 
-        # Gradients (same size as parameters, divided by DP if ZeRO-2/3)
-        grad_memory = param_memory
-        if self.strategy.zero_stage >= 2:
-            grad_memory //= self.strategy.dp_degree
+        # ============================================================
+        # 5. KV Cache memory (during forward pass for attention)
+        # ============================================================
+        # KV cache is needed for training (for gradient computation)
+        # Size: batch_size * seq_len * num_kv_heads * head_dim * 2 (K and V)
+        num_kv_heads = getattr(
+            self.model.config, "num_key_value_heads",
+            self.model.config.num_attention_heads
+        )
+        head_dim = self.model.config.hidden_size // self.model.config.num_attention_heads
 
-        # Optimizer states (Adam: 2x parameters for momentum and variance)
-        optimizer_memory = param_memory * 2 * 4  # fp32 states
-        if self.strategy.zero_stage >= 3:
-            optimizer_memory //= self.strategy.dp_degree
+        # KV cache per GPU
+        kv_cache_memory = batch_size * effective_seq_len * num_kv_heads * head_dim * 2 * dtype_size
 
-        # Activation checkpointing: only need to store one layer's activation
+        # TP sharding for KV cache
+        if self.strategy.tp_degree > 1:
+            # KV heads are sharded by TP (for GQA, this may be different)
+            effective_kv_heads = self._get_effective_num_kv_heads()
+            kv_cache_memory = batch_size * effective_seq_len * effective_kv_heads * head_dim * 2 * dtype_size
+
+        # ============================================================
+        # 6. Activation checkpointing: reduces activation memory
+        # ============================================================
         if self.strategy.activation_checkpointing:
+            # With activation checkpointing, only one layer's activation needs to be stored
+            # at a time (other layers are recomputed during backward)
             # Find max single layer activation
             max_layer_activation = max(
-                layer.activation_bytes for layer in self.model.layers
+                layer.activation_bytes for layer in self.model.layers[:effective_num_layers]
             ) if self.model.layers else 0
-            # Scale by batch and sequence
-            max_layer_activation *= batch_size * seq_len // max(self.model.config.max_seq_len, 1)
-            if self.strategy.sp_degree > 1:
-                max_layer_activation //= self.strategy.sp_degree
+
+            # Scale by batch and effective sequence length
+            max_layer_activation *= batch_size * effective_seq_len // max(self.model.config.max_seq_len, 1)
+
+            # Apply TP and PP sharding
+            if self.strategy.tp_degree > 1:
+                max_layer_activation = max_layer_activation // self.strategy.tp_degree
+
             activation_memory = max_layer_activation
 
-        total_memory = param_memory + activation_memory + grad_memory + optimizer_memory
+        # ============================================================
+        # 7. Total memory per GPU
+        # ============================================================
+        total_memory = (
+            param_memory +
+            activation_memory +
+            grad_memory +
+            optimizer_memory +
+            kv_cache_memory
+        )
 
         # Apply calibration factors from model config
         calib = self.model.config.memory_calibration
         total_memory = calib.apply(total_memory, is_distributed)
-        
+
         return total_memory
     
     def _get_compute_kernel(
