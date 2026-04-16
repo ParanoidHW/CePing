@@ -347,6 +347,57 @@ class CommKernelRegistry:
         kernels.append(ring_kernel)
         return kernels
 
+    def create_sp_megatron(
+        self,
+        layer_name: str,
+        activation_bytes: int,
+        sp_ranks: List[int],
+    ) -> List[CommKernel]:
+        """
+        Create Megatron-SP kernels.
+
+        Megatron-SP is Megatron-LM's sequence parallelism scheme that tightly
+        integrates with Tensor Parallelism. It replaces TP's AllReduce with
+        ReduceScatter + AllGather, saving activation memory by sharding
+        activations across SP degree.
+
+        Communication pattern:
+        - ReduceScatter before attention/MLP (reduces activations across SP)
+        - AllGather after attention/MLP (gathers full sequence)
+
+        Communication volume per layer: 2 * activation_bytes (same as TP AllReduce)
+
+        Reference: Megatron-LM paper (arXiv:1909.08053)
+
+        Args:
+            layer_name: Name of the layer
+            activation_bytes: Activation size in bytes
+            sp_ranks: List of SP participating ranks (must equal TP ranks)
+
+        Returns:
+            List of CommKernels: [ReduceScatter, AllGather]
+        """
+        kernels = []
+
+        # ReduceScatter kernel
+        rs_name = f"sp_megatron_rs_{layer_name}"
+        rs_config = KernelConfig(
+            name=rs_name,
+            kernel_type=KernelType.COMMUNICATION,
+        )
+        rs_kernel = CommKernel(
+            rs_config, self.cluster, "reduce_scatter", activation_bytes, sp_ranks
+        )
+        self._kernels[rs_name] = rs_kernel
+        kernels.append(rs_kernel)
+
+        # AllGather kernel
+        ag_name = f"sp_megatron_ag_{layer_name}"
+        ag_kernel = self.create_allgather(ag_name, activation_bytes, sp_ranks)
+        kernels.append(ag_kernel)
+
+        return kernels
+
     def create_pp_p2p(
         self,
         stage: int,

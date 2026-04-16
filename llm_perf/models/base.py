@@ -2,7 +2,19 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional, List, Dict, Any
+
+
+class SubmoduleType(str, Enum):
+    """Submodule type for transformer components."""
+    EMBEDDING = "embedding"
+    ATTENTION = "attention"
+    FFN = "ffn"
+    NORM = "norm"
+    LM_HEAD = "lm_head"
+    MOE = "moe"
+    OTHER = "other"
 
 
 @dataclass
@@ -15,6 +27,7 @@ class LayerConfig:
     flops: int  # FLOPs for forward pass
     activation_bytes: int  # Activation memory in bytes
     is_moe: bool = False  # Whether this is an MoE layer
+    submodule_type: SubmoduleType = SubmoduleType.OTHER  # Submodule type for transformer components
 
 
 @dataclass
@@ -328,6 +341,7 @@ class BaseModel(ABC):
                     "flops": layer.flops,
                     "activation_bytes": layer.activation_bytes,
                     "is_moe": layer.is_moe,
+                    "submodule_type": layer.submodule_type.value,
                 }
                 for layer in self._layers
             ]

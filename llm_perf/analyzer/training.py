@@ -365,15 +365,15 @@ class TrainingAnalyzer:
                 while ulysses_degree * ring_degree != sp_degree and ring_degree > 1:
                     ulysses_degree -= 1
                     ring_degree = sp_degree // ulysses_degree
-            
+
             ulysses_ranks = list(range(ulysses_degree))
             ring_ranks = list(range(ring_degree))
-            
+
             # Ulysses part: 4 all-to-all (Q/K/V pre + O post)
             ulysses_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, ulysses_ranks
             ) * 4 * num_layers
-            
+
             # Ring part
             ring_kv_bytes = (
                 batch_size * (seq_len // sp_degree) *
@@ -396,9 +396,22 @@ class TrainingAnalyzer:
                 ring_time = ring_step_time * (ring_degree - 1) * num_layers
             else:
                 ring_time = 0.0
-                
+
             total_time = ulysses_time + ring_time
-        
+
+        elif sp_type == SPType.MEGATRON:
+            # Megatron-SP: ReduceScatter + AllGather per layer
+            # Communication volume: 2 * activation_bytes per layer (same as TP AllReduce)
+            # But memory is sharded by sp_degree
+            rs_time = self.cluster.estimate_reducescatter_time(
+                activation_bytes, sp_ranks
+            )
+            ag_time = self.cluster.estimate_allgather_time(
+                activation_bytes, sp_ranks
+            )
+            # 2 communication ops per layer (forward pass)
+            total_time = (rs_time + ag_time) * 2 * num_layers
+
         return total_time
     
     def _estimate_memory(self, batch_size: int, seq_len: int) -> int:
@@ -438,6 +451,9 @@ class TrainingAnalyzer:
         # Sequence parallelism reduces activation memory
         if self.strategy.sp_degree > 1:
             activation_memory //= self.strategy.sp_degree
+
+        # Megatron-SP: activations are sharded by sp_degree (which equals tp_degree)
+        # Memory savings are already accounted for above
 
         # Gradients (same size as parameters, divided by DP if ZeRO-2/3)
         grad_memory = param_memory

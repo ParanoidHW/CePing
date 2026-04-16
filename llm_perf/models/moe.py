@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import List
 
-from .base import BaseModel, LayerConfig
+from .base import BaseModel, LayerConfig, SubmoduleType
 from .llama import LlamaConfig
 from ..utils.constants import DTYPE_SIZES
 from ..kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding, softmax
@@ -46,7 +46,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="embedding",
-            result=emb_result))
+            result=emb_result,
+            submodule_type=SubmoduleType.EMBEDDING))
         
         # Build each transformer layer (alternating dense and MoE)
         for i in range(cfg.num_layers):
@@ -64,7 +65,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="final_norm",
-            result=final_norm_result))
+            result=final_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         # LM head using linear kernel
         lm_head_result = linear(
@@ -75,7 +77,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="lm_head",
-            result=lm_head_result))
+            result=lm_head_result,
+            submodule_type=SubmoduleType.LM_HEAD))
         
         return layers
     
@@ -125,7 +128,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
-            result=input_norm_result))
+            result=input_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         # Q, K, V projections using linear kernel
         for proj_name, out_dim, is_q in [
@@ -141,7 +145,8 @@ class MoEModel(BaseModel):
             )
             layers.append(kernel_result_to_layer(
                 name=f"{prefix}_{proj_name}",
-                result=proj_result))
+                result=proj_result,
+                submodule_type=SubmoduleType.ATTENTION))
         
         # Attention computation using scaled_dot_product_attention kernel
         attn_result = scaled_dot_product_attention(
@@ -153,7 +158,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attention",
-            result=attn_result))
+            result=attn_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # O projection using linear kernel
         o_result = linear(
@@ -164,7 +170,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
-            result=o_result))
+            result=o_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # Post-attention RMSNorm
         attn_norm_result = rms_norm(
@@ -174,7 +181,8 @@ class MoEModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
-            result=attn_norm_result))
+            result=attn_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         # === MoE Components ===
         # Router / Gate using linear kernel
@@ -194,7 +202,8 @@ class MoEModel(BaseModel):
         router_layer = kernel_result_to_layer(
             name=f"{prefix}_router",
             result=router_linear_result,
-            is_moe=True)
+            is_moe=True,
+            submodule_type=SubmoduleType.MOE)
         router_layer.flops = router_linear_result.flops + router_softmax_result.flops
         layers.append(router_layer)
         
@@ -210,7 +219,8 @@ class MoEModel(BaseModel):
         )
         expert_up_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_up",
-            result=expert_up_result)
+            result=expert_up_result,
+            submodule_type=SubmoduleType.MOE)
         expert_up_layer.flops = int(expert_up_result.flops * cfg.num_experts_per_token)
         layers.append(expert_up_layer)
         
@@ -223,7 +233,8 @@ class MoEModel(BaseModel):
         )
         expert_gate_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_gate",
-            result=expert_gate_result)
+            result=expert_gate_result,
+            submodule_type=SubmoduleType.MOE)
         expert_gate_layer.flops = int(expert_gate_result.flops * cfg.num_experts_per_token)
         layers.append(expert_gate_layer)
         
@@ -234,7 +245,8 @@ class MoEModel(BaseModel):
         )
         swiglu_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_swiglu",
-            result=swiglu_result)
+            result=swiglu_result,
+            submodule_type=SubmoduleType.MOE)
         swiglu_layer.flops = int(swiglu_result.flops * cfg.num_experts_per_token)
         layers.append(swiglu_layer)
         
@@ -247,7 +259,8 @@ class MoEModel(BaseModel):
         )
         expert_down_layer = kernel_result_to_layer(
             name=f"{prefix}_expert_down",
-            result=expert_down_result)
+            result=expert_down_result,
+            submodule_type=SubmoduleType.MOE)
         expert_down_layer.flops = int(expert_down_result.flops * cfg.num_experts_per_token)
         layers.append(expert_down_layer)
         
@@ -261,6 +274,7 @@ class MoEModel(BaseModel):
             flops=0,
             activation_bytes=seq_len * cfg.hidden_size * dtype_size * cfg.num_experts_per_token,
             is_moe=True,
+            submodule_type=SubmoduleType.MOE,
         ))
         
         # NOTE: Manual calculation for communication layer (alltoall)
@@ -272,6 +286,7 @@ class MoEModel(BaseModel):
             flops=0,
             activation_bytes=seq_len * cfg.hidden_size * dtype_size,
             is_moe=True,
+            submodule_type=SubmoduleType.MOE,
         ))
         
         # MoE norm/residual using rms_norm kernel
@@ -282,7 +297,8 @@ class MoEModel(BaseModel):
         )
         moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
-            result=moe_norm_result)
+            result=moe_norm_result,
+            submodule_type=SubmoduleType.NORM)
         layers.append(moe_norm_layer)
         
         return layers

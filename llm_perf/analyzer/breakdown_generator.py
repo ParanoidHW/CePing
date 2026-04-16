@@ -206,21 +206,26 @@ class BreakdownGenerator:
         groups: Dict[str, List[int]] = {}
 
         for idx, layer in enumerate(self.model.layers):
-            layer_name = layer.name.lower()
-
-            # Classify layer by name
-            if "embed" in layer_name:
-                block_type = "embedding"
-            elif "attn" in layer_name or "attention" in layer_name:
-                block_type = "attention"
-            elif "mlp" in layer_name or "ffn" in layer_name or "proj" in layer_name:
-                block_type = "ffn"
-            elif "norm" in layer_name:
-                block_type = "norm"
-            elif "router" in layer_name or "expert" in layer_name:
-                block_type = "moe"
+            # Use submodule_type if available (preferred)
+            if hasattr(layer, 'submodule_type') and layer.submodule_type:
+                block_type = layer.submodule_type.value
             else:
-                block_type = "other"
+                # Fallback to name-based classification
+                layer_name = layer.name.lower()
+
+                # Classify layer by name
+                if "embed" in layer_name:
+                    block_type = "embedding"
+                elif "attn" in layer_name or "attention" in layer_name:
+                    block_type = "attention"
+                elif "mlp" in layer_name or "ffn" in layer_name or "proj" in layer_name:
+                    block_type = "ffn"
+                elif "norm" in layer_name:
+                    block_type = "norm"
+                elif "router" in layer_name or "expert" in layer_name:
+                    block_type = "moe"
+                else:
+                    block_type = "other"
 
             if block_type not in groups:
                 groups[block_type] = []

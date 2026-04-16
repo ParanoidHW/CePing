@@ -77,6 +77,22 @@ class TestSPCommKernels(unittest.TestCase):
         self.assertEqual(kernels[0].name, "sp_ulysses_alltoall_layer0")
         self.assertEqual(kernels[1].name, "sp_ring_allgather_layer0")
 
+    def test_create_megatron_sp(self):
+        """Test Megatron-SP kernel creation."""
+        kernels = self.registry.create_sp_megatron(
+            "layer0", 1024, [0, 1, 2, 3]
+        )
+        self.assertEqual(len(kernels), 2)
+        self.assertEqual(kernels[0].name, "sp_megatron_rs_layer0")
+        self.assertEqual(kernels[0].collective_type, "reduce_scatter")
+        self.assertEqual(kernels[1].name, "sp_megatron_ag_layer0")
+        self.assertEqual(kernels[1].collective_type, "allgather")
+        # Check time estimation
+        time = kernels[0].estimate_time()
+        self.assertGreaterEqual(time, 0.0)
+        time = kernels[1].estimate_time()
+        self.assertGreaterEqual(time, 0.0)
+
 
 class TestSPTrainingAnalyzer(unittest.TestCase):
     """Test SP communication estimation in training analyzer."""
@@ -147,6 +163,21 @@ class TestSPTrainingAnalyzer(unittest.TestCase):
         result = analyzer.analyze(batch_size=8, seq_len=4096)
         self.assertGreater(result.tokens_per_sec, 0)
         self.assertGreater(result.memory_per_gpu_gb, 0)
+
+    def test_megatron_training(self):
+        """Test Megatron-SP training analysis."""
+        result = self._run_with_sp_type(SPType.MEGATRON, 4)
+        self.assertGreater(result.tokens_per_sec, 0)
+        self.assertGreater(result.memory_per_gpu_gb, 0)
+
+    def test_megatron_memory_reduction(self):
+        """Test that Megatron-SP reduces activation memory by sp_degree."""
+        result_sp = self._run_with_sp_type(SPType.MEGATRON, 4)
+        result_no_sp = self._run_with_sp_type(SPType.MEGATRON, 1)
+        self.assertLess(
+            result_sp.memory_per_gpu_gb,
+            result_no_sp.memory_per_gpu_gb,
+        )
 
     def test_sp_memory_reduction(self):
         """Test that SP reduces activation memory."""
@@ -236,6 +267,12 @@ class TestSPInferenceAnalyzer(unittest.TestCase):
         self.assertGreater(result.prefill_time_sec, 0)
         self.assertGreater(result.decode_tokens_per_sec, 0)
 
+    def test_megatron_inference(self):
+        """Test Megatron-SP inference analysis."""
+        result = self._run_inference_with_sp(SPType.MEGATRON, 4)
+        self.assertGreater(result.prefill_time_sec, 0)
+        self.assertGreater(result.decode_tokens_per_sec, 0)
+
 
 class TestStrategyConfigSP(unittest.TestCase):
     """Test StrategyConfig SP serialization."""
@@ -264,6 +301,18 @@ class TestStrategyConfigSP(unittest.TestCase):
         self.assertEqual(config.sp_type, SPType.ULYSSES)
         self.assertEqual(config.ulysses_degree, 1)
         self.assertEqual(config.ring_degree, 1)
+
+    def test_megatron_sp_type_serialization(self):
+        """Test Megatron SP type round-trip through dict."""
+        config = StrategyConfig(
+            sp_degree=8,
+            sp_type=SPType.MEGATRON,
+        )
+        data = config.to_dict()
+        self.assertEqual(data["sequence_parallelism"]["sp_type"], "megatron")
+
+        restored = StrategyConfig.from_dict(data)
+        self.assertEqual(restored.sp_type, SPType.MEGATRON)
 
 
 if __name__ == "__main__":

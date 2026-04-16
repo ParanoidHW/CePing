@@ -21,6 +21,7 @@ class SPType(Enum):
     RING_P2P = "ring_p2p"
     RING_ALLGATHER = "ring_allgather"
     UNIFIED_2D = "unified_2d"
+    MEGATRON = "megatron"
 
 
 @dataclass

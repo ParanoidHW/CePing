@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import List
 
-from .base import BaseModel, ModelConfig, LayerConfig
+from .base import BaseModel, ModelConfig, LayerConfig, SubmoduleType
 from ..utils.constants import DTYPE_SIZES
 from ..kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding
 from ..kernels.utils import kernel_result_to_layer
@@ -43,7 +43,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="embedding",
-            result=emb_result))
+            result=emb_result,
+            submodule_type=SubmoduleType.EMBEDDING))
         
         # Build each transformer layer
         for i in range(cfg.num_layers):
@@ -57,7 +58,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="final_norm",
-            result=final_norm_result))
+            result=final_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         # LM head using linear kernel
         lm_head_result = linear(
@@ -68,7 +70,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name="lm_head",
-            result=lm_head_result))
+            result=lm_head_result,
+            submodule_type=SubmoduleType.LM_HEAD))
         
         return layers
     
@@ -93,7 +96,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
-            result=input_norm_result))
+            result=input_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         # Q projection using linear kernel
         q_result = linear(
@@ -104,7 +108,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_q_proj",
-            result=q_result))
+            result=q_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # K projection using linear kernel
         k_result = linear(
@@ -115,7 +120,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_k_proj",
-            result=k_result))
+            result=k_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # V projection using linear kernel
         v_result = linear(
@@ -126,7 +132,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_v_proj",
-            result=v_result))
+            result=v_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # Attention computation using scaled_dot_product_attention kernel
         attn_result = scaled_dot_product_attention(
@@ -138,7 +145,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attention",
-            result=attn_result))
+            result=attn_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # O projection using linear kernel
         o_result = linear(
@@ -149,7 +157,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_o_proj",
-            result=o_result))
+            result=o_result,
+            submodule_type=SubmoduleType.ATTENTION))
         
         # Post-attention RMSNorm
         attn_norm_result = rms_norm(
@@ -159,7 +168,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
-            result=attn_norm_result))
+            result=attn_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         # === FFN Components ===
         # Llama uses SwiGLU: up_proj, gate_proj, down_proj
@@ -174,7 +184,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_up_proj",
-            result=up_result))
+            result=up_result,
+            submodule_type=SubmoduleType.FFN))
         
         # Gate projection using linear kernel
         gate_result = linear(
@@ -185,7 +196,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_gate_proj",
-            result=gate_result))
+            result=gate_result,
+            submodule_type=SubmoduleType.FFN))
         
         # SwiGLU activation using silu kernel (x * sigmoid(x))
         swiglu_result = silu(
@@ -194,7 +206,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_swiglu",
-            result=swiglu_result))
+            result=swiglu_result,
+            submodule_type=SubmoduleType.FFN))
         
         # Down projection using linear kernel
         down_result = linear(
@@ -205,7 +218,8 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_down_proj",
-            result=down_result))
+            result=down_result,
+            submodule_type=SubmoduleType.FFN))
         
         # Post-FFN RMSNorm
         ffn_norm_result = rms_norm(
@@ -215,6 +229,7 @@ class LlamaModel(BaseModel):
         )
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
-            result=ffn_norm_result))
+            result=ffn_norm_result,
+            submodule_type=SubmoduleType.NORM))
         
         return layers

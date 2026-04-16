@@ -349,19 +349,45 @@ class Cluster:
     ) -> float:
         """
         Estimate all-gather communication time with topology awareness.
-        
+
         Args:
             num_bytes: Size of data per rank (output will be n * num_bytes)
             participating_ranks: List of participating ranks
-        
+
         Returns:
             Estimated time in seconds
         """
         n = len(participating_ranks)
         if n <= 1:
             return 0.0
-        
+
         # All-gather is approximately half of all-reduce in ring algorithm
+        return self.estimate_allreduce_time(num_bytes, participating_ranks) / 2
+
+    def estimate_reducescatter_time(
+        self,
+        num_bytes: int,
+        participating_ranks: List[int],
+    ) -> float:
+        """
+        Estimate reduce-scatter communication time with topology awareness.
+
+        Reduce-scatter is equivalent to all-gather in reverse, with similar
+        communication complexity. In ring algorithm, it's approximately
+        half of all-reduce.
+
+        Args:
+            num_bytes: Size of data per rank (output will be num_bytes / n)
+            participating_ranks: List of participating ranks
+
+        Returns:
+            Estimated time in seconds
+        """
+        n = len(participating_ranks)
+        if n <= 1:
+            return 0.0
+
+        # Reduce-scatter is approximately half of all-reduce
         return self.estimate_allreduce_time(num_bytes, participating_ranks) / 2
     
     def estimate_alltoall_time(

@@ -240,6 +240,19 @@ class BaseAnalyzer(ABC):
 
             total_time = ulysses_time + ring_time
 
+        elif sp_type == SPType.MEGATRON:
+            # Megatron-SP: ReduceScatter + AllGather per layer
+            # Communication volume: 2 * activation_bytes per layer (same as TP AllReduce)
+            # But memory is sharded by sp_degree
+            rs_time = self.cluster.estimate_reducescatter_time(
+                activation_bytes, sp_ranks
+            )
+            ag_time = self.cluster.estimate_allgather_time(
+                activation_bytes, sp_ranks
+            )
+            # 2 communication ops per layer (forward pass)
+            total_time = (rs_time + ag_time) * 2 * num_layers
+
         return total_time
 
     def _get_average_bandwidth(self, ranks: list) -> float:

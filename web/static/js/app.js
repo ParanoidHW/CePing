@@ -613,14 +613,14 @@ function displayResults(result) {
 
 function renderDetailedBreakdown(detailed) {
     if (!detailed) return '';
-    
+
     // Memory breakdown by type
     const memByType = detailed.memory?.by_type || {};
     const memRows = Object.entries(memByType)
-        .map(([type, gb]) => 
+        .map(([type, gb]) =>
             `<tr><td>${type}</td><td>${gb.toFixed(2)} GB</td></tr>`
         ).join('');
-    
+
     // Memory breakdown by submodel
     const memBySubmodel = detailed.memory?.by_submodel || {};
     const submodelMemRows = Object.entries(memBySubmodel)
@@ -628,14 +628,22 @@ function renderDetailedBreakdown(detailed) {
             const total = Object.values(mems).reduce((a, b) => a + b, 0);
             return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
         }).join('');
-    
+
+    // Memory breakdown by block type (submodule)
+    const memByBlockType = detailed.memory?.by_block_type || {};
+    const blockMemRows = Object.entries(memByBlockType)
+        .map(([blockType, mems]) => {
+            const total = Object.values(mems).reduce((a, b) => a + b, 0);
+            return `<tr><td>${blockType}</td><td>${total.toFixed(2)} GB</td></tr>`;
+        }).join('');
+
     // Communication breakdown
     const commByPara = detailed.communication?.by_parallelism || {};
     const commRows = Object.entries(commByPara)
-        .map(([type, data]) => 
+        .map(([type, data]) =>
             `<tr><td>${type.toUpperCase()}</td><td>${data.total_volume_gb?.toFixed(2) || 0} GB</td><td>${data.total_time_ms?.toFixed(2) || 0} ms</td></tr>`
         ).join('');
-    
+
     // Submodel details
     const submodelDetails = (detailed.submodels || []).map(sm => {
         const memTypes = Object.entries(sm.memory?.by_type || {})
@@ -648,26 +656,32 @@ function renderDetailedBreakdown(detailed) {
             </div>
         `;
     }).join('');
-    
+
     return `
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
         <table class="breakdown-table">
             <tr><th>内存类型</th><th>大小</th></tr>
             ${memRows || '<tr><td colspan="2">无数据</td></tr>'}
         </table>
-        
+
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模块)</h3>
+        <table class="breakdown-table">
+            <tr><th>子模块类型</th><th>总内存</th></tr>
+            ${blockMemRows || '<tr><td colspan="2">无数据</td></tr>'}
+        </table>
+
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>
         <table class="breakdown-table">
             <tr><th>子模型</th><th>总内存</th></tr>
             ${submodelMemRows || '<tr><td colspan="2">无数据</td></tr>'}
         </table>
-        
+
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">通信分解 (按并行方式)</h3>
         <table class="breakdown-table">
             <tr><th>并行类型</th><th>通信量</th><th>时间</th></tr>
             ${commRows || '<tr><td colspan="3">无通信数据</td></tr>'}
         </table>
-        
+
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模型详情</h3>
         ${submodelDetails || '<p>无子模型详情</p>'}
     `;

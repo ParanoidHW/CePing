@@ -3,28 +3,30 @@
 import math
 from typing import Tuple, Optional
 from .functional import KernelResult
-from ..models.base import LayerConfig
+from ..models.base import LayerConfig, SubmoduleType
 
 
 def kernel_result_to_layer(
     name: str,
     result: KernelResult,
     is_moe: bool = False,
+    submodule_type: Optional[SubmoduleType] = None,
 ) -> LayerConfig:
     """Convert KernelResult to LayerConfig with activation from output shape.
-    
+
     Args:
         name: Layer name
         result: KernelResult from functional API (includes params, param_bytes, dtype)
         is_moe: Whether this is an MoE layer
-    
+        submodule_type: Submodule type for transformer components
+
     Returns:
         LayerConfig for the model
     """
     output_numel = math.prod(result.output)
     dtype_size = result.get_dtype_size()
     activation_bytes = output_numel * dtype_size
-    
+
     return LayerConfig(
         name=name,
         input_shape=result.input_shapes[0] if result.input_shapes else result.output,
@@ -33,6 +35,7 @@ def kernel_result_to_layer(
         flops=result.flops,
         activation_bytes=activation_bytes,
         is_moe=is_moe,
+        submodule_type=submodule_type or SubmoduleType.OTHER,
     )
 
 
