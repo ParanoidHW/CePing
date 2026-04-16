@@ -546,11 +546,18 @@ class InferenceAnalyzer:
                 total_time = step_time * (sp_degree - 1) * num_layers
 
         elif sp_type == SPType.RING_ALLGATHER:
-            # 1 allgather per layer for KV aggregation
+            # Ring-AllGather: AllGather for KV aggregation
+            # Forward only for inference:
+            #   - kv_separate_allgather=False: K+V一起传输，1个 AllGather
+            #   - kv_separate_allgather=True: K、V分开传输，2个 AllGather
+            num_forward_ag = 2 if self.strategy.kv_separate_allgather else 1
+
+            kv_bytes_per_block = kv_bytes_per_step
+            allgather_bytes = kv_bytes_per_block * sp_degree
             allgather_time = self.cluster.estimate_allgather_time(
-                kv_bytes_per_step * sp_degree, sp_ranks
+                allgather_bytes, sp_ranks
             )
-            total_time = allgather_time * num_layers
+            total_time = allgather_time * num_forward_ag * num_layers
 
         elif sp_type == SPType.UNIFIED_2D:
             ulysses_degree = self.strategy.ulysses_degree or 1

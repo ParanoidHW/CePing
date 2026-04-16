@@ -300,14 +300,32 @@ class BaseAnalyzer(ABC):
                 total_time = step_time * (sp_degree - 1) * 2 * num_layers
 
         elif sp_type == SPType.RING_ALLGATHER:
-            # Ring-AllGather: 1 allgather per layer for KV aggregation
-            # Forward: 1 allgather to collect KV from all ranks
-            # Backward: 1 allgather to collect gradients
-            # Total: 2 allgather per layer
+            # Ring-AllGather: AllGather for KV aggregation
+            # Forward: 1 or 2 allgather depending on kv_separate_allgather config
+            #   - kv_separate_allgather=False: K+V一起传输，1个 AllGather
+            #   - kv_separate_allgather=True: K、V分开传输，2个 AllGather
+            # Backward: ReduceScatter (AllGather 的逆操作)
+            # Total per layer:
+            #   - kv_separate_allgather=False: 1 AG (forward) + 1 RS (backward) = 2 ops
+            #   - kv_separate_allgather=True: 2 AG (forward) + 2 RS (backward) = 4 ops
+
+            kv_bytes_per_block = kv_bytes_per_step
+
+            num_forward_ag = 2 if self.strategy.kv_separate_allgather else 1
+            num_backward_rs = num_forward_ag
+
+            allgather_bytes = kv_bytes_per_block * sp_degree
             allgather_time = self.cluster.estimate_allgather_time(
-                kv_bytes_per_step * sp_degree, sp_ranks
+                allgather_bytes, sp_ranks
             )
-            total_time = allgather_time * 2 * num_layers
+            reducescatter_time = self.cluster.estimate_reducescatter_time(
+                allgather_bytes, sp_ranks
+            )
+
+            total_time = (
+                allgather_time * num_forward_ag +
+                reducescatter_time * num_backward_rs
+            ) * num_layers
 
         elif sp_type == SPType.UNIFIED_2D:
             ulysses_degree, ring_degree = self._resolve_2d_sp_config(sp_degree)

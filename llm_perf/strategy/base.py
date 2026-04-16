@@ -57,7 +57,10 @@ class StrategyConfig:
     # Scheduling options
     pipeline_schedule: str = "1f1b"  # 1F1B, GPipe, etc.
     micro_batch_size: int = 1
-    
+
+    # Sequence parallelism options
+    kv_separate_allgather: bool = False  # K/V 分开传输时前向需要 2 个 AllGather
+
     # Optimization flags
     activation_checkpointing: bool = False
     sequence_parallel: bool = False
@@ -93,6 +96,7 @@ class StrategyConfig:
                 "sp_type": self.sp_type.value,
                 "ulysses_degree": self.ulysses_degree,
                 "ring_degree": self.ring_degree,
+                "kv_separate_allgather": self.kv_separate_allgather,
             },
             "scheduling": {
                 "pipeline_schedule": self.pipeline_schedule,
@@ -132,6 +136,7 @@ class StrategyConfig:
             sp_type=sp_type,
             ulysses_degree=sp_config.get("ulysses_degree", 1),
             ring_degree=sp_config.get("ring_degree", 1),
+            kv_separate_allgather=sp_config.get("kv_separate_allgather", False),
             pipeline_schedule=scheduling.get("pipeline_schedule", "1f1b"),
             micro_batch_size=scheduling.get("micro_batch_size", 1),
             activation_checkpointing=optimization.get("activation_checkpointing", False),

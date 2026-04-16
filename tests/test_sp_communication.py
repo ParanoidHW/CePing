@@ -146,6 +146,45 @@ class TestSPTrainingAnalyzer(unittest.TestCase):
         self.assertGreater(result.tokens_per_sec, 0)
         self.assertGreater(result.memory_per_gpu_gb, 0)
 
+    def test_ring_allgather_kv_separate(self):
+        """Test Ring-SP allgather with kv_separate_allgather config."""
+        # Without kv_separate_allgather: 1 AG forward + 1 RS backward
+        strategy_combined = StrategyConfig(
+            tp_degree=1,
+            pp_degree=1,
+            dp_degree=1,
+            sp_degree=4,
+            sp_type=SPType.RING_ALLGATHER,
+            kv_separate_allgather=False,  # K+V combined
+        )
+        analyzer_combined = TrainingAnalyzer(
+            self.model, self.device, self.cluster, strategy_combined
+        )
+        result_combined = analyzer_combined.analyze(batch_size=8, seq_len=4096)
+
+        # With kv_separate_allgather: 2 AG forward + 2 RS backward
+        strategy_separate = StrategyConfig(
+            tp_degree=1,
+            pp_degree=1,
+            dp_degree=1,
+            sp_degree=4,
+            sp_type=SPType.RING_ALLGATHER,
+            kv_separate_allgather=True,  # K and V separate
+        )
+        analyzer_separate = TrainingAnalyzer(
+            self.model, self.device, self.cluster, strategy_separate
+        )
+        result_separate = analyzer_separate.analyze(batch_size=8, seq_len=4096)
+
+        # Communication time should be approximately 2x with kv_separate_allgather
+        # (since 4 ops vs 2 ops per layer)
+        # Note: actual ratio may not be exactly 2 due to other factors
+        self.assertGreater(
+            result_separate.breakdown.communication_time_sec,
+            result_combined.breakdown.communication_time_sec,
+            "kv_separate_allgather=True should increase communication time"
+        )
+
     def test_unified_2d_training(self):
         """Test Unified 2D-SP training analysis."""
         strategy = StrategyConfig(
@@ -313,6 +352,27 @@ class TestStrategyConfigSP(unittest.TestCase):
 
         restored = StrategyConfig.from_dict(data)
         self.assertEqual(restored.sp_type, SPType.MEGATRON)
+
+    def test_kv_separate_allgather_config(self):
+        """Test kv_separate_allgather config round-trip."""
+        # Test with kv_separate_allgather=True
+        config = StrategyConfig(
+            sp_degree=4,
+            sp_type=SPType.RING_ALLGATHER,
+            kv_separate_allgather=True,
+        )
+        data = config.to_dict()
+        self.assertTrue(data["sequence_parallelism"]["kv_separate_allgather"])
+
+        restored = StrategyConfig.from_dict(data)
+        self.assertTrue(restored.kv_separate_allgather)
+
+        # Test default (False)
+        config_default = StrategyConfig(
+            sp_degree=4,
+            sp_type=SPType.RING_ALLGATHER,
+        )
+        self.assertFalse(config_default.kv_separate_allgather)
 
 
 if __name__ == "__main__":

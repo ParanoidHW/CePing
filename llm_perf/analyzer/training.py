@@ -645,14 +645,39 @@ class TrainingAnalyzer:
                 total_time = step_time * (sp_degree - 1) * 2 * num_layers
 
         elif sp_type == SPType.RING_ALLGATHER:
-            # Ring-AllGather: 1 allgather per layer for KV aggregation
-            # Forward: 1 allgather to collect KV from all ranks
-            # Backward: 1 allgather to collect gradients
-            # Total: 2 allgather per layer
+            # Ring-AllGather: AllGather for KV aggregation
+            # Forward: 1 or 2 allgather depending on kv_separate_allgather config
+            #   - kv_separate_allgather=False: K+V一起传输，1个 AllGather
+            #   - kv_separate_allgather=True: K、V分开传输，2个 AllGather
+            # Backward: ReduceScatter (AllGather 的逆操作)
+            # Total per layer:
+            #   - kv_separate_allgather=False: 1 AG (forward) + 1 RS (backward) = 2 ops
+            #   - kv_separate_allgather=True: 2 AG (forward) + 2 RS (backward) = 4 ops
+
+            # 每个 KV block 的字节数（分片后的）
+            kv_bytes_per_block = kv_bytes_per_step
+
+            # 根据 kv_separate_allgather 配置确定前向 AllGather 数量
+            num_forward_ag = 2 if self.strategy.kv_separate_allgather else 1
+            num_backward_rs = num_forward_ag  # 反向使用 ReduceScatter，数量与前向 AllGather 相同
+
+            # AllGather 通信量: kv_bytes_per_block * sp_degree（收集所有 ranks 的 KV）
+            allgather_bytes = kv_bytes_per_block * sp_degree
             allgather_time = self.cluster.estimate_allgather_time(
-                kv_bytes_per_step * sp_degree, sp_ranks
+                allgather_bytes, sp_ranks
             )
-            total_time = allgather_time * 2 * num_layers
+
+            # ReduceScatter 通信量: kv_bytes_per_block * sp_degree（与 AllGather 相同）
+            # ReduceScatter 时间约等于 AllReduce / 2，与 AllGather 时间接近
+            reducescatter_time = self.cluster.estimate_reducescatter_time(
+                allgather_bytes, sp_ranks
+            )
+
+            # 总通信时间
+            total_time = (
+                allgather_time * num_forward_ag +
+                reducescatter_time * num_backward_rs
+            ) * num_layers
 
         elif sp_type == SPType.UNIFIED_2D:
             # 2D-SP: ulysses + ring combined
