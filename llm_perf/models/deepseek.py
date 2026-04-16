@@ -170,7 +170,7 @@ class DeepSeekModel(BaseModel):
         for i in range(cfg.num_layers):
             layers.extend(self._build_transformer_layer(i, dtype_size))
         
-        # Final norm using rms_norm kernel
+        # Final norm using rms_norm kernel (merged into LM_HEAD)
         final_norm_result = rms_norm(
             input=(1, 1, cfg.hidden_size),
             dim=-1,
@@ -179,7 +179,7 @@ class DeepSeekModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="final_norm",
             result=final_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.LM_HEAD))
         
         # LM head using linear kernel
         lm_head_result = linear(
@@ -362,7 +362,7 @@ class DeepSeekModel(BaseModel):
             result=o_result,
             submodule_type=SubmoduleType.ATTENTION))
         
-        # Attention norm/residual using rms_norm kernel
+        # Attention norm/residual using rms_norm kernel (merged into ATTENTION)
         attn_norm_result = rms_norm(
             input=(1, 1, cfg.hidden_size),
             dim=-1,
@@ -371,7 +371,7 @@ class DeepSeekModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_attn_norm",
             result=attn_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.ATTENTION))
         
         return layers
     
@@ -437,7 +437,7 @@ class DeepSeekModel(BaseModel):
             result=down_result,
             submodule_type=SubmoduleType.FFN))
         
-        # FFN norm using rms_norm kernel
+        # FFN norm using rms_norm kernel (merged into FFN)
         ffn_norm_result = rms_norm(
             input=(1, 1, cfg.hidden_size),
             dim=-1,
@@ -446,7 +446,7 @@ class DeepSeekModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
             result=ffn_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.FFN))
         
         return layers
     
@@ -626,7 +626,7 @@ class DeepSeekModel(BaseModel):
             submodule_type=SubmoduleType.MOE,
         ))
         
-        # MoE norm/residual using rms_norm kernel
+        # MoE norm/residual using rms_norm kernel (merged into MOE)
         moe_norm_result = rms_norm(
             input=(1, 1, cfg.hidden_size),
             dim=-1,
@@ -635,7 +635,7 @@ class DeepSeekModel(BaseModel):
         moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
             result=moe_norm_result,
-            submodule_type=SubmoduleType.NORM)
+            submodule_type=SubmoduleType.MOE)
         moe_norm_layer.is_moe = True
         layers.append(moe_norm_layer)
         

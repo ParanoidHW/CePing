@@ -57,7 +57,7 @@ class MoEModel(BaseModel):
             else:
                 layers.extend(self._build_dense_layer(i, dtype_size))
         
-        # Final norm using rms_norm kernel
+        # Final norm using rms_norm kernel (merged into LM_HEAD)
         final_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -66,7 +66,7 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="final_norm",
             result=final_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.LM_HEAD))
         
         # LM head using linear kernel
         lm_head_result = linear(
@@ -120,7 +120,7 @@ class MoEModel(BaseModel):
         q_heads = cfg.num_attention_heads
         kv_heads = cfg.num_key_value_heads or cfg.num_attention_heads
         
-        # Pre-attention RMSNorm
+        # Pre-attention RMSNorm (merged into ATTENTION)
         input_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -129,7 +129,7 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
             result=input_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.ATTENTION))
         
         # Q, K, V projections using linear kernel
         for proj_name, out_dim, is_q in [
@@ -173,7 +173,7 @@ class MoEModel(BaseModel):
             result=o_result,
             submodule_type=SubmoduleType.ATTENTION))
         
-        # Post-attention RMSNorm
+        # Post-attention RMSNorm (merged into MOE)
         attn_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -182,7 +182,7 @@ class MoEModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
             result=attn_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.MOE))
         
         # === MoE Components ===
         # Router / Gate using linear kernel
@@ -289,7 +289,7 @@ class MoEModel(BaseModel):
             submodule_type=SubmoduleType.MOE,
         ))
         
-        # MoE norm/residual using rms_norm kernel
+        # MoE norm/residual using rms_norm kernel (merged into MOE)
         moe_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -298,7 +298,8 @@ class MoEModel(BaseModel):
         moe_norm_layer = kernel_result_to_layer(
             name=f"{prefix}_moe_norm",
             result=moe_norm_result,
-            submodule_type=SubmoduleType.NORM)
+            submodule_type=SubmoduleType.MOE)
+        moe_norm_layer.is_moe = True
         layers.append(moe_norm_layer)
         
         return layers

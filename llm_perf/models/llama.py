@@ -50,7 +50,7 @@ class LlamaModel(BaseModel):
         for i in range(cfg.num_layers):
             layers.extend(self._build_transformer_layer(i, dtype_size))
         
-        # Final norm using rms_norm kernel
+        # Final norm using rms_norm kernel (merged into LM_HEAD)
         final_norm_result = rms_norm(
             input=(1, cfg.max_seq_len, cfg.hidden_size),
             dim=-1,
@@ -59,7 +59,7 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name="final_norm",
             result=final_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.LM_HEAD))
         
         # LM head using linear kernel
         lm_head_result = linear(
@@ -88,7 +88,7 @@ class LlamaModel(BaseModel):
         q_heads = cfg.num_attention_heads
         kv_heads = cfg.num_key_value_heads or cfg.num_attention_heads
         
-        # Pre-attention RMSNorm
+        # Pre-attention RMSNorm (merged into ATTENTION)
         input_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -97,7 +97,7 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_input_norm",
             result=input_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.ATTENTION))
         
         # Q projection using linear kernel
         q_result = linear(
@@ -160,7 +160,7 @@ class LlamaModel(BaseModel):
             result=o_result,
             submodule_type=SubmoduleType.ATTENTION))
         
-        # Post-attention RMSNorm
+        # Post-attention RMSNorm (merged into FFN)
         attn_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -169,7 +169,7 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_post_attn_norm",
             result=attn_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.FFN))
         
         # === FFN Components ===
         # Llama uses SwiGLU: up_proj, gate_proj, down_proj
@@ -221,7 +221,7 @@ class LlamaModel(BaseModel):
             result=down_result,
             submodule_type=SubmoduleType.FFN))
         
-        # Post-FFN RMSNorm
+        # Post-FFN RMSNorm (merged into FFN)
         ffn_norm_result = rms_norm(
             input=(1, seq_len, cfg.hidden_size),
             dim=-1,
@@ -230,6 +230,6 @@ class LlamaModel(BaseModel):
         layers.append(kernel_result_to_layer(
             name=f"{prefix}_ffn_norm",
             result=ffn_norm_result,
-            submodule_type=SubmoduleType.NORM))
+            submodule_type=SubmoduleType.FFN))
         
         return layers

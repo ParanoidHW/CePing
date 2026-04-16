@@ -7,11 +7,18 @@ from typing import Optional, List, Dict, Any
 
 
 class SubmoduleType(str, Enum):
-    """Submodule type for transformer components."""
+    """Submodule type for transformer components.
+
+    Note: NORM layers are now merged into their serving modules:
+    - input_norm/pre_attn_norm -> ATTENTION
+    - post_attn_norm/pre_ffn_norm/ffn_norm -> FFN/MOE
+    - final_norm -> LM_HEAD
+    NORM is kept for backward compatibility but not actively used.
+    """
     EMBEDDING = "embedding"
     ATTENTION = "attention"
     FFN = "ffn"
-    NORM = "norm"
+    NORM = "norm"  # Deprecated: merged into serving modules
     LM_HEAD = "lm_head"
     MOE = "moe"
     OTHER = "other"
