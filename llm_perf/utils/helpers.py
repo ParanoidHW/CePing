@@ -1,12 +1,12 @@
 """Helper functions."""
 
-from typing import Dict, Any
 import json
+from typing import Any, Dict
 
 
 def load_json(path: str) -> Dict[str, Any]:
     """Load JSON configuration file."""
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         return json.load(f)
 
 

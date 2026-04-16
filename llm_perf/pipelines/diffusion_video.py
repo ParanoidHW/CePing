@@ -8,21 +8,21 @@ Implements the complete text-to-video generation pipeline including:
 Based on Wan2.1 architecture with Flow Matching framework.
 """
 
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from ..analyzer.diffusion_video import DiffusionVideoAnalyzer
 from ..core.pipeline import (
+    IterationConfig,
     Pipeline,
     PipelineConfig,
     PipelineResult,
     PipelineStep,
-    IterationConfig,
 )
 from ..core.registry import ModelRegistry
-from ..hardware.device import Device
 from ..hardware.cluster import Cluster
-from ..strategy.base import StrategyConfig
-from ..analyzer.diffusion_video import DiffusionVideoAnalyzer
+from ..hardware.device import Device
 from ..models.base import BaseModel
+from ..strategy.base import StrategyConfig
 
 
 class DiffusionVideoPipeline(Pipeline):
@@ -136,9 +136,7 @@ class DiffusionVideoPipeline(Pipeline):
             ),
         ]
 
-    def execute_step(
-        self, step: PipelineStep, inputs: Dict[str, Any]
-    ) -> Tuple[Any, float]:
+    def execute_step(self, step: PipelineStep, inputs: Dict[str, Any]) -> Tuple[Any, float]:
         """Execute a single pipeline step.
 
         Args:
@@ -162,22 +160,16 @@ class DiffusionVideoPipeline(Pipeline):
                 "memory_bytes": self.analyzer._estimate_text_encoder_memory(),
             }
         elif step.name == "dit_denoising":
-            time_sec = self.analyzer._estimate_dit_single_step(
-                num_frames, height, width, use_cfg
-            )
+            time_sec = self.analyzer._estimate_dit_single_step(num_frames, height, width, use_cfg)
             result = {
                 "time_sec": time_sec,
-                "memory_bytes": self.analyzer._estimate_dit_memory(
-                    num_frames, height, width, use_cfg
-                ),
+                "memory_bytes": self.analyzer._estimate_dit_memory(num_frames, height, width, use_cfg),
             }
         elif step.name == "vae_decoder":
             _, time_sec = self.analyzer._estimate_vae_time(num_frames, height, width)
             result = {
                 "time_sec": time_sec,
-                "memory_bytes": self.analyzer._estimate_vae_memory(
-                    num_frames, height, width
-                ),
+                "memory_bytes": self.analyzer._estimate_vae_memory(num_frames, height, width),
             }
         else:
             raise ValueError(f"Unknown step: {step.name}")
@@ -210,9 +202,7 @@ class DiffusionVideoPipeline(Pipeline):
             width = inputs.get("width", 1280)
             use_cfg = inputs.get("use_cfg", self.use_cfg)
 
-            single_step_time = self.analyzer._estimate_dit_single_step(
-                num_frames, height, width, use_cfg
-            )
+            single_step_time = self.analyzer._estimate_dit_single_step(num_frames, height, width, use_cfg)
 
             # Total time is single step * num iterations
             num_iters = iteration_config.num_iterations
@@ -222,9 +212,7 @@ class DiffusionVideoPipeline(Pipeline):
                 "time_sec": total_time,
                 "single_step_time_sec": single_step_time,
                 "num_iterations": num_iters,
-                "memory_bytes": self.analyzer._estimate_dit_memory(
-                    num_frames, height, width, use_cfg
-                ),
+                "memory_bytes": self.analyzer._estimate_dit_memory(num_frames, height, width, use_cfg),
             }
 
             return result, total_time, num_iters
@@ -264,8 +252,7 @@ class DiffusionVideoPipeline(Pipeline):
         # Build step times from analysis result
         step_times = {
             "text_encoder": analysis_result.text_encoder_time_sec,
-            "dit_denoising": analysis_result.dit_single_step_time_sec
-            * self.num_inference_steps,
+            "dit_denoising": analysis_result.dit_single_step_time_sec * self.num_inference_steps,
             "vae_decoder": analysis_result.vae_decoder_time_sec,
         }
 
@@ -276,8 +263,7 @@ class DiffusionVideoPipeline(Pipeline):
             },
             "dit_denoising": {
                 "single_step_time_sec": analysis_result.dit_single_step_time_sec,
-                "total_time_sec": analysis_result.dit_single_step_time_sec
-                * self.num_inference_steps,
+                "total_time_sec": analysis_result.dit_single_step_time_sec * self.num_inference_steps,
                 "memory_gb": analysis_result.peak_memory_dit_gb,
             },
             "vae_decoder": {
@@ -308,7 +294,9 @@ class DiffusionVideoPipeline(Pipeline):
                 "use_cfg": use_cfg,
                 "component_breakdown": analysis_result.component_breakdown,
             },
-            detailed_breakdown=analysis_result.detailed_breakdown.to_dict() if analysis_result.detailed_breakdown else None,
+            detailed_breakdown=(
+                analysis_result.detailed_breakdown.to_dict() if analysis_result.detailed_breakdown else None
+            ),
         )
 
     def analyze_components(self) -> Dict[str, Any]:

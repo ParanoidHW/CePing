@@ -10,6 +10,8 @@ from .diffusion_video import (
     DiffusionVideoResult,
     create_wan_analyzer,
 )
+from .memory import MemoryEstimator
+from .communication import CommunicationEstimator
 
 __all__ = [
     "BaseAnalyzer",
@@ -22,4 +24,6 @@ __all__ = [
     "DiffusionVideoAnalyzer",
     "DiffusionVideoResult",
     "create_wan_analyzer",
+    "MemoryEstimator",
+    "CommunicationEstimator",
 ]

@@ -7,7 +7,7 @@ This module should be imported to register all pipelines.
 from ..core.registry import PipelineRegistry
 
 # Import all pipeline classes
-from .base import InferencePipeline
+from .inference import InferencePipeline
 from .diffusion_video import DiffusionVideoPipeline
 
 

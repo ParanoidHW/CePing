@@ -2,13 +2,12 @@
 
 from typing import Any, Dict, List, Tuple
 
-from ..core.pipeline import Pipeline, PipelineConfig, PipelineResult, PipelineStep
-from ..hardware.device import Device
-from ..hardware.cluster import Cluster
-from ..strategy.base import StrategyConfig
 from ..analyzer.inference import InferenceAnalyzer
-
+from ..core.pipeline import Pipeline, PipelineConfig, PipelineResult, PipelineStep
+from ..hardware.cluster import Cluster
+from ..hardware.device import Device
 from ..models.base import BaseModel
+from ..strategy.base import StrategyConfig
 
 
 class InferencePipeline(Pipeline):

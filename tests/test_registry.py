@@ -3,8 +3,8 @@
 import unittest
 
 from llm_perf.core.registry import ModelRegistry, PipelineRegistry
-from llm_perf.pipelines.registry import register_all_pipelines
 from llm_perf.models.base import BaseModel, ModelConfig
+from llm_perf.pipelines.register import register_all_pipelines
 
 
 class TestModelRegistry(unittest.TestCase):

@@ -4,30 +4,31 @@ LLM Performance Evaluator - Web Service
 A local HTTPS web interface for interactive performance evaluation.
 """
 
-import sys
-import ssl
-from pathlib import Path
-from flask import Flask, render_template, request, jsonify
-from flask_cors import CORS
 import ipaddress
+import ssl
+import sys
+from pathlib import Path
+
+from flask import Flask, jsonify, render_template, request
+from flask_cors import CORS
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import registries - this registers all models and pipelines
+from llm_perf.analyzer.inference import InferenceAnalyzer
+from llm_perf.analyzer.training import TrainingAnalyzer
 from llm_perf.core.registry import ModelRegistry, PipelineRegistry
-from llm_perf.pipelines.registry import get_pipeline_presets
-from llm_perf.models.registry import get_model_presets, get_presets_by_sparse_type, create_model_from_config
+from llm_perf.hardware.cluster import Cluster
 
 # Import base classes for type checking
 from llm_perf.hardware.device import Device
-from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.topology import (
     NetworkTopology,
 )
+from llm_perf.models.registry import create_model_from_config, get_model_presets, get_presets_by_sparse_type
+from llm_perf.pipelines.register import get_pipeline_presets
 from llm_perf.strategy.base import StrategyConfig
-from llm_perf.analyzer.training import TrainingAnalyzer
-from llm_perf.analyzer.inference import InferenceAnalyzer
 
 app = Flask(
     __name__,
@@ -144,14 +145,10 @@ def get_devices():
         {
             "devices": DEVICE_PRESETS,
             "device_info": {
-                name: Device.from_preset(name).to_dict()
-                for vendor in DEVICE_PRESETS.values()
-                for name in vendor
+                name: Device.from_preset(name).to_dict() for vendor in DEVICE_PRESETS.values() for name in vendor
             },
         }
     )
-
-
 
 
 @app.route("/api/models", methods=["GET"])
@@ -178,10 +175,12 @@ def get_model_presets_endpoint():
     Returns:
         JSON with presets grouped by: dense, sparse_standard_moe, sparse_deepseek_moe
     """
-    return jsonify({
-        "presets": get_model_presets(),
-        "by_sparse_type": get_presets_by_sparse_type(),
-    })
+    return jsonify(
+        {
+            "presets": get_model_presets(),
+            "by_sparse_type": get_presets_by_sparse_type(),
+        }
+    )
 
 
 @app.route("/api/models/refresh", methods=["POST"])
@@ -189,12 +188,15 @@ def refresh_models():
     """Refresh model registry."""
     try:
         from llm_perf.models import registry as _registry_module  # noqa: F401
-        return jsonify({
-            "success": True,
-            "models": model_registry.to_dict(),
-            "by_sparse_type": model_registry.list_by_sparse_type(),
-            "by_architecture": model_registry.list_by_architecture(),
-        })
+
+        return jsonify(
+            {
+                "success": True,
+                "models": model_registry.to_dict(),
+                "by_sparse_type": model_registry.list_by_sparse_type(),
+                "by_architecture": model_registry.list_by_architecture(),
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -202,22 +204,27 @@ def refresh_models():
 @app.route("/api/pipelines", methods=["GET"])
 def get_registered_pipelines():
     """Get all registered pipelines."""
-    return jsonify({
-        "pipelines": pipeline_registry.to_dict(),
-        "presets": get_pipeline_presets(),
-    })
+    return jsonify(
+        {
+            "pipelines": pipeline_registry.to_dict(),
+            "presets": get_pipeline_presets(),
+        }
+    )
 
 
 @app.route("/api/pipelines/refresh", methods=["POST"])
 def refresh_pipelines():
     """Refresh pipeline registry."""
     try:
-        from llm_perf.pipelines import registry as _pipeline_registry_module  # noqa: F401
-        return jsonify({
-            "success": True,
-            "pipelines": pipeline_registry.to_dict(),
-            "presets": get_pipeline_presets(),
-        })
+        from llm_perf.pipelines import register as _pipeline_register_module  # noqa: F401
+
+        return jsonify(
+            {
+                "success": True,
+                "pipelines": pipeline_registry.to_dict(),
+                "presets": get_pipeline_presets(),
+            }
+        )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -372,9 +379,7 @@ def evaluate_pipeline(pipeline_name: str):
 
         # Check if pipeline is registered
         if not pipeline_registry.is_registered(pipeline_name):
-            return jsonify(
-                {"success": False, "error": f"Pipeline '{pipeline_name}' not found"}
-            ), 404
+            return jsonify({"success": False, "error": f"Pipeline '{pipeline_name}' not found"}), 404
 
         # Create device and cluster
         device = Device.from_preset(data["device"])
@@ -428,7 +433,7 @@ def evaluate_pipeline(pipeline_name: str):
 
         # For inference pipeline
         elif pipeline_name == "inference":
-            from llm_perf.pipelines.base import InferencePipeline
+            from llm_perf.pipelines.inference import InferencePipeline
 
             # Create model
             model_config = data.get("model", {})
@@ -492,11 +497,12 @@ def create_ssl_context():
 
 def generate_self_signed_cert(cert_file: Path, key_file: Path):
     """Generate self-signed SSL certificates."""
+    import datetime
+
     from cryptography import x509
-    from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    import datetime
+    from cryptography.x509.oid import NameOID
 
     # Generate private key
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -550,12 +556,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="LLM Performance Evaluator Web Service")
-    parser.add_argument(
-        "--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)"
-    )
-    parser.add_argument(
-        "--port", type=int, default=8443, help="Port to bind (default: 8443)"
-    )
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8443, help="Port to bind (default: 8443)")
     parser.add_argument("--http", action="store_true", help="Use HTTP instead of HTTPS")
     args = parser.parse_args()
 
