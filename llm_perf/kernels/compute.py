@@ -10,7 +10,7 @@ from ..utils.constants import DTYPE_SIZES
 
 class ComputeKernel(Kernel):
     """Compute kernel with roofline model support."""
-    
+
     def __init__(
         self,
         config: KernelConfig,
@@ -18,20 +18,31 @@ class ComputeKernel(Kernel):
         flops: int,
         bytes_accessed: int,
         unit_type: ComputeUnitType = ComputeUnitType.CUBE_TENSOR_CORE,
+        flops_backward: int = 0,
+        bytes_accessed_backward: int = 0,
     ):
         super().__init__(config)
         self.device = device
         self.flops = flops
         self.bytes_accessed = bytes_accessed
         self.unit_type = unit_type
-    
+        self.flops_backward = flops_backward
+        self.bytes_accessed_backward = bytes_accessed_backward
+
     @property
     def arithmetic_intensity(self) -> float:
-        """FLOPs per byte."""
+        """FLOPs per byte (forward pass)."""
         if self.bytes_accessed == 0:
             return float('inf')
         return self.flops / self.bytes_accessed
-    
+
+    @property
+    def arithmetic_intensity_backward(self) -> float:
+        """FLOPs per byte (backward pass)."""
+        if self.bytes_accessed_backward == 0:
+            return float('inf')
+        return self.flops_backward / self.bytes_accessed_backward
+
     def estimate_time(
         self,
         input_shape: tuple,
@@ -40,30 +51,86 @@ class ComputeKernel(Kernel):
         **kwargs
     ) -> float:
         """
-        Estimate execution time using roofline model.
-        
+        Estimate execution time using roofline model (forward pass).
+
         Returns:
             Time in seconds
         """
         # Use measured FLOPS if available
         if self.config.measured_flops:
             return self.flops / self.config.measured_flops
-        
+
         # Otherwise use theoretical roofline with appropriate compute unit
         achievable_flops = self.device.estimate_roofline_flops(
             self.arithmetic_intensity,
             dtype,
             self.unit_type
         )
-        
+
         compute_time = self.flops / achievable_flops
-        
+
         # Add fixed latency if specified
         if self.config.latency_us:
             compute_time += self.config.latency_us * 1e-6
-        
+
         return compute_time
-    
+
+    def estimate_backward_time(
+        self,
+        input_shape: tuple,
+        output_shape: tuple,
+        dtype: str,
+        **kwargs
+    ) -> float:
+        """
+        Estimate backward pass execution time using roofline model.
+
+        Returns:
+            Time in seconds for backward pass
+        """
+        if self.flops_backward == 0:
+            # Default: backward ≈ 2x forward for matmul-like operations
+            return self.estimate_time(input_shape, output_shape, dtype, **kwargs) * 2
+
+        # Use measured FLOPS if available
+        if self.config.measured_flops:
+            return self.flops_backward / self.config.measured_flops
+
+        # Use roofline model for backward pass
+        achievable_flops = self.device.estimate_roofline_flops(
+            self.arithmetic_intensity_backward,
+            dtype,
+            self.unit_type
+        )
+
+        backward_time = self.flops_backward / achievable_flops
+
+        # Add fixed latency if specified
+        if self.config.latency_us:
+            backward_time += self.config.latency_us * 1e-6
+
+        return backward_time
+
+    def estimate_training_time(
+        self,
+        input_shape: tuple,
+        output_shape: tuple,
+        dtype: str,
+        **kwargs
+    ) -> float:
+        """
+        Estimate forward + backward time using roofline model.
+
+        This is the total compute time for one training iteration.
+
+        Returns:
+            Time in seconds (forward + backward)
+        """
+        forward_time = self.estimate_time(input_shape, output_shape, dtype, **kwargs)
+        backward_time = self.estimate_backward_time(input_shape, output_shape, dtype, **kwargs)
+
+        return forward_time + backward_time
+
     def estimate_memory(
         self,
         input_shape: tuple,
@@ -73,7 +140,7 @@ class ComputeKernel(Kernel):
     ) -> int:
         """Estimate memory usage."""
         return self.bytes_accessed
-    
+
     def get_unit_type(self) -> ComputeUnitType:
         """Get the compute unit type used by this kernel."""
         return self.unit_type
@@ -103,22 +170,31 @@ class ComputeKernelRegistry:
     def _register_matmul_kernels(self):
         """Register matrix multiplication kernels."""
         # Standard GEMM: C = A @ B
-        # FLOPs = 2 * M * N * K
-        # Bytes = (M*K + K*N + M*N) * dtype_size
-        
+        # Forward FLOPs = 2 * M * N * K
+        # Forward Bytes = (M*K + K*N + M*N) * dtype_size
+        # Backward FLOPs = 4 * M * N * K (2x forward)
+        # Backward Bytes = 2x forward bytes
+
         def create_gemm_kernel(m: int, n: int, k: int, dtype: str) -> ComputeKernel:
             flops = 2 * m * n * k
             dtype_size = DTYPE_SIZES.get(dtype, 2)
             bytes_accessed = (m * k + k * n + m * n) * dtype_size
-            
+
+            # Backward: 2x forward FLOPs
+            flops_backward = 4 * m * n * k
+            bytes_accessed_backward = bytes_accessed * 2
+
             config = KernelConfig(
                 name=f"gemm_{m}x{n}x{k}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
             # GEMM uses CUBE/Tensor Core
-            return ComputeKernel(config, self.device, flops, bytes_accessed, 
-                               ComputeUnitType.CUBE_TENSOR_CORE)
-        
+            return ComputeKernel(
+                config, self.device, flops, bytes_accessed,
+                ComputeUnitType.CUBE_TENSOR_CORE,
+                flops_backward, bytes_accessed_backward
+            )
+
         # Register some common GEMM sizes
         common_sizes = [
             (1, 4096, 4096),    # Common projection
@@ -127,7 +203,7 @@ class ComputeKernelRegistry:
             (4096, 4096, 4096), # Batch matmul
             (8192, 4096, 4096), # Larger batch
         ]
-        
+
         for m, n, k in common_sizes:
             for dtype in ["fp16", "bf16", "fp8"]:
                 kernel = create_gemm_kernel(m, n, k, dtype)
@@ -135,7 +211,7 @@ class ComputeKernelRegistry:
     
     def _register_attention_kernels(self):
         """Register attention computation kernels."""
-        
+
         def create_flash_attention_kernel(
             batch: int,
             seq_len: int,
@@ -145,16 +221,16 @@ class ComputeKernelRegistry:
         ) -> ComputeKernel:
             """
             FlashAttention kernel estimation.
-            
+
             FlashAttention is memory-bound but with better arithmetic intensity
             than naive attention due to tiling.
             """
-            # FLOPs for attention: QK^T + softmax + PV
+            # Forward FLOPs for attention: QK^T + softmax + PV
             # Each is roughly batch * heads * seq^2 * head_dim
             flops_per_head = 2 * seq_len * seq_len * head_dim * 2  # QK^T + PV
             flops = flops_per_head * batch * num_heads
-            
-            # Memory access is reduced due to tiling
+
+            # Forward memory access is reduced due to tiling
             # Roughly O(batch * heads * seq * head_dim) for Q,K,V + O(batch * heads * seq^2) for S
             dtype_size = DTYPE_SIZES.get(dtype, 2)
             bytes_accessed = (
@@ -162,15 +238,23 @@ class ComputeKernelRegistry:
                 batch * num_heads * seq_len * seq_len * 4 +  # Attention scores (fp32)
                 batch * num_heads * seq_len * head_dim * dtype_size  # Output
             )
-            
+
+            # Backward FLOPs: 2x forward
+            flops_backward = 2 * flops
+            # Backward memory: 2x forward (need to recompute)
+            bytes_accessed_backward = bytes_accessed * 2
+
             config = KernelConfig(
                 name=f"flash_attn_b{batch}_s{seq_len}_h{num_heads}_d{head_dim}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
             # Attention uses CUBE/Tensor Core for QK^T and PV matmuls
-            return ComputeKernel(config, self.device, flops, bytes_accessed,
-                               ComputeUnitType.CUBE_TENSOR_CORE)
-        
+            return ComputeKernel(
+                config, self.device, flops, bytes_accessed,
+                ComputeUnitType.CUBE_TENSOR_CORE,
+                flops_backward, bytes_accessed_backward
+            )
+
         # Common attention configurations
         configs = [
             (1, 4096, 32, 128),   # Llama 7B
@@ -178,7 +262,7 @@ class ComputeKernelRegistry:
             (1, 32768, 8, 128),   # GQA + long context
             (8, 4096, 32, 128),   # Batch decode
         ]
-        
+
         for batch, seq, heads, dim in configs:
             for dtype in ["fp16", "bf16"]:
                 kernel = create_flash_attention_kernel(batch, seq, heads, dim, dtype)
@@ -261,19 +345,28 @@ class ComputeKernelRegistry:
             
             flops = flops_per_element * num_elements
             bytes_accessed = num_elements * dtype_size * 2  # read + write
-            
+
+            # Backward FLOPs for activations: typically 2x forward
+            # Need to recompute activation function for gradient
+            flops_backward = flops * 2
+            # Backward memory: read input + read gradient + write gradient
+            bytes_accessed_backward = num_elements * dtype_size * 3
+
             config = KernelConfig(
                 name=f"{activation}_{num_elements}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
             # Activations use VECTOR/CUDA Core
-            return ComputeKernel(config, self.device, flops, bytes_accessed,
-                               ComputeUnitType.VECTOR_CUDA_CORE)
-        
+            return ComputeKernel(
+                config, self.device, flops, bytes_accessed,
+                ComputeUnitType.VECTOR_CUDA_CORE,
+                flops_backward, bytes_accessed_backward
+            )
+
         # Common sizes
         sizes = [4096, 11008, 32000, 131072]
         activations = ["relu", "gelu", "silu", "swiglu", "softmax"]
-        
+
         for size in sizes:
             for act in activations:
                 for dtype in ["fp16", "bf16"]:
@@ -315,18 +408,26 @@ class ComputeKernelRegistry:
             # Using average of 7 as a reasonable estimate for both variants
             flops = num_elements * 7
             bytes_accessed = num_elements * dtype_size * 2
-            
+
+            # Backward FLOPs for normalization: ~5x numel (gradient propagation)
+            flops_backward = num_elements * 5
+            # Backward memory: read input + read weight + read gradient + write gradients
+            bytes_accessed_backward = num_elements * dtype_size * 3
+
             config = KernelConfig(
                 name=f"{norm_type}_{num_elements}_{dtype}",
                 kernel_type=KernelType.COMPUTE,
             )
             # Normalization uses VECTOR/CUDA Core
-            return ComputeKernel(config, self.device, flops, bytes_accessed,
-                               ComputeUnitType.VECTOR_CUDA_CORE)
-        
+            return ComputeKernel(
+                config, self.device, flops, bytes_accessed,
+                ComputeUnitType.VECTOR_CUDA_CORE,
+                flops_backward, bytes_accessed_backward
+            )
+
         sizes = [4096, 5120, 6144, 8192]
         norms = ["layernorm", "rmsnorm"]
-        
+
         for size in sizes:
             for norm in norms:
                 for dtype in ["fp16", "bf16"]:
@@ -348,19 +449,26 @@ class ComputeKernelRegistry:
         name = f"gemm_{m}x{n}x{k}_{dtype}"
         if name in self._kernels:
             return self._kernels[name]
-        
-        # Create new kernel
+
+        # Create new kernel with backward metrics
         flops = 2 * m * n * k
         dtype_size = DTYPE_SIZES.get(dtype, 2)
         bytes_accessed = (m * k + k * n + m * n) * dtype_size
-        
+
+        # Backward: 2x forward FLOPs, 2x forward bytes
+        flops_backward = 4 * m * n * k
+        bytes_accessed_backward = bytes_accessed * 2
+
         config = KernelConfig(
             name=name,
             kernel_type=KernelType.COMPUTE,
         )
         # GEMM uses CUBE/Tensor Core
-        kernel = ComputeKernel(config, self.device, flops, bytes_accessed,
-                             ComputeUnitType.CUBE_TENSOR_CORE)
+        kernel = ComputeKernel(
+            config, self.device, flops, bytes_accessed,
+            ComputeUnitType.CUBE_TENSOR_CORE,
+            flops_backward, bytes_accessed_backward
+        )
         self._kernels[name] = kernel
         return kernel
     

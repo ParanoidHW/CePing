@@ -295,7 +295,7 @@ class TrainingAnalyzer:
         - PP: distributes layers across stages
         - SP: shards sequence length
 
-        The compute time returned is per-GPU compute time.
+        The compute time returned is per-GPU compute time (forward + backward).
         """
         dtype = self.model.config.dtype
 
@@ -309,7 +309,8 @@ class TrainingAnalyzer:
         hidden_size = self.model.config.hidden_size
         head_dim = hidden_size // self.model.config.num_attention_heads
 
-        total_time = 0.0
+        forward_time = 0.0
+        backward_time = 0.0
 
         # Count layers by type to compute compute time correctly
         # We process only effective_num_layers (PP-sharded)
@@ -317,7 +318,8 @@ class TrainingAnalyzer:
         ffn_layers = 0
 
         for layer in self.model.layers[:effective_num_layers]:
-            layer_time = 0.0
+            layer_forward_time = 0.0
+            layer_backward_time = 0.0
 
             # Forward pass compute time
             # For attention layers: QKV projection + attention + O projection
@@ -333,7 +335,9 @@ class TrainingAnalyzer:
                 n = 3 * effective_hidden_size  # Q, K, V each have effective_hidden_size
                 k = hidden_size
                 qkv_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
-                layer_time += qkv_kernel.estimate_time((m, k), (m, n), dtype)
+                layer_forward_time += qkv_kernel.estimate_time((m, k), (m, n), dtype)
+                # Backward for linear/matmul: 2x forward FLOPs
+                layer_backward_time += qkv_kernel.estimate_backward_time((m, k), (m, n), dtype)
 
                 # Attention computation: batch * heads * seq * seq * head_dim
                 # With TP and SP, effective_heads and effective_seq_len are used
@@ -342,7 +346,13 @@ class TrainingAnalyzer:
                     f"flash_attn_{batch_size}_{effective_seq_len}_{effective_num_heads}_{head_dim}_{dtype}"
                 )
                 if attn_kernel:
-                    layer_time += attn_kernel.estimate_time(
+                    layer_forward_time += attn_kernel.estimate_time(
+                        (batch_size, effective_seq_len, effective_num_heads * head_dim),
+                        (batch_size, effective_seq_len, hidden_size),
+                        dtype
+                    )
+                    # Backward for attention: 2x forward FLOPs
+                    layer_backward_time += attn_kernel.estimate_backward_time(
                         (batch_size, effective_seq_len, effective_num_heads * head_dim),
                         (batch_size, effective_seq_len, hidden_size),
                         dtype
@@ -354,7 +364,9 @@ class TrainingAnalyzer:
                     attention_flops = 2 * batch_size * effective_seq_len * effective_num_heads * effective_seq_len * head_dim
                     # Assume device can achieve 50% of peak FLOPs for attention
                     effective_tflops = self.device.get_compute_tflops(dtype) * 0.5
-                    layer_time += attention_flops / (effective_tflops * 1e12)
+                    layer_forward_time += attention_flops / (effective_tflops * 1e12)
+                    # Backward: 2x forward
+                    layer_backward_time += attention_flops * 2 / (effective_tflops * 1e12)
 
                 # O projection: batch * seq * effective_hidden -> batch * seq * hidden
                 # With TP, input is sharded (effective_hidden_size), output is full (hidden_size)
@@ -363,7 +375,8 @@ class TrainingAnalyzer:
                 n = hidden_size  # Output dimension (not sharded)
                 k = effective_hidden_size  # Input dimension (TP-sharded)
                 o_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
-                layer_time += o_kernel.estimate_time((m, k), (m, n), dtype)
+                layer_forward_time += o_kernel.estimate_time((m, k), (m, n), dtype)
+                layer_backward_time += o_kernel.estimate_backward_time((m, k), (m, n), dtype)
 
             # For FFN layers: up/gate projection + activation + down projection
             elif layer.submodule_type == SubmoduleType.FFN or "ffn" in layer.name or "proj" in layer.name:
@@ -376,12 +389,16 @@ class TrainingAnalyzer:
                 k = hidden_size
                 up_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
                 # SwiGLU has 2 projections (up and gate)
-                layer_time += up_kernel.estimate_time((m, k), (m, n), dtype) * 2
+                layer_forward_time += up_kernel.estimate_time((m, k), (m, n), dtype) * 2
+                # Backward for each matmul
+                layer_backward_time += up_kernel.estimate_backward_time((m, k), (m, n), dtype) * 2
 
-                # Activation (SwiGLU): element-wise, negligible FLOPs
-                # Estimated as memory bandwidth bound
+                # Activation (SwiGLU): element-wise
+                # Forward: memory bandwidth bound
                 activation_bytes = batch_size * effective_seq_len * effective_intermediate_size * DTYPE_SIZES.get(dtype, 2)
-                layer_time += activation_bytes / (self.device.get_memory_bw_gbps() * 1e9)
+                layer_forward_time += activation_bytes / (self.device.get_memory_bw_gbps() * 1e9)
+                # Backward for activation: ~2x forward (need to recompute)
+                layer_backward_time += activation_bytes * 1.5 / (self.device.get_memory_bw_gbps() * 1e9)
 
                 # Down projection: intermediate -> hidden
                 # With TP, input is sharded (effective_intermediate_size), output is full (hidden_size)
@@ -389,12 +406,14 @@ class TrainingAnalyzer:
                 n = hidden_size
                 k = effective_intermediate_size
                 down_kernel = self.compute_registry.get_or_create_matmul(m, n, k, dtype)
-                layer_time += down_kernel.estimate_time((m, k), (m, n), dtype)
+                layer_forward_time += down_kernel.estimate_time((m, k), (m, n), dtype)
+                layer_backward_time += down_kernel.estimate_backward_time((m, k), (m, n), dtype)
 
-            # Backward pass (typically 2x forward FLOPs)
-            layer_time *= 2
+            forward_time += layer_forward_time
+            backward_time += layer_backward_time
 
-            total_time += layer_time
+        # Total compute time = forward + backward
+        total_time = forward_time + backward_time
 
         # Optimizer step (for DP only, or ZeRO-1+)
         # Parameter memory per GPU is affected by TP/PP sharding and ZeRO
