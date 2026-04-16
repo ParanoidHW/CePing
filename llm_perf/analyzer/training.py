@@ -151,11 +151,23 @@ class TrainingAnalyzer:
             num_iterations=1,
         )
         
-        # Build memory breakdown from submodel
+        # Build memory breakdown from submodel, including by_block_type
         from .detailed_breakdown import MemoryBreakdown, CommunicationBreakdown
+
+        # Aggregate by_block_type from blocks
+        by_block_type: Dict[str, Dict[Any, int]] = {}
+        for block in submodel.blocks:
+            if block.block_type not in by_block_type:
+                by_block_type[block.block_type] = {}
+            for mem_type, bytes_val in block.memory_by_type.items():
+                if mem_type not in by_block_type[block.block_type]:
+                    by_block_type[block.block_type][mem_type] = 0
+                by_block_type[block.block_type][mem_type] += bytes_val
+
         memory_breakdown = MemoryBreakdown(
             by_type=submodel.memory_by_type,
             by_submodel={submodel.model_name: submodel.memory_by_type},
+            by_block_type=by_block_type,
         )
         
         # Build communication breakdown from submodel
