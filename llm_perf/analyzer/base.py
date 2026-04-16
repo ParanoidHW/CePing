@@ -280,23 +280,34 @@ class BaseAnalyzer(ABC):
         total_time = 0.0
 
         if sp_type == SPType.ULYSSES:
-            # 4 all-to-all per attention layer
+            # Ulysses-SP: All-to-all for sequence parallelism
+            # Forward: 4 all-to-all per attention layer (Q, K, V pre-attention + O post-attention)
+            # Backward: 4 all-to-all per attention layer (gradients flow in reverse)
+            # Total: 8 all-to-all per layer
             alltoall_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, sp_ranks
             )
-            total_time = alltoall_time * 4 * num_layers
+            total_time = alltoall_time * 8 * num_layers
 
         elif sp_type == SPType.RING_P2P:
+            # Ring-P2P: (sp_degree - 1) P2P steps per layer
+            # Forward: (sp_degree - 1) steps for KV transmission
+            # Backward: (sp_degree - 1) steps for gradient transmission
+            # Total: 2 * (sp_degree - 1) steps per layer
             if sp_degree > 1:
                 avg_bw = self._get_average_bandwidth(sp_ranks)
                 step_time = kv_bytes_per_step / (avg_bw * 1e9)
-                total_time = step_time * (sp_degree - 1) * num_layers
+                total_time = step_time * (sp_degree - 1) * 2 * num_layers
 
         elif sp_type == SPType.RING_ALLGATHER:
+            # Ring-AllGather: 1 allgather per layer for KV aggregation
+            # Forward: 1 allgather to collect KV from all ranks
+            # Backward: 1 allgather to collect gradients
+            # Total: 2 allgather per layer
             allgather_time = self.cluster.estimate_allgather_time(
                 kv_bytes_per_step * sp_degree, sp_ranks
             )
-            total_time = allgather_time * num_layers
+            total_time = allgather_time * 2 * num_layers
 
         elif sp_type == SPType.UNIFIED_2D:
             ulysses_degree, ring_degree = self._resolve_2d_sp_config(sp_degree)
@@ -310,21 +321,24 @@ class BaseAnalyzer(ABC):
             if not ring_ranks:
                 ring_ranks = list(range(ring_degree))
 
-            # Ulysses part
+            # Ulysses part: 8 all-to-all per layer (4 forward + 4 backward)
             ulysses_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, ulysses_ranks
-            ) * 4 * num_layers
+            ) * 8 * num_layers
 
             # Ring part
             ring_time = 0.0
             if ring_degree > 1:
+                # Forward: (ring_degree - 1) steps
+                # Backward: (ring_degree - 1) steps
+                # Total: 2 * (ring_degree - 1) steps per layer
                 ring_kv_bytes = (
                     batch_size * (seq_len // sp_degree) *
                     num_kv_heads * head_dim * 2 * dtype_size
                 )
                 avg_bw = self._get_average_bandwidth(ring_ranks)
                 ring_step_time = ring_kv_bytes / (avg_bw * 1e9)
-                ring_time = ring_step_time * (ring_degree - 1) * num_layers
+                ring_time = ring_step_time * (ring_degree - 1) * 2 * num_layers
 
             total_time = ulysses_time + ring_time
 
@@ -338,8 +352,10 @@ class BaseAnalyzer(ABC):
             ag_time = self.cluster.estimate_allgather_time(
                 activation_bytes, sp_ranks
             )
-            # 2 communication ops per layer (forward pass)
-            total_time = (rs_time + ag_time) * 2 * num_layers
+            # Forward: 2 ops (1 rs + 1 ag)
+            # Backward: 2 ops (1 rs + 1 ag, reverse direction)
+            # Total: 4 ops per layer (2 rs + 2 ag)
+            total_time = (rs_time + ag_time) * 4 * num_layers
 
         return total_time
 

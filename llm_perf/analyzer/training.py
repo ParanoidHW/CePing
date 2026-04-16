@@ -449,10 +449,11 @@ class TrainingAnalyzer:
             # This is because all-reduce aggregates the sharded results to full hidden
             activation_bytes = micro_batch * seq_len * hidden_size * dtype_size
 
-            # 2 all-reduces per attention layer (after QKV and after O projection)
-            # For FFN, 2 all-reduces (after up/gate and after down projection)
-            # Total: ~2 all-reduces per transformer layer
-            tp_bytes = activation_bytes * 2 * effective_num_layers
+            # TP AllReduce communication:
+            # Forward: 2 all-reduces per transformer layer (after QKV/O and after FFN)
+            # Backward: 2 all-reduces per transformer layer (gradients for QKV/O and FFN)
+            # Total: 4 all-reduces per layer
+            tp_bytes = activation_bytes * 4 * effective_num_layers
 
             # Use communication domain mapping for topology-aware ranks
             tp_info = comm_mapping.get("tp", {})
@@ -487,8 +488,11 @@ class TrainingAnalyzer:
             )
 
             # P2P communication time
+            # Forward: send activations to next stage
+            # Backward: send gradients to previous stage
+            # Total: 2 transfers per micro-batch (forward + backward)
             pp_time = pp_bytes / (pp_bw * 1e9)
-            pp_time *= num_micro_batches
+            pp_time *= 2 * num_micro_batches
 
             comm_time += pp_time
             breakdown["pipeline_parallel"] = pp_time
@@ -530,10 +534,13 @@ class TrainingAnalyzer:
             ep_ranks = ep_info.get("ranks", list(range(self.strategy.ep_degree)))
 
             # Dispatch and combine
+            # Forward: dispatch tokens to experts + combine results
+            # Backward: dispatch gradients + combine gradients
+            # Total: 2 * (dispatch + combine) = 4 all-to-alls
             dispatch_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
             combine_time = self.cluster.estimate_alltoall_time(token_bytes, ep_ranks)
 
-            ep_time = dispatch_time + combine_time
+            ep_time = (dispatch_time + combine_time) * 2
             comm_time += ep_time
             breakdown["expert_parallel"] = ep_time
 
@@ -594,32 +601,39 @@ class TrainingAnalyzer:
         total_time = 0.0
 
         if sp_type == SPType.ULYSSES:
-            # 4 all-to-all per attention layer:
-            # pre-attention: Q, K, V each needs one all-to-all
-            # post-attention: O needs one all-to-all
-            # Ulysses communication volume is constant w.r.t. sp_degree
+            # Ulysses-SP: All-to-all for sequence parallelism
+            # Forward: 4 all-to-all per attention layer (Q, K, V pre-attention + O post-attention)
+            # Backward: 4 all-to-all per attention layer (gradients flow in reverse)
+            # Total: 8 all-to-all per layer
+            # Communication volume is constant w.r.t. sp_degree
             alltoall_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, sp_ranks
             )
-            total_time = alltoall_time * 4 * num_layers
+            total_time = alltoall_time * 8 * num_layers
 
         elif sp_type == SPType.RING_P2P:
-            # (sp_degree - 1) P2P steps per layer
+            # Ring-P2P: (sp_degree - 1) P2P steps per layer
             # Each step moves kv_bytes_per_step
+            # Forward: (sp_degree - 1) steps for KV transmission
+            # Backward: (sp_degree - 1) steps for gradient transmission
+            # Total: 2 * (sp_degree - 1) steps per layer
             if sp_degree > 1:
                 # Use topology-aware bandwidth
                 sp_bw = self.cluster.get_bandwidth_for_topology_level(
                     sp_topology_level, sp_devices_per_group
                 )
                 step_time = kv_bytes_per_step / (sp_bw * 1e9)
-                total_time = step_time * (sp_degree - 1) * num_layers
+                total_time = step_time * (sp_degree - 1) * 2 * num_layers
 
         elif sp_type == SPType.RING_ALLGATHER:
-            # 1 allgather per layer for KV aggregation
+            # Ring-AllGather: 1 allgather per layer for KV aggregation
+            # Forward: 1 allgather to collect KV from all ranks
+            # Backward: 1 allgather to collect gradients
+            # Total: 2 allgather per layer
             allgather_time = self.cluster.estimate_allgather_time(
                 kv_bytes_per_step * sp_degree, sp_ranks
             )
-            total_time = allgather_time * num_layers
+            total_time = allgather_time * 2 * num_layers
 
         elif sp_type == SPType.UNIFIED_2D:
             # 2D-SP: ulysses + ring combined
@@ -645,10 +659,10 @@ class TrainingAnalyzer:
             ring_level = ring_info.get("topology_level", "rack")
             ring_dpg = ring_info.get("devices_per_group", self.cluster.devices_per_node * 16)
 
-            # Ulysses part: 4 all-to-all (Q/K/V pre + O post)
+            # Ulysses part: 8 all-to-all per layer (4 forward + 4 backward)
             ulysses_time = self.cluster.estimate_alltoall_time(
                 activation_bytes, ulysses_ranks
-            ) * 4 * num_layers
+            ) * 8 * num_layers
 
             # Ring part
             ring_kv_bytes = (
@@ -657,11 +671,14 @@ class TrainingAnalyzer:
             )
             if ring_degree > 1:
                 # Use topology-aware bandwidth for ring
+                # Forward: (ring_degree - 1) steps
+                # Backward: (ring_degree - 1) steps
+                # Total: 2 * (ring_degree - 1) steps per layer
                 ring_bw = self.cluster.get_bandwidth_for_topology_level(
                     ring_level, ring_dpg
                 )
                 ring_step_time = ring_kv_bytes / (ring_bw * 1e9)
-                ring_time = ring_step_time * (ring_degree - 1) * num_layers
+                ring_time = ring_step_time * (ring_degree - 1) * 2 * num_layers
             else:
                 ring_time = 0.0
 
@@ -677,8 +694,10 @@ class TrainingAnalyzer:
             ag_time = self.cluster.estimate_allgather_time(
                 activation_bytes, sp_ranks
             )
-            # 2 communication ops per layer (forward pass)
-            total_time = (rs_time + ag_time) * 2 * num_layers
+            # Forward: 2 ops (1 rs + 1 ag)
+            # Backward: 2 ops (1 rs + 1 ag, reverse direction)
+            # Total: 4 ops per layer (2 rs + 2 ag)
+            total_time = (rs_time + ag_time) * 4 * num_layers
 
         return total_time
     
