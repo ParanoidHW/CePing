@@ -11,7 +11,7 @@ from .tensor import ShardedTensor
 from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
-    from llm_perf.modeling.parallel_context import ParallelContext
+    from llm_perf.strategy.parallel_context import ParallelContext
     from llm_perf.kernels.op import CommOp
 
 

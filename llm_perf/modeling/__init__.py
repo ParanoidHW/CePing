@@ -66,9 +66,9 @@ from .wan import (
     ShardedWanVAE,
 )
 
-from .parallel_context import ParallelContext, SPType, CommDomain
-from .pp_strategy import PPStrategy, PPSchedule
-from .pp_model import PPModel, PPStageModule
+from llm_perf.strategy.parallel_context import ParallelContext, SPType, CommDomain
+from llm_perf.strategy.pp_strategy import PPStrategy, PPSchedule
+from llm_perf.strategy.pp_model import PPModel, PPStageModule
 
 from .config_compat import SimpleModelConfig
 

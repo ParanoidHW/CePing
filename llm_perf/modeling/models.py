@@ -19,9 +19,9 @@ from llm_perf.modeling.layers import (
 from llm_perf.modeling.config_compat import SimpleModelConfig
 
 if TYPE_CHECKING:
-    from llm_perf.modeling.parallel_context import ParallelContext
-    from .pp_strategy import PPStrategy
-    from llm_perf.modeling.pp_model import PPModel
+    from llm_perf.strategy.parallel_context import ParallelContext
+    from llm_perf.strategy.pp_strategy import PPStrategy
+    from llm_perf.strategy.pp_model import PPModel
 
 
 class ShardedTransformerBlock(ShardedModule):
@@ -236,7 +236,7 @@ class LlamaModel(ShardedModule):
         if pp_strategy is None:
             return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
         else:
-            from llm_perf.modeling.pp_model import PPModel
+            from llm_perf.strategy.pp_model import PPModel
 
             return PPModel(self, pp_strategy)
 
@@ -500,6 +500,6 @@ class DeepSeekModel(ShardedModule):
         if pp_strategy is None:
             return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
         else:
-            from llm_perf.modeling.pp_model import PPModel
+            from llm_perf.strategy.pp_model import PPModel
 
             return PPModel(self, pp_strategy)
