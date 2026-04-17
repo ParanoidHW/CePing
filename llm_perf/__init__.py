@@ -7,10 +7,11 @@ of Large Language Models under various parallel strategies.
 
 __version__ = "0.1.0"
 
-from .app import Evaluator, StrategyOptimizer, BatchOptimizer
+from .app import Evaluator, StrategyOptimizer, BatchOptimizer, LatencyBudget
 
 __all__ = [
     "Evaluator",
     "StrategyOptimizer",
     "BatchOptimizer",
+    "LatencyBudget",
 ]

@@ -574,6 +574,137 @@ class TestBatchOptimizer:
             memory_values = [r["memory_gb"] for r in valid_results]
             assert memory_values[-1] >= memory_values[0]
 
+    def test_latency_budget_ttft_only(self):
+        """Test TTFT budget constraint only."""
+        from llm_perf.app import LatencyBudget
+
+        optimizer = BatchOptimizer()
+
+        result = optimizer.find_max_batch(
+            "llama-7b",
+            "h100_8gpu",
+            "tp1",
+            mode="inference",
+            latency_budget=LatencyBudget(ttft_budget_ms=100.0),
+            batch_step=1,
+            max_batch=64,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        assert result.best_batch_size > 0
+        assert result.constraint_type in ["ttft", None]
+
+    def test_latency_budget_tpot_only(self):
+        """Test TPOT budget constraint only."""
+        from llm_perf.app import LatencyBudget
+
+        optimizer = BatchOptimizer()
+
+        result = optimizer.find_max_batch(
+            "llama-7b",
+            "h100_8gpu",
+            "tp1",
+            mode="inference",
+            latency_budget=LatencyBudget(tpot_budget_ms=5.0),
+            batch_step=1,
+            max_batch=64,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        assert result.best_batch_size > 0
+        assert result.constraint_type in ["tpot", None]
+
+    def test_latency_budget_combined_ttft_tpot(self):
+        """Test combined TTFT + TPOT budget constraints."""
+        from llm_perf.app import LatencyBudget
+
+        optimizer = BatchOptimizer()
+
+        result = optimizer.find_max_batch(
+            "llama-7b",
+            "h100_8gpu",
+            "tp1",
+            mode="inference",
+            latency_budget=LatencyBudget(ttft_budget_ms=100.0, tpot_budget_ms=3.0),
+            batch_step=1,
+            max_batch=64,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        assert result.best_batch_size > 0
+        assert result.constraint_type in ["ttft", "tpot", None]
+
+    def test_latency_budget_total_latency(self):
+        """Test total latency budget constraint."""
+        from llm_perf.app import LatencyBudget
+
+        optimizer = BatchOptimizer()
+
+        result = optimizer.find_max_batch(
+            "llama-7b",
+            "h100_8gpu",
+            "tp1",
+            mode="inference",
+            latency_budget=LatencyBudget(
+                total_latency_budget_ms=500.0,
+                generation_len=128,
+            ),
+            batch_step=1,
+            max_batch=64,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        assert result.best_batch_size > 0
+        assert result.constraint_type in ["total_latency", None]
+
+    def test_latency_budget_legacy_float(self):
+        """Test legacy float latency budget (backward compatibility)."""
+        optimizer = BatchOptimizer()
+
+        result = optimizer.find_max_batch(
+            "llama-7b",
+            "h100_8gpu",
+            "tp1",
+            mode="inference",
+            latency_budget=100.0,
+            batch_step=1,
+            max_batch=64,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        assert result.best_batch_size > 0
+        assert result.constraint_type in ["ttft", None]
+
+    def test_latency_budget_result_data_structure(self):
+        """Test that result data includes TTFT/TPOT/Total latency."""
+        from llm_perf.app import LatencyBudget
+
+        optimizer = BatchOptimizer()
+
+        result = optimizer.find_max_batch(
+            "llama-7b",
+            "h100_8gpu",
+            "tp1",
+            mode="inference",
+            memory_budget_gb=80,
+            batch_step=8,
+            max_batch=64,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        assert len(result.all_results) > 0
+        valid_result = result.all_results[0]
+        if valid_result.get("valid"):
+            assert "ttft_ms" in valid_result
+            assert "tpot_ms" in valid_result
+            assert "total_latency_ms" in valid_result
+
 
 class TestIntegration:
     """Integration tests combining Evaluator, StrategyOptimizer, BatchOptimizer."""

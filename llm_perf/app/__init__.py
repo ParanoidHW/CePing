@@ -4,14 +4,17 @@ This module provides high-level interfaces for:
 - Quick performance evaluation (Evaluator)
 - Strategy optimization (StrategyOptimizer)
 - Batch size optimization (BatchOptimizer)
+- Latency budget with TTFT/TPOT separation (LatencyBudget)
 """
 
 from .evaluator import Evaluator
 from .optimizer import StrategyOptimizer
-from .batch_optimizer import BatchOptimizer
+from .batch_optimizer import BatchOptimizer, LatencyBudget, BatchSearchResult
 
 __all__ = [
     "Evaluator",
     "StrategyOptimizer",
     "BatchOptimizer",
+    "LatencyBudget",
+    "BatchSearchResult",
 ]
