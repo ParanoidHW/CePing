@@ -9,7 +9,7 @@ Includes:
 from typing import Tuple
 from llm_perf.modeling.module import ShardedModule
 from llm_perf.modeling.tensor import ShardedTensor
-from llm_perf.modeling.op import Conv2dOp, Conv3dOp, GroupNormOp
+from llm_perf.kernels.op import Conv2dOp, Conv3dOp, GroupNormOp
 from llm_perf.modeling.layers import silu
 
 

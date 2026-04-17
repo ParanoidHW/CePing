@@ -1,5 +1,20 @@
 """Kernel evaluation modules."""
 
+from .op import (
+    Op,
+    MatmulOp,
+    AttentionOp,
+    RMSNormOp,
+    EmbeddingOp,
+    ActivationOp,
+    MoEExpertOp,
+    ViewOp,
+    TransposeOp,
+    CommOp,
+    Conv2dOp,
+    Conv3dOp,
+    GroupNormOp,
+)
 from .base import Kernel, KernelConfig, KernelType
 from .compute import ComputeKernel, ComputeKernelRegistry
 from .communication import CommKernel, CommKernelRegistry

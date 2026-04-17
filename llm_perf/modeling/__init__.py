@@ -5,7 +5,8 @@ PyTorch-like interface for defining models with automatic sharding constraints.
 
 from .tensor import ShardedTensor
 from .module import ShardedModule, ModuleInstance, WeightInstance, ActivationInstance
-from .op import (
+
+from llm_perf.kernels.op import (
     Op,
     MatmulOp,
     AttentionOp,

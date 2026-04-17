@@ -63,7 +63,7 @@ class ShardedTensor:
         - A(m, k) shardable={1: "tp"} @ B(k, n) shardable={0: "tp"}
           -> output(m, n) shardable={}, needs AllReduce
         """
-        from .op import MatmulOp
+        from llm_perf.kernels.op import MatmulOp
 
         assert self.shape[-1] == other.shape[-2], f"Dimension mismatch: {self.shape[-1]} vs {other.shape[-2]}"
 
@@ -115,7 +115,7 @@ class ShardedTensor:
 
         Sharding constraints follow dimension mapping.
         """
-        from .op import ViewOp
+        from llm_perf.kernels.op import ViewOp
 
         new_numel = math.prod(shape)
         assert self.numel() == new_numel, f"Cannot reshape {self.shape} to {shape}: {self.numel()} vs {new_numel}"
@@ -173,7 +173,7 @@ class ShardedTensor:
 
         Sharding constraints swap with dimensions.
         """
-        from .op import TransposeOp
+        from llm_perf.kernels.op import TransposeOp
 
         if dim0 < 0:
             dim0 = self.ndim + dim0

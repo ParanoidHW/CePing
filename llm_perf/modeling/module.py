@@ -12,7 +12,7 @@ from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
     from llm_perf.modeling.parallel_context import ParallelContext
-    from .op import CommOp
+    from llm_perf.kernels.op import CommOp
 
 
 class ShardedModule:
@@ -153,7 +153,7 @@ class ShardedModule:
 
     def _compute_op_flops(self, op: Any) -> int:
         """Compute FLOPs for a single operation."""
-        from .op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
+        from llm_perf.kernels.op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
         from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu
 
         try:
@@ -301,7 +301,7 @@ class ModuleInstance:
 
     def _infer_physical_flops(self, op: Any) -> int:
         """Derive physical FLOPs from operation."""
-        from .op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
+        from llm_perf.kernels.op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
         from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu
 
         try:
@@ -356,7 +356,7 @@ class ModuleInstance:
 
     def _infer_comm_ops(self, op: Any) -> List["CommOp"]:
         """Derive forward communication from operation."""
-        from .op import MatmulOp, AttentionOp, MoEExpertOp, CommOp
+        from llm_perf.kernels.op import MatmulOp, AttentionOp, MoEExpertOp, CommOp
 
         ops = []
 
@@ -414,7 +414,7 @@ class ModuleInstance:
 
     def _infer_backward_comm_ops(self, op: Any) -> List["CommOp"]:
         """Derive backward communication from operation."""
-        from .op import MatmulOp, MoEExpertOp, CommOp
+        from llm_perf.kernels.op import MatmulOp, MoEExpertOp, CommOp
 
         ops = []
 
