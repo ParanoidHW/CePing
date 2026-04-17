@@ -10,8 +10,8 @@ Includes:
 """
 
 from typing import Tuple
-from llm_perf.modeling.base.module import ShardedModule
-from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.module import ShardedModule
+from llm_perf.modeling.tensor import ShardedTensor
 from llm_perf.modeling.layers import (
     ShardedEmbedding,
     ShardedAttention,
@@ -20,7 +20,7 @@ from llm_perf.modeling.layers import (
     silu,
     flash_attention,
 )
-from llm_perf.modeling.utils.vision import ShardedConv3d
+from llm_perf.modeling.vision import ShardedConv3d
 
 
 class ShardedLayerNorm(ShardedModule):
@@ -453,7 +453,7 @@ class ShardedWanVAE(ShardedModule):
     ):
         super().__init__()
 
-        from llm_perf.modeling.models.vision_models import ShardedVAEEncoder, ShardedVAEDecoder
+        from llm_perf.modeling.vision import ShardedVAEEncoder, ShardedVAEDecoder
 
         self.encoder = ShardedVAEEncoder(
             in_channels=in_channels,

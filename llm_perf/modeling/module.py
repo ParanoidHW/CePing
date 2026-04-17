@@ -11,7 +11,7 @@ from .tensor import ShardedTensor
 from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
-    from llm_perf.modeling.parallel import ParallelContext
+    from llm_perf.modeling.parallel_context import ParallelContext
     from .op import CommOp
 
 
@@ -154,7 +154,7 @@ class ShardedModule:
     def _compute_op_flops(self, op: Any) -> int:
         """Compute FLOPs for a single operation."""
         from .op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
-        from ..kernels.functional import linear, flash_attention, rms_norm, silu
+        from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu
 
         try:
             if isinstance(op, MatmulOp):
@@ -178,7 +178,7 @@ class ShardedModule:
                     result = silu(input_shape, dtype=op.dtype)
                     return result.flops
             elif isinstance(op, EmbeddingOp):
-                from ..kernels.functional import embedding
+                from llm_perf.kernels.functional import embedding
 
                 vocab_size = op.weight.shape[0]
                 embedding_dim = op.weight.shape[1]
@@ -302,7 +302,7 @@ class ModuleInstance:
     def _infer_physical_flops(self, op: Any) -> int:
         """Derive physical FLOPs from operation."""
         from .op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
-        from ..kernels.functional import linear, flash_attention, rms_norm, silu
+        from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu
 
         try:
             if isinstance(op, MatmulOp):
@@ -326,7 +326,7 @@ class ModuleInstance:
                     result = silu(input_physical, dtype=op.dtype)
                     return result.flops
             elif isinstance(op, EmbeddingOp):
-                from ..kernels.functional import embedding
+                from llm_perf.kernels.functional import embedding
 
                 vocab_physical = self._infer_physical_shape(op.weight)
                 vocab_size = vocab_physical[0]

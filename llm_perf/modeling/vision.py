@@ -7,10 +7,79 @@ Includes:
 """
 
 from typing import Tuple
-from llm_perf.modeling.base.module import ShardedModule
-from llm_perf.modeling.base.tensor import ShardedTensor
-from llm_perf.modeling.utils.vision import ShardedConv2d, ShardedConv3d, ShardedGroupNorm
+from llm_perf.modeling.module import ShardedModule
+from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.modeling.op import Conv2dOp, Conv3dOp, GroupNormOp
 from llm_perf.modeling.layers import silu
+
+
+class ShardedConv2d(ShardedModule):
+    """2D Convolution layer."""
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=(1, 1), padding=(0, 0), dtype="fp16"):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
+        self.stride = stride
+        self.padding = padding
+
+        self.weight = ShardedTensor(
+            shape=(out_channels, in_channels, *self.kernel_size),
+            shardable={},
+            dtype=dtype,
+            name="weight",
+        )
+
+    def forward(self, x):
+        return Conv2dOp.apply(x, self.weight, self.stride, self.padding)
+
+
+class ShardedConv3d(ShardedModule):
+    """3D Convolution layer."""
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=(1, 1, 1), padding=(0, 0, 0), dtype="fp16"):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size, kernel_size)
+        self.stride = stride
+        self.padding = padding
+
+        self.weight = ShardedTensor(
+            shape=(out_channels, in_channels, *self.kernel_size),
+            shardable={},
+            dtype=dtype,
+            name="weight",
+        )
+
+    def forward(self, x):
+        return Conv3dOp.apply(x, self.weight, self.stride, self.padding)
+
+
+class ShardedGroupNorm(ShardedModule):
+    """Group Normalization layer."""
+
+    def __init__(self, num_groups, num_channels, dtype="fp16"):
+        super().__init__()
+        self.num_groups = num_groups
+        self.num_channels = num_channels
+
+        self.weight = ShardedTensor(
+            shape=(num_channels,),
+            shardable={},
+            dtype=dtype,
+            name="weight",
+        )
+        self.bias = ShardedTensor(
+            shape=(num_channels,),
+            shardable={},
+            dtype=dtype,
+            name="bias",
+        )
+
+    def forward(self, x):
+        return GroupNormOp.apply(x, self.weight, self.bias, self.num_groups)
 
 
 class ShardedResNetBlock2d(ShardedModule):

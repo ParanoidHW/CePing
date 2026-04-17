@@ -8,7 +8,7 @@ Includes:
 from typing import Dict, Optional, List, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from llm_perf.modeling.base.module import ShardedModule
+    from llm_perf.modeling.module import ShardedModule
 
 
 class PPStrategy:

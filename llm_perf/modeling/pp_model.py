@@ -7,7 +7,7 @@ Includes:
 
 from typing import Dict, Optional, List, Any, TYPE_CHECKING
 
-from llm_perf.modeling.base import ShardedModule, ModuleInstance, ShardedTensor
+from llm_perf.modeling.module import ShardedModule, ModuleInstance, ShardedTensor
 from .pp_strategy import PPStrategy
 from llm_perf.utils.constants import DTYPE_SIZES
 

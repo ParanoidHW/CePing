@@ -11,9 +11,9 @@ from llm_perf.modeling import (
     ShardedVAEEncoder,
     ShardedVAEDecoder,
     ShardedVAE,
-    conv2d,
-    conv3d,
+    ShardedResNet,
 )
+from llm_perf.kernels.functional import conv2d, conv3d
 
 
 class TestShardedConv2d:

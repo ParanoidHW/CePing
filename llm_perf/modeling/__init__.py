@@ -1,21 +1,11 @@
 """Unified modeling framework for LLM performance evaluation.
 
 PyTorch-like interface for defining models with automatic sharding constraints.
-
-Structure:
-- base: ShardedTensor, ShardedModule, Op
-- layers: ShardedEmbedding, ShardedAttention, ShardedFFN, ShardedMLA
-- models: LlamaModel, DeepSeekModel, ShardedVAE, ShardedResNet, Wan models
-- parallel: ParallelContext, PPModel, PPStrategy
-- utils: ModelingRegistry, create_model_from_config
 """
 
-from .base import (
-    ShardedTensor,
-    ShardedModule,
-    ModuleInstance,
-    WeightInstance,
-    ActivationInstance,
+from .tensor import ShardedTensor
+from .module import ShardedModule, ModuleInstance, WeightInstance, ActivationInstance
+from .op import (
     Op,
     MatmulOp,
     AttentionOp,
@@ -38,17 +28,21 @@ from .layers import (
     ShardedFFN,
     ShardedLMHead,
     ShardedMoE,
-    ShardedMLA,
     silu,
     gelu,
     flash_attention,
 )
+
+from .mla import ShardedMLA
 
 from .models import (
     ShardedTransformerBlock,
     ShardedMoEBlock,
     LlamaModel,
     DeepSeekModel,
+)
+
+from .vision import (
     ShardedConv2d,
     ShardedConv3d,
     ShardedGroupNorm,
@@ -60,6 +54,9 @@ from .models import (
     ShardedVAEDecoder,
     ShardedVAE,
     ShardedResNet,
+)
+
+from .wan import (
     ShardedLayerNorm,
     ShardedT5Block,
     ShardedWanTextEncoder,
@@ -68,26 +65,16 @@ from .models import (
     ShardedWanVAE,
 )
 
-from .parallel import (
-    ParallelContext,
-    SPType,
-    CommDomain,
-    PPStrategy,
-    PPSchedule,
-    PPModel,
-    PPStageModule,
-)
+from .parallel_context import ParallelContext, SPType, CommDomain
+from .pp_strategy import PPStrategy, PPSchedule
+from .pp_model import PPModel, PPStageModule
 
-from .utils import (
-    SimpleModelConfig,
-    conv2d,
-    conv3d,
-)
+from .config_compat import SimpleModelConfig
 
 
 def get_registry():
     """Lazy load registry to avoid circular imports."""
-    from .utils.registry import (
+    from .registry import (
         ModelingRegistry,
         ModelInfo,
         register_all_models,
@@ -200,6 +187,4 @@ __all__ = [
     "get_presets_by_sparse_type",
     "create_model_from_config",
     "SimpleModelConfig",
-    "conv2d",
-    "conv3d",
 ]

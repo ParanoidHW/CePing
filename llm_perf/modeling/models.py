@@ -6,8 +6,8 @@ Includes:
 """
 
 from typing import Optional, Union, TYPE_CHECKING
-from llm_perf.modeling.base.module import ShardedModule, ModuleInstance
-from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.module import ShardedModule, ModuleInstance
+from llm_perf.modeling.tensor import ShardedTensor
 from llm_perf.modeling.layers import (
     ShardedEmbedding,
     ShardedRMSNorm,
@@ -16,12 +16,12 @@ from llm_perf.modeling.layers import (
     ShardedLMHead,
     ShardedMoE,
 )
-from llm_perf.modeling.utils.config_compat import SimpleModelConfig
+from llm_perf.modeling.config_compat import SimpleModelConfig
 
 if TYPE_CHECKING:
-    from llm_perf.modeling.parallel.parallel_context import ParallelContext
+    from llm_perf.modeling.parallel_context import ParallelContext
     from .pp_strategy import PPStrategy
-    from llm_perf.modeling.parallel.pp_model import PPModel
+    from llm_perf.modeling.pp_model import PPModel
 
 
 class ShardedTransformerBlock(ShardedModule):
@@ -236,7 +236,7 @@ class LlamaModel(ShardedModule):
         if pp_strategy is None:
             return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
         else:
-            from llm_perf.modeling.parallel.pp_model import PPModel
+            from llm_perf.modeling.pp_model import PPModel
 
             return PPModel(self, pp_strategy)
 
@@ -500,6 +500,6 @@ class DeepSeekModel(ShardedModule):
         if pp_strategy is None:
             return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
         else:
-            from llm_perf.modeling.parallel.pp_model import PPModel
+            from llm_perf.modeling.pp_model import PPModel
 
             return PPModel(self, pp_strategy)
