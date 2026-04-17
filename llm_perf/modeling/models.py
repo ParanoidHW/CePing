@@ -16,6 +16,7 @@ from .layers import (
     ShardedLMHead,
     ShardedMoE,
 )
+from .config_compat import SimpleModelConfig
 
 if TYPE_CHECKING:
     from .parallel_context import ParallelContext
@@ -151,6 +152,18 @@ class LlamaModel(ShardedModule):
         self.head_dim = head_dim
         self.max_seq_len = max_seq_len
         self.dtype = dtype
+
+        self.config = SimpleModelConfig(
+            name="llama",
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_attention_heads=num_heads,
+            num_key_value_heads=num_kv_heads,
+            intermediate_size=intermediate_size,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+        )
 
         self.embedding = ShardedEmbedding(
             num_embeddings=vocab_size,
@@ -392,6 +405,20 @@ class DeepSeekModel(ShardedModule):
         self.shared_expert_intermediate = shared_expert_intermediate
         self.moe_intermediate_size = moe_intermediate_size
         self.dtype = dtype
+
+        self.config = SimpleModelConfig(
+            name="deepseek",
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_attention_heads=num_heads,
+            num_key_value_heads=num_kv_heads,
+            intermediate_size=intermediate_size,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            num_experts=num_experts,
+            num_experts_per_token=num_experts_per_token,
+        )
 
         from .layers import ShardedMoE
 

@@ -68,6 +68,8 @@ from .vision_models import (
     ShardedVAE,
 )
 
+from .config_compat import SimpleModelConfig
+
 from .wan import (
     ShardedLayerNorm,
     ShardedT5Block,
