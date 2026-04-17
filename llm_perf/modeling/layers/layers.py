@@ -9,9 +9,9 @@ Includes:
 """
 
 from typing import Optional
-from .module import ShardedModule
-from .tensor import ShardedTensor
-from .op import RMSNormOp, EmbeddingOp, ActivationOp
+from llm_perf.modeling.base.module import ShardedModule
+from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.base.op import RMSNormOp, EmbeddingOp, ActivationOp
 
 
 class ShardedEmbedding(ShardedModule):
@@ -209,7 +209,7 @@ def flash_attention(
     Returns:
         output: (batch, heads, seq, head_dim)
     """
-    from .op import AttentionOp
+    from llm_perf.modeling.base.op import AttentionOp
 
     batch, heads, seq, head_dim = query.shape
 
@@ -541,7 +541,7 @@ class ShardedMoE(ShardedModule):
         """
         router_logits = hidden @ self.router_weight
 
-        from .op import MoEExpertOp
+        from llm_perf.modeling.base.op import MoEExpertOp
 
         expert_out = ShardedTensor(
             shape=hidden.shape,

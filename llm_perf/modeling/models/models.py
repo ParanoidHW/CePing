@@ -6,9 +6,9 @@ Includes:
 """
 
 from typing import Optional, Union, TYPE_CHECKING
-from .module import ShardedModule, ModuleInstance
-from .tensor import ShardedTensor
-from .layers import (
+from llm_perf.modeling.base.module import ShardedModule, ModuleInstance
+from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.layers import (
     ShardedEmbedding,
     ShardedRMSNorm,
     ShardedAttention,
@@ -16,12 +16,12 @@ from .layers import (
     ShardedLMHead,
     ShardedMoE,
 )
-from .config_compat import SimpleModelConfig
+from llm_perf.modeling.utils.config_compat import SimpleModelConfig
 
 if TYPE_CHECKING:
-    from .parallel_context import ParallelContext
+    from llm_perf.modeling.parallel.parallel_context import ParallelContext
     from .pp_strategy import PPStrategy
-    from .pp_model import PPModel
+    from llm_perf.modeling.parallel.pp_model import PPModel
 
 
 class ShardedTransformerBlock(ShardedModule):
@@ -236,7 +236,7 @@ class LlamaModel(ShardedModule):
         if pp_strategy is None:
             return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
         else:
-            from .pp_model import PPModel
+            from llm_perf.modeling.parallel.pp_model import PPModel
 
             return PPModel(self, pp_strategy)
 
@@ -420,7 +420,7 @@ class DeepSeekModel(ShardedModule):
             num_experts_per_token=num_experts_per_token,
         )
 
-        from .layers import ShardedMoE
+        from llm_perf.modeling.layers import ShardedMoE
 
         ShardedMoE
 
@@ -500,6 +500,6 @@ class DeepSeekModel(ShardedModule):
         if pp_strategy is None:
             return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
         else:
-            from .pp_model import PPModel
+            from llm_perf.modeling.parallel.pp_model import PPModel
 
             return PPModel(self, pp_strategy)

@@ -8,10 +8,10 @@ from typing import Dict, Optional, List, Any, Tuple, TYPE_CHECKING
 import math
 
 from .tensor import ShardedTensor
-from ..utils.constants import DTYPE_SIZES
+from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
-    from .parallel_context import ParallelContext
+    from llm_perf.modeling.parallel import ParallelContext
     from .op import CommOp
 
 

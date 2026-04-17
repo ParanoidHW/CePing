@@ -7,10 +7,10 @@ Includes:
 """
 
 from typing import Tuple
-from .module import ShardedModule
-from .tensor import ShardedTensor
-from .vision import ShardedConv2d, ShardedConv3d, ShardedGroupNorm
-from .layers import silu
+from llm_perf.modeling.base.module import ShardedModule
+from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.utils.vision import ShardedConv2d, ShardedConv3d, ShardedGroupNorm
+from llm_perf.modeling.layers import silu
 
 
 class ShardedResNetBlock2d(ShardedModule):
@@ -315,7 +315,7 @@ class ShardedAttentionBlock2d(ShardedModule):
             name="qkv_flat",
         )
 
-        from .layers import flash_attention
+        from llm_perf.modeling.layers import flash_attention
 
         q = ShardedTensor(
             shape=(batch, self.num_heads, h * w, self.head_dim),
@@ -398,7 +398,7 @@ class ShardedAttentionBlock3d(ShardedModule):
             name="qkv_flat",
         )
 
-        from .layers import flash_attention
+        from llm_perf.modeling.layers import flash_attention
 
         q = ShardedTensor(
             shape=(batch, self.num_heads, t * seq_len, self.head_dim),

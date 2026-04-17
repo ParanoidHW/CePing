@@ -6,10 +6,12 @@ Provides unified interface for model creation via:
 3. Name mode: config contains 'name' field
 """
 
-from typing import Optional, Dict, Any, Callable
-from .models import LlamaModel, DeepSeekModel
-from .vision_models import ShardedVAE, ShardedResNet
-from .wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
+from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from llm_perf.modeling.models import LlamaModel, DeepSeekModel
+    from llm_perf.modeling.models import ShardedVAE, ShardedResNet
+    from llm_perf.modeling.models import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
 
 
 class ModelInfo:

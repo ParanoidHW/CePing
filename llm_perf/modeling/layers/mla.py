@@ -14,10 +14,10 @@ Reference: https://huggingface.co/deepseek-ai/DeepSeek-V2
 """
 
 from typing import Optional
-from .module import ShardedModule
-from .tensor import ShardedTensor
-from .layers import flash_attention
-from .op import MatmulOp
+from llm_perf.modeling.base.module import ShardedModule
+from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.layers import flash_attention
+from llm_perf.modeling.base.op import MatmulOp
 
 
 class ShardedMLA(ShardedModule):

@@ -1,20 +1,21 @@
-"""Torch-like unified modeling framework for distributed training/inference.
+"""Unified modeling framework for LLM performance evaluation.
 
-This module provides a PyTorch-like interface for defining models with
-automatic sharding constraint derivation and performance estimation.
+PyTorch-like interface for defining models with automatic sharding constraints.
 
-Key components:
-- ShardedTensor: Tensor with sharding constraints, like torch.Tensor
-- ShardedModule: Module base class, like torch.nn.Module
-- ParallelContext: Parallel strategy context
-- ModuleInstance: Runtime instance with physical shape and performance
-- PPStrategy: Pipeline parallelism strategy
-- PPModel: Model wrapper with PP stage division
+Structure:
+- base: ShardedTensor, ShardedModule, Op
+- layers: ShardedEmbedding, ShardedAttention, ShardedFFN, ShardedMLA
+- models: LlamaModel, DeepSeekModel, ShardedVAE, ShardedResNet, Wan models
+- parallel: ParallelContext, PPModel, PPStrategy
+- utils: ModelingRegistry, create_model_from_config
 """
 
-from .tensor import ShardedTensor
-from .module import ShardedModule, ModuleInstance, WeightInstance, ActivationInstance
-from .op import (
+from .base import (
+    ShardedTensor,
+    ShardedModule,
+    ModuleInstance,
+    WeightInstance,
+    ActivationInstance,
     Op,
     MatmulOp,
     AttentionOp,
@@ -29,7 +30,7 @@ from .op import (
     Conv3dOp,
     GroupNormOp,
 )
-from .parallel_context import ParallelContext, SPType, CommDomain
+
 from .layers import (
     ShardedEmbedding,
     ShardedRMSNorm,
@@ -37,6 +38,7 @@ from .layers import (
     ShardedFFN,
     ShardedLMHead,
     ShardedMoE,
+    ShardedMLA,
     silu,
     gelu,
     flash_attention,
@@ -47,41 +49,9 @@ from .models import (
     ShardedMoEBlock,
     LlamaModel,
     DeepSeekModel,
-)
-
-from .pp_strategy import PPStrategy, PPSchedule
-from .pp_model import PPModel, PPStageModule
-
-from .vision import (
     ShardedConv2d,
     ShardedConv3d,
     ShardedGroupNorm,
-    conv2d,
-    conv3d,
-)
-
-from .vision_models import (
-    ShardedResNetBlock2d,
-    ShardedResNetBlock3d,
-    ShardedVAEEncoder,
-    ShardedVAEDecoder,
-    ShardedVAE,
-)
-
-from .config_compat import SimpleModelConfig
-
-from .wan import (
-    ShardedLayerNorm,
-    ShardedT5Block,
-    ShardedWanTextEncoder,
-    ShardedWanDiTBlock,
-    ShardedWanDiT,
-    ShardedWanVAE,
-)
-
-from .mla import ShardedMLA
-
-from .vision_models import (
     ShardedResNetBlock2d,
     ShardedResNetBlock3d,
     ShardedAttentionBlock2d,
@@ -90,16 +60,81 @@ from .vision_models import (
     ShardedVAEDecoder,
     ShardedVAE,
     ShardedResNet,
+    ShardedLayerNorm,
+    ShardedT5Block,
+    ShardedWanTextEncoder,
+    ShardedWanDiTBlock,
+    ShardedWanDiT,
+    ShardedWanVAE,
 )
 
-from .registry import (
-    ModelingRegistry,
-    ModelInfo,
-    register_all_models,
-    get_model_presets,
-    get_presets_by_sparse_type,
-    create_model_from_config,
+from .parallel import (
+    ParallelContext,
+    SPType,
+    CommDomain,
+    PPStrategy,
+    PPSchedule,
+    PPModel,
+    PPStageModule,
 )
+
+from .utils import (
+    SimpleModelConfig,
+    conv2d,
+    conv3d,
+)
+
+
+def get_registry():
+    """Lazy load registry to avoid circular imports."""
+    from .utils.registry import (
+        ModelingRegistry,
+        ModelInfo,
+        register_all_models,
+        get_model_presets,
+        get_presets_by_sparse_type,
+        create_model_from_config,
+    )
+
+    return (
+        ModelingRegistry,
+        ModelInfo,
+        register_all_models,
+        get_model_presets,
+        get_presets_by_sparse_type,
+        create_model_from_config,
+    )
+
+
+ModelingRegistry = None
+ModelInfo = None
+register_all_models = None
+get_model_presets = None
+get_presets_by_sparse_type = None
+create_model_from_config = None
+
+
+def __getattr__(name):
+    if name in [
+        "ModelingRegistry",
+        "ModelInfo",
+        "register_all_models",
+        "get_model_presets",
+        "get_presets_by_sparse_type",
+        "create_model_from_config",
+    ]:
+        funcs = get_registry()
+        mapping = {
+            "ModelingRegistry": funcs[0],
+            "ModelInfo": funcs[1],
+            "register_all_models": funcs[2],
+            "get_model_presets": funcs[3],
+            "get_presets_by_sparse_type": funcs[4],
+            "create_model_from_config": funcs[5],
+        }
+        return mapping[name]
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
 
 __all__ = [
     "ShardedTensor",
@@ -120,31 +155,23 @@ __all__ = [
     "Conv2dOp",
     "Conv3dOp",
     "GroupNormOp",
-    "ParallelContext",
-    "SPType",
-    "CommDomain",
     "ShardedEmbedding",
     "ShardedRMSNorm",
     "ShardedAttention",
     "ShardedFFN",
     "ShardedLMHead",
     "ShardedMoE",
+    "ShardedTransformerBlock",
+    "ShardedMoEBlock",
+    "ShardedMLA",
     "silu",
     "gelu",
     "flash_attention",
-    "ShardedTransformerBlock",
-    "ShardedMoEBlock",
     "LlamaModel",
     "DeepSeekModel",
-    "PPStrategy",
-    "PPSchedule",
-    "PPModel",
-    "PPStageModule",
     "ShardedConv2d",
     "ShardedConv3d",
     "ShardedGroupNorm",
-    "conv2d",
-    "conv3d",
     "ShardedResNetBlock2d",
     "ShardedResNetBlock3d",
     "ShardedAttentionBlock2d",
@@ -159,11 +186,20 @@ __all__ = [
     "ShardedWanDiTBlock",
     "ShardedWanDiT",
     "ShardedWanVAE",
-    "ShardedMLA",
+    "ParallelContext",
+    "SPType",
+    "CommDomain",
+    "PPStrategy",
+    "PPSchedule",
+    "PPModel",
+    "PPStageModule",
     "ModelingRegistry",
     "ModelInfo",
     "register_all_models",
     "get_model_presets",
     "get_presets_by_sparse_type",
     "create_model_from_config",
+    "SimpleModelConfig",
+    "conv2d",
+    "conv3d",
 ]

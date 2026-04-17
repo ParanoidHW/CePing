@@ -7,9 +7,9 @@ Includes:
 """
 
 from typing import Tuple
-from .module import ShardedModule
-from .tensor import ShardedTensor
-from .op import Conv2dOp, Conv3dOp, GroupNormOp
+from llm_perf.modeling.base.module import ShardedModule
+from llm_perf.modeling.base.tensor import ShardedTensor
+from llm_perf.modeling.base.op import Conv2dOp, Conv3dOp, GroupNormOp
 
 
 class ShardedConv2d(ShardedModule):

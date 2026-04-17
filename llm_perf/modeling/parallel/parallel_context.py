@@ -8,8 +8,8 @@ from typing import Dict, Optional, Any, List, TYPE_CHECKING
 from enum import Enum
 
 if TYPE_CHECKING:
-    from ..strategy.base import StrategyConfig
-    from ..hardware.cluster import Cluster
+    from llm_perf.strategy.base import StrategyConfig
+    from llm_perf.hardware.cluster import Cluster
 
 
 class SPType(Enum):

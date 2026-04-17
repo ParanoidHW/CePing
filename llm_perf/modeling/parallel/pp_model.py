@@ -7,10 +7,9 @@ Includes:
 
 from typing import Dict, Optional, List, Any, TYPE_CHECKING
 
-from .module import ShardedModule, ModuleInstance
-from .tensor import ShardedTensor
+from llm_perf.modeling.base import ShardedModule, ModuleInstance, ShardedTensor
 from .pp_strategy import PPStrategy
-from ..utils.constants import DTYPE_SIZES
+from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
     from .parallel_context import ParallelContext
