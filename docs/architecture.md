@@ -2,120 +2,260 @@
 
 ## 整体架构
 
-LLM Performance Evaluator 采用分层架构设计，将模型定义、硬件抽象、Kernel 评估、策略配置和性能分析解耦，实现高内聚低耦合的系统结构。
+LLM Performance Evaluator 采用分层架构设计，将应用接口、场景建模、性能分析、Kernel评估、策略配置、硬件抽象和模型定义解耦，实现高内聚低耦合的系统结构。
+
+**设计目标**:
+1. **易用性**: 一行代码评估性能，自动搜索最优策略，给定预算求最大Batch
+2. **高可扩展性**: 新模型/新场景通过继承基类并注册，无需修改现有代码
+3. **合理分层**: Kernel评估支持多种方案（理论/实测/微架构），避免霰弹式修改
+4. **框架调度预留**: 为上层训推框架的调度特性建模预留扩展接口
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Reporter Layer                           │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   Console   │  │    JSON     │  │          HTML           │  │
-│  │   Table     │  │   Export    │  │    Visualization        │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│                        Analyzer Layer                           │
-│  ┌─────────────────────┐  ┌─────────────────────────────────┐   │
-│  │  Training Analyzer  │  │      Inference Analyzer         │   │
-│  │  - Throughput       │  │  - TTFT (Time To First Token)   │   │
-│  │  - Memory Usage     │  │  - TPOT (Time Per Output Token) │   │
-│  │  - Comm Overhead    │  │  - TPS  (Tokens Per Second)     │   │
-│  └─────────────────────┘  └─────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                        Strategy Layer                           │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Parallel Strategy (TP / PP / DP / EP / SP / CP)         │   │
-│  │  - Device Assignment    - Communication Pattern          │   │
-│  └──────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                        Kernel Layer                             │
-│  ┌────────────────────────┐  ┌──────────────────────────────┐   │
-│  │   Compute Kernels      │  │   Communication Kernels      │   │
-│  │  - GEMM (CUBE Core)    │  │  - AllReduce                 │   │
-│  │  - Attention (FA/SDPA) │  │  - AllGather                 │   │
-│  │  - Activation (VECTOR) │  │  - AllToAll                  │   │
-│  │  - Normalization       │  │  - Broadcast                 │   │
-│  │  - MLA (DeepSeek)      │  │                              │   │
-│  └────────────────────────┘  └──────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                        Hardware Layer                           │
-│  ┌────────────────────┐  ┌──────────────────────────────────┐   │
-│  │   Device (GPU)     │  │   Cluster (Network Topology)     │   │
-│  │  - Compute TFLOPS  │  │  - Intra-node Bandwidth          │   │
-│  │  - Memory BW       │  │  - Inter-node Bandwidth          │   │
-│  │  - Memory Capacity │  │  - Latency Model                 │   │
-│  └────────────────────┘  └──────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                        Model Layer                              │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
-│  │Llama Model  │ │  MoE Model  │ │DeepSeek-V2/3│ │  ResNet   │  │
-│  │- Attention  │ │- Expert Par │ │- MLA Attn   │ │- CNN Block │  │
-│  │- FFN Layers │ │- Router/Gate│ │- GQA        │ │- Conv2d    │  │
-│  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
-│  ┌─────────────┐ ┌─────────────┐ ┌───────────────────────────┐   │
-│  │  VAE Model  │ │ Wan Video   │ │         ...               │   │
-│  │- Conv3d     │ │- DiT Block  │ │                           │   │
-│  │- Encoder/Dec│ │- Text Enc   │ │                           │   │
-│  └─────────────┘ └─────────────┘ └───────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Application Layer (易用性)                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐   │
+│  │   Evaluator  │  │  Optimizer   │  │      BatchOptimizer      │   │
+│  │ (便捷评估)   │  │ (策略搜索)   │  │  (给定预算求最大Batch)   │   │
+│  └──────────────┘  └──────────────┘  └──────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Scenario Layer (高可扩展)                        │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────────┐      │
+│  │ LLM Train  │ │ LLM Infer  │ │ PD-Disagg  │ │  RL-Train    │      │
+│  │(传统训练)  │ │(传统推理)  │ │(PD分离)    │ │ (RL后训练)   │      │
+│  └────────────┘ └────────────┘ └────────────┘ └──────────────┘      │
+│  ┌────────────┐ ┌────────────┐ ┌────────────────────────────────┐   │
+│  │ Diffusion  │ │ MultiModal │ │      Custom Scenario           │   │
+│  │(扩散生成)  │ │ (多模态)   │ │    (用户自定义场景)            │   │
+│  └────────────┘ └────────────┘ └────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────┤
+│                    Scheduler Layer (框架调度预留)                    │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  SchedulerFeature: Overlap / PipelineBubble / Chunking / ...  │  │
+│  │  (计算通信重叠、PP Bubble、序列分块、KV预取等调度特性建模)    │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Reporter Layer                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐      │
+│  │   Console   │  │    JSON     │  │          HTML           │      │
+│  │   Table     │  │   Export    │  │    Visualization        │      │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘      │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Analyzer Layer                               │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │
+│  │Training Ana  │ │Inference Ana │ │ Memory Est.  │ │ Comm Est.  │  │
+│  │ - Throughput │ │ - TTFT/TPOT  │ │ - Parameters │ │ - AllRed.  │  │
+│  │ - Memory     │ │ - KV Cache   │ │ - Activations│ │ - AllToAll │  │
+│  └──────────────┘ └──────────────┘ └──────────────┘ └────────────┘  │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Strategy Layer                               │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │
+│  │ TP/PP/DP/EP  │ │   SP/CP      │ │  Optimizer   │ │ Scheduler  │  │
+│  │ (并行策略)   │ │ (序列并行)   │ │ (优化器建模) │ │ (调度配置) │  │
+│  └──────────────┘ └──────────────┘ └──────────────┘ └────────────┘  │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Kernel Layer (可插拔 Backend)                    │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │              KernelBackend (可插拔评估方案)                    │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐  │  │
+│  │  │ TheoryBack  │ │ ProfilingBk │ │   MicroarchBackend      │  │  │
+│  │  │ (FLOPs理论) │ │ (实测数据)  │ │   (微架构建模)          │  │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────┐  ┌──────────────────────────────────────┐  │
+│  │   Compute Kernels  │  │       Communication Kernels          │  │
+│  │  - linear/GEMM     │  │  - allreduce (Ring/Tree)             │  │
+│  │  - attention       │  │  - allgather                         │  │
+│  │  - conv2d/conv3d   │  │  - alltoall                          │  │
+│  └────────────────────┘  └──────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Hardware Layer                               │
+│  ┌────────────────────┐  ┌──────────────────────────────────────┐  │
+│  │    Device (GPU)    │  │    Cluster (Network Topology)        │  │
+│  │  - Compute TFLOPS  │  │  - 2-Tier / 3-Tier Clos             │  │
+│  │  - Memory BW       │  │  - Fat-Tree / CloudMatrix           │  │
+│  │  - Memory Capacity │  │  - Bandwidth Hierarchy              │  │
+│  └────────────────────┘  └──────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────────┤
+│                        Model Layer                                  │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────────┐      │
+│  │ Llama      │ │    MoE     │ │ DeepSeek   │ │    ResNet    │      │
+│  │ - Attention│ │ - Experts  │ │ - MLA      │ │ - CNN Blocks │      │
+│  │ - FFN      │ │ - Router   │ │ - GQA      │ │ - Conv2d     │      │
+│  └────────────┘ └────────────┘ └────────────┘ └──────────────┘      │
+│  ┌────────────┐ ┌────────────┐ ┌────────────────────────────────┐   │
+│  │    VAE     │ │ Wan Video  │ │         Custom Model            │   │
+│  │ - Conv3d   │ │ - DiT      │ │      (用户自定义模型)           │   │
+│  └────────────┘ └────────────┘ └────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## 模块职责
 
-### 1. Model Layer
+### 1. Application Layer (易用性API)
 
-**职责**: 定义模型结构和层配置，使用 Kernel API 构建层
+**职责**: 提供便捷的高层接口，让用户能快速评估性能、搜索最优策略、优化Batch
 
 **核心类**:
-| 类名 | 职责 |
-|------|------|
-| `BaseModel` | 抽象基类，定义模型接口 |
-| `LlamaModel` | Llama 架构实现（支持 GQA） |
-| `MoEModel` | MoE 架构实现，支持 EP |
-| `DeepSeekModel` | DeepSeek-V2/V3 架构，支持 MLA |
-| `LayerConfig` | 层配置（输入/输出形状、参数量、FLOPs） |
 
-**设计要点**:
-- 每个 Layer 配置包含：输入/输出形状、参数量、FLOPs、激活内存
-- 模型使用 `kernel_result_to_layer()` 从 KernelResult 构建 LayerConfig
-- KernelResult 自动包含 params、flops、memory 信息
-- 支持自动计算总参数量和总 FLOPs
+| 类名 | 职责 | 主要方法 |
+|------|------|----------|
+| `Evaluator` | 便捷评估 | `evaluate_training()`, `evaluate_inference()`, `compare_strategies()` |
+| `StrategyOptimizer` | 策略搜索 | `search_best_strategy()`, `compare_strategies()` |
+| `BatchOptimizer` | Batch优化 | `find_max_batch()`, `find_max_tps()`, `estimate_memory_for_batch()` |
+| `LatencyBudget` | 时延预算 | `ttft_budget_ms`, `tpot_budget_ms`, `total_latency_budget_ms` |
 
-**模型构建示例**:
+**使用示例**:
+
 ```python
-from llm_perf.kernels import linear, rms_norm, scaled_dot_product_attention
-from llm_perf.kernels.utils import kernel_result_to_layer
+from llm_perf import Evaluator, StrategyOptimizer, BatchOptimizer, LatencyBudget
 
-# 使用 Kernel API 构建层
-q_result = linear(input=(m, hidden_size), weight=(q_dim, hidden_size), dtype="fp16")
-layers.append(kernel_result_to_layer(name="q_proj", result=q_result))
+# 一行代码评估训练性能
+result = Evaluator.evaluate_training(
+    "llama-70b", "h100_8gpu", "tp8",
+    batch_size=32, seq_len=4096,
+    detailed=True,
+)
+print(f"Throughput: {result.tokens_per_sec} tokens/s")
+print(f"Memory: {result.memory_per_gpu_gb} GB")
+
+# 一行代码评估推理性能
+result = Evaluator.evaluate_inference(
+    "llama-70b", "h100_8gpu", "tp8",
+    batch_size=8, prompt_len=1024, generation_len=128,
+)
+print(f"TTFT: {result.prefill_time_sec*1000} ms")
+print(f"TPOT: {result.decode_time_per_step_sec*1000} ms")
+
+# 自动搜索最优策略
+candidates = StrategyOptimizer.search_best_strategy(
+    "llama-70b", "h100_32gpu",
+    mode="training",
+    objective="throughput",
+    constraints={"max_memory_gb": 80},
+)
+for c in candidates:
+    print(f"TP={c.tp}, PP={c.pp}, Throughput={c.throughput}")
+
+# 给定预算求最大Batch
+result = BatchOptimizer.find_max_batch(
+    "llama-70b", "h100_8gpu", "tp8",
+    mode="inference",
+    latency_budget=LatencyBudget(ttft_budget_ms=50.0, tpot_budget_ms=2.0),
+    memory_budget_gb=80,
+)
+print(f"Max batch: {result.best_batch_size}")
 ```
 
-### 2. Hardware Layer
+### 2. Scenario Layer (高可扩展场景)
 
-**职责**: 抽象硬件能力，提供性能上限估计
+**职责**: 封装不同场景的评估逻辑，新场景通过继承并注册即可支持
 
 **核心类**:
+
 | 类名 | 职责 |
 |------|------|
-| `Device` | 单卡 GPU 能力（算力、带宽、显存） |
-| `Cluster` | 集群拓扑和通信带宽建模 |
-| `NetworkConfig` | 网络配置（机内/机间带宽、延迟） |
+| `Scenario` | 场景抽象基类 |
+| `ScenarioRegistry` | 场景注册中心 |
+| `LLMTrainingScenario` | 传统LLM训练场景 |
+| `LLMInferenceScenario` | 传统LLM推理场景 |
+| `PDDisaggScenario` | PD分离推理场景（Prefill-Decode分离） |
+| `RLTrainingScenario` | RL后训练场景（PPO/DPO等） |
+| `DiffusionScenario` | 扩散生成场景（文生图/文生视频） |
 
-**预设设备**:
-| 设备 | FP16 TFLOPS | 显存 | 内存带宽 |
-|------|-------------|------|----------|
-| H100-SXM-80GB | 989 | 80GB | 3.35 TB/s |
-| A100-SXM-80GB | 312 | 80GB | 2.04 TB/s |
-| MI300X | 1307 | 192GB | 5.3 TB/s |
-| Ascend-910B2 | 376 | 64GB | 1.6 TB/s |
+**添加新场景**:
 
-### 3. Kernel Layer
+```python
+from llm_perf.scenarios import Scenario, ScenarioRegistry
 
-**职责**: 独立评估算子和通信性能
+class MyCustomScenario(Scenario):
+    """自定义场景示例."""
+    
+    name = "my_custom_scenario"
+    
+    def get_analyzer(self, model, device, cluster, strategy):
+        return MyCustomAnalyzer(model, device, cluster, strategy)
+    
+    def analyze(self, config):
+        # 自定义分析逻辑
+        return result
 
-**设计原则**:
-- **可插拔**: 每个 Kernel 可独立替换或扩展
-- **可测量**: 支持理论建模和实测数据校准
-- **自动计算**: memory_bound 基于算术强度自动判断
+# 注册场景（无需修改现有代码）
+ScenarioRegistry.register(MyCustomScenario)
+
+# 使用场景
+from llm_perf import Evaluator
+result = Evaluator.evaluate_scenario(
+    scenario="my_custom_scenario",
+    model="my_model",
+    hardware="h100_8gpu",
+)
+```
+
+### 3. Scheduler Layer (框架调度预留)
+
+**职责**: 为上层训推框架的调度特性建模预留扩展接口
+
+**核心类**:
+
+| 类名 | 职责 |
+|------|------|
+| `SchedulerFeature` | 调度特性抽象基类 |
+| `SchedulerModel` | 调度模型组合器 |
+| `OverlapFeature` | 计算通信重叠建模 |
+| `PipelineBubbleFeature` | Pipeline Bubble 建模 |
+| `ChunkingFeature` | 序列分块内存优化 |
+| `PrefetchFeature` | KV预取时延优化 |
+
+**使用示例**:
+
+```python
+from llm_perf.scheduler import SchedulerModel, OverlapFeature
+from llm_perf.strategy.base import StrategyConfig
+
+# 启用计算通信重叠
+strategy = StrategyConfig(
+    tp_degree=8,
+    scheduler_features=["overlap"],
+    overlap_enabled=True,
+    overlap_efficiency=0.8,
+)
+
+# 在分析结果中应用调度特性
+scheduler = SchedulerModel.from_strategy(strategy)
+result = scheduler.apply_all(analyzer_result)
+```
+
+### 4. Kernel Layer (可插拔 Backend)
+
+**职责**: 独立评估算子和通信性能，支持多种评估方案
+
+**Backend 架构**:
+
+| Backend | 描述 | 适用场景 |
+|---------|------|----------|
+| `TheoryBackend` | FLOPs/Roofline理论评估 | 快速估算、架构分析 |
+| `ProfilingBackend` | 实测数据查找和插值 | 精确建模、实际部署 |
+| `MicroarchBackend` | 基于硬件微架构建模 | 深度优化、硬件调优 |
+
+**切换 Backend**:
+
+```python
+from llm_perf.kernels.backend import KernelBackendRegistry
+
+# 默认使用理论评估
+backend = KernelBackendRegistry.get_backend("theory")
+
+# 切换到实测数据评估
+KernelBackendRegistry.set_default_backend("profiling")
+
+# 加载实测数据
+ProfilingBackend.load_data("profiling_results.json")
+
+# 或使用微架构评估（预留）
+KernelBackendRegistry.set_default_backend("microarch")
+```
 
 **Kernel 分类**:
 
@@ -126,126 +266,115 @@ layers.append(kernel_result_to_layer(name="q_proj", result=q_result))
 | Element-wise | VECTOR/CUDA Core | `silu`, `rms_norm`, `softmax` | 低算术强度 |
 | Communication | N/A | `allreduce`, `alltoall` | 网络带宽受限 |
 
-**Memory Bound 判断**:
-```python
-# 基于算术强度自动判断
-threshold_cube = 200.0   # CUBE/Tensor Core: ~200 FLOPs/byte
-threshold_vector = 50.0  # VECTOR/CUDA Core: ~50 FLOPs/byte
+### 5. Strategy Layer
 
-memory_bound = (arithmetic_intensity < threshold)
-```
-
-### 4. Strategy Layer
-
-**职责**: 管理并行策略和设备分配
+**职责**: 管理并行策略、优化器配置、调度特性
 
 **支持的并行方式**:
 
-```mermaid
-graph TB
-    subgraph "并行策略"
-        TP[Tensor Parallelism<br/>张量并行]
-        PP[Pipeline Parallelism<br/>流水线并行]
-        DP[Data Parallelism<br/>数据并行]
-        EP[Expert Parallelism<br/>专家并行]
-        SP[Sequence Parallelism<br/>序列并行]
-        CP[Context Parallelism<br/>上下文并行]
-    end
-    
-    TP --> |AllReduce| Comm1[通信]
-    PP --> |P2P| Comm2[通信]
-    DP --> |AllReduce| Comm1
-    EP --> |AllToAll| Comm3[通信]
-```
+| 并行类型 | 缩写 | 通信模式 | 适用场景 |
+|----------|------|----------|----------|
+| Tensor Parallelism | TP | AllReduce | 大模型单节点 |
+| Pipeline Parallelism | PP | P2P | 跨节点扩展 |
+| Data Parallelism | DP | AllReduce | ZeRO优化 |
+| Expert Parallelism | EP | AllToAll | MoE模型 |
+| Sequence Parallelism | SP | AllGather | 长序列 |
+| Context Parallelism | CP | Ring P2P | 超长序列 |
 
-### 5. Analyzer Layer
+**优化器建模**:
 
-**职责**: 综合分析性能并生成报告
+| 优化器 | 内存倍数 | 特点 |
+|--------|----------|------|
+| AdamW | 2x params (m+v) | 标准优化器 |
+| Lion | 1x params (m only) | 内存节省 |
+| Muon | 预留 | 自定义优化器 |
+
+### 6. Analyzer Layer
+
+**职责**: 综合分析性能，生成详细分解报告
 
 **分析维度**:
-1. **计算时间**: 基于 Roofline 模型
-2. **通信时间**: 基于通信算法和带宽
-3. **内存占用**: 参数、激活、KV Cache、优化器状态
-4. **重叠优化**: 计算和通信的重叠
+- **计算时间**: 基于 Roofline 模型，支持 backward 估算
+- **通信时间**: 基于通信算法和拓扑带宽
+- **内存占用**: 参数、激活、KV Cache、优化器状态
+- **详细分解**: 层级分解、Kernel分解、通信分解
 
-### 6. Reporter Layer
+**模块拆分**:
 
-**职责**: 多格式报告输出
+| 模块 | 职责 |
+|------|------|
+| `training.py` | 训练性能分析主逻辑 |
+| `inference.py` | 推理性能分析主逻辑 |
+| `memory.py` | 内存估算模块 |
+| `communication.py` | 通信估算模块 |
 
-| 格式 | 适用场景 |
-|------|----------|
-| Console Table | 快速查看、命令行交互 |
-| JSON | 程序化分析、数据存储 |
-| HTML | 可视化展示、分享报告 |
+### 7. Hardware Layer
 
-## Kernel API 架构
+**职责**: 抽象硬件能力和网络拓扑
 
-### KernelResult 数据结构
+**预设设备**:
 
-```python
-@dataclass
-class KernelResult:
-    output: Tuple[int, ...]       # 输出形状
-    flops: int                    # FLOPs
-    bytes_accessed: int           # 内存访问字节数
-    arithmetic_intensity: float   # 算术强度 (FLOPs/byte)
-    memory_bound: bool            # 是否内存受限（自动计算）
-    params: int = 0               # 参数量
-    param_bytes: int = 0          # 参数字节数
-    unit_type: str = "vector"     # 计算单元类型
-    dtype: str = "fp16"           # 数据类型
-```
+| 设备 | FP16 TFLOPS | 显存 | 内存带宽 | 特点 |
+|------|-------------|------|----------|------|
+| H100-SXM-80GB | 989 | 80GB | 3.35 TB/s | NVIDIA旗舰 |
+| A100-SXM-80GB | 312 | 80GB | 2.04 TB/s | Ampere架构 |
+| MI300X | 1307 | 192GB | 5.3 TB/s | AMD大显存 |
+| Ascend-910B2 | 376 | 64GB | 1.6 TB/s | 华为昇腾 |
 
-### 主要 Kernel 函数
+**网络拓扑**:
 
-| 函数 | 描述 | 支持的特性 |
+| 拓扑类型 | 描述 | 适用场景 |
+|----------|------|----------|
+| 2-Tier Simple | 机内NVLink + 机间IB | 单机/小集群 |
+| 3-Tier Clos | Leaf-Spine-Core | 中型数据中心 |
+| Fat-Tree | 数据中心胖树 | 大规模集群 |
+| CloudMatrix | 384 NPU全对等超节点 | 华为超节点 |
+
+### 8. Model Layer
+
+**职责**: 定义模型结构和层配置
+
+**支持的模型架构**:
+
+| 模型 | 特点 | Kernel支持 |
 |------|------|-----------|
-| `linear` | 矩阵乘法 | CUBE Core, 自动参数计算 |
-| `scaled_dot_product_attention` | 标准 Attention | GQA 支持 |
-| `flash_attention` | Flash Attention | 分块优化，减少 HBM 流量 |
-| `mla_attention` | MLA Attention | absorb/non-absorb 模式 |
-| `rms_norm` / `layer_norm` | 归一化 | VECTOR Core |
-| `silu` / `gelu` / `relu` | 激活函数 | VECTOR Core |
-| `conv2d` / `conv3d` | 卷积 | CUBE Core |
-| `embedding` | 嵌入查找 | VECTOR Core |
+| Llama | Dense Transformer | standard attention |
+| MoE (Mixtral) | 专家混合架构 | expert routing |
+| DeepSeek-V2/V3 | MLA + DeepSeekMoE | mla_attention |
+| ResNet | CNN视觉模型 | conv2d |
+| VAE | 3D卷积编解码 | conv3d |
+| Wan Video | DiT视频生成 | flash_attention |
 
-### 工具函数
-
-```python
-from llm_perf.kernels.utils import kernel_result_to_layer
-
-# 将 KernelResult 转换为 LayerConfig
-layer = kernel_result_to_layer(
-    name="linear_0",
-    result=kernel_result,
-    is_moe=False  # 可选
-)
-```
+---
 
 ## 数据流
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant CLI
-    participant Analyzer
-    participant Strategy
-    participant Kernel
-    participant Hardware
-    participant Reporter
-
-    User->>CLI: 输入配置
-    CLI->>Analyzer: 创建分析器
-    Analyzer->>Strategy: 获取并行策略
-    Analyzer->>Kernel: 查询 Kernel 性能
-    Kernel->>Hardware: 获取硬件能力
-    Hardware-->>Kernel: 返回算力/带宽
-    Kernel-->>Analyzer: 返回执行时间
-    Analyzer->>Analyzer: 计算通信开销
-    Analyzer->>Analyzer: 计算内存占用
-    Analyzer-->>Reporter: 生成报告数据
-    Reporter-->>User: 输出报告
 ```
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│   User   │───▶│Application│───▶│ Scenario │───▶│ Analyzer │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘
+                                                      │
+                    ┌─────────────────────────────────┼─────────────────┐
+                    │                                 │                 │
+                    ▼                                 ▼                 ▼
+              ┌──────────┐                    ┌──────────┐       ┌──────────┐
+              │ Strategy │                    │  Kernel  │       │ Hardware │
+              └──────────┘                    │(Backend) │       └──────────┘
+                    │                         └──────────┘              │
+                    │                              │                    │
+                    └──────────────────────────────┼────────────────────┘
+                                                   ▼
+                                           ┌──────────┐
+                                           │  Model   │
+                                           └──────────┘
+                                                   │
+                                                   ▼
+                                           ┌──────────┐
+                                           │ Reporter │───▶ Output
+                                           └──────────┘
+```
+
+---
 
 ## 扩展点
 
@@ -253,7 +382,7 @@ sequenceDiagram
 
 ```python
 from llm_perf.models.base import BaseModel, LayerConfig
-from llm_perf.kernels import linear, rms_norm
+from llm_perf.kernels import linear, rms_norm, flash_attention
 from llm_perf.kernels.utils import kernel_result_to_layer
 
 class MyModel(BaseModel):
@@ -261,62 +390,93 @@ class MyModel(BaseModel):
         layers = []
         
         # 使用 Kernel API 构建层
-        result = linear(...)
-        layers.append(kernel_result_to_layer(name="proj", result=result))
+        q_result = linear(input=(batch, seq, hidden), weight=(q_dim, hidden))
+        layers.append(kernel_result_to_layer(name="q_proj", result=q_result))
+        
+        attn_result = flash_attention(...)
+        layers.append(kernel_result_to_layer(name="attention", result=attn_result))
         
         return layers
+
+# 注册模型
+from llm_perf.models import ModelRegistry
+ModelRegistry.register("my_model", MyModel, MyConfig)
 ```
 
-### 添加新 Kernel
+### 添加新 Kernel Backend
 
 ```python
-from llm_perf.kernels.functional import KernelResult
+from llm_perf.kernels.backend import KernelBackend, KernelBackendRegistry
 
-def my_custom_kernel(input_shape, dtype="fp16") -> KernelResult:
-    # 计算 FLOPs 和内存访问
-    flops = ...
-    bytes_accessed = ...
+class MyCustomBackend(KernelBackend):
+    def estimate_compute_time(self, kernel_name, input_shapes, output_shape, dtype, device):
+        # 自定义评估逻辑
+        return computed_time
     
-    return KernelResult(
-        output=output_shape,
-        flops=flops,
-        bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed,
-        memory_bound=False,  # 会自动重新计算
-        input_shapes=[input_shape],
-        unit_type="cube",    # 或 "vector"
-        dtype=dtype
-    )
+    def estimate_comm_time(self, comm_type, data_size_bytes, num_ranks, bandwidth_gbps):
+        # 自定义通信评估
+        return comm_time
+
+# 注册 Backend
+KernelBackendRegistry.register_backend("my_backend", MyCustomBackend)
+KernelBackendRegistry.set_default_backend("my_backend")
 ```
 
-### 添加新策略
+### 添加新调度特性
 
 ```python
-from llm_perf.strategy.base import StrategyConfig
+from llm_perf.scheduler import SchedulerFeature
 
+class MySchedulerFeature(SchedulerFeature):
+    name = "my_feature"
+    
+    def apply_overlap(self, compute_time, comm_time):
+        # 自定义重叠逻辑
+        return overlapped_time
+    
+    def apply_memory_optimization(self, base_memory):
+        # 自定义内存优化
+        return optimized_memory
+
+# 使用特性
 strategy = StrategyConfig(
-    tp_degree=4,
-    pp_degree=2,
-    dp_degree=2,
-    custom_option=True
+    tp_degree=8,
+    scheduler_features=["my_feature"],
 )
 ```
+
+---
 
 ## 关键技术选型
 
 | 技术点 | 选型 | 理由 |
 |--------|------|------|
-| 性能模型 | Roofline | 统一描述计算和内存瓶颈 |
+| 性能模型 | Roofline + Backend | 统一描述计算和内存瓶颈，支持多种评估方案 |
 | 通信模型 | Ring/Tree 算法 | 实际分布式训练常用算法 |
-| 建模方式 | 理论+实测 | 可校准，提高准确性 |
-| 架构风格 | 分层+插件 | 易于扩展和维护 |
-| Kernel API | Torch-like | 开发者友好，易于上手 |
-| Memory Bound | 算术强度阈值 | 基于硬件特性自动判断 |
+| 架构风格 | 分层 + 插件 + 注册 | 易于扩展，避免霰弹式修改 |
+| 易用性 | Application Layer | 一行代码评估，降低使用门槛 |
+| 可扩展性 | Scenario + Registry | 新场景无需修改现有代码 |
+| Kernel API | Torch-like functional | 开发者友好，易于上手 |
 
-## 最近更新
+---
 
-### v2.0 (最新)
-- **Kernel API 重构**: 简化 `kernel_result_to_layer`，自动推断 dtype 和 params
-- **Attention 模块完善**: 支持 Flash Attention、GQA、MLA (absorb/non-absorb)
-- **Memory Bound 自动计算**: 基于算术强度和计算单元类型自动判断
-- **移除冗余代码**: layers.py 移至 examples，减少核心库维护负担
+## 版本历史
+
+### v3.0 (最新)
+- **Application Layer**: Evaluator/StrategyOptimizer/BatchOptimizer 便捷API
+- **Scenario Layer**: 场景基类和注册机制，支持LLM/PD-Disagg/RL/Diffusion
+- **Kernel Backend**: Theory/Profiling/Microarch 三种可插拔评估方案
+- **Scheduler Layer**: Overlap/PipelineBubble/Chunking 调度特性预留
+- **LatencyBudget**: 支持 TTFT/TPOT/Total latency 分离预算
+- **Analyzer拆分**: memory.py/communication.py 独立模块
+
+### v2.0
+- **Kernel API**: 简化 `kernel_result_to_layer`，自动推断 dtype 和 params
+- **Attention**: 支持 Flash Attention、GQA、MLA (absorb/non-absorb)
+- **Memory Bound**: 基于算术强度和计算单元类型自动判断
+- **网络拓扑**: Clos/Fat-Tree/CloudMatrix 支持
+
+### v1.0
+- **基础架构**: Model/Hardware/Kernel/Strategy/Analyzer 分层设计
+- **模型支持**: Llama/MoE/DeepSeek 基础模型
+- **硬件支持**: NVIDIA/AMD/Huawei GPU预设
