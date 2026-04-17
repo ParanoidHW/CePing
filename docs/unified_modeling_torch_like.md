@@ -2859,13 +2859,411 @@ print(json.dumps(result, indent=2))
 2. 实现 `ModuleInstance` (物理形态推导)
 3. 实现 `WeightInstance` 和 `ActivationInstance`
 
-### Phase 6: PP 策略
-1. 实现 `PPStrategy`
-2. 实现 `PPModel` 和 `PPStageModule`
-3. 实现 `PPSchedule`
+### Phase 6: PP 策略 (TODO - 待实现)
+
+**状态**: 待实现
+
+**优先级**: 高
+
+**预计工作量**: 中等
+
+#### 6.1 需求概述
+
+PP (Pipeline Parallelism) 需要独立的策略表达，因为涉及：
+1. **Stage划分**: 哪些层在哪个stage
+2. **Virtual PP (vpp)**: 一个GPU负责多个stage
+3. **Schedule**: 1F1B、GPipe、Interleaved等调度策略
+4. **Micro-batch数量**: 影响bubble time
+5. **与模型描述绑定**: PP stage划分需要与ShardedModule绑定
+
+#### 6.2 核心需求
+
+##### 6.2.1 PPStrategy - PP策略配置
+
+**需求**:
+- 支持自定义stage划分（手动指定哪些层在哪个stage）
+- 支持自动stage划分（按层数平均、按内存平衡）
+- 支持vpp配置（一个GPU负责多个stage）
+- 支持多种schedule类型
+- 支持micro-batch配置
+- 计算bubble ratio
+
+**接口设计**:
+```python
+class PPStrategy:
+    def __init__(
+        self,
+        num_stages: int,  # PP stage数量（物理划分）
+        num_virtual_stages: int = 1,  # vpp数量
+        schedule: str = "1f1b",  # "1f1b", "gpipe", "interleaved", "vpp"
+        num_micro_batches: int = 1,
+        micro_batch_size: int = 1,
+        stage_assignment: Optional[Dict[str, int]] = None,  # 自定义划分
+    )
+    
+    def assign_layers(
+        self,
+        model: ShardedModule,
+        method: str = "balanced",  # "balanced", "memory_balanced", "custom"
+    ) -> Dict[str, int]:
+        """自动或手动分配层到stage"""
+    
+    def get_bubble_ratio(self) -> float:
+        """计算bubble time比例"""
+```
+
+**bubble ratio计算**:
+- GPipe: `(num_stages - 1) / num_micro_batches`
+- 1F1B: `(num_stages - 1) / (num_stages + num_micro_batches - 1)`
+- Interleaved 1F1B: `(num_stages - 1) / (num_stages * num_virtual_stages + num_micro_batches - 1)`
+- VPP: 更复杂的计算
+
+##### 6.2.2 PPModel - PP模型包装
+
+**需求**:
+- 将完整模型按PP策略划分成多个stage
+- 支持单个stage的性能分析
+- 支持PP整体性能估算（含bubble time）
+- 支持stage间通信时间估算
+- 支持vpp的复杂通信计算
+
+**接口设计**:
+```python
+class PPModel(ShardedModule):
+    def __init__(
+        self,
+        model: ShardedModule,
+        pp_strategy: PPStrategy,
+    )
+    
+    def get_stage(self, stage_idx: int) -> PPStageModule:
+        """获取指定stage"""
+    
+    def get_all_stages(self) -> List[PPStageModule]:
+        """获取所有stage"""
+    
+    def bind_stage(self, stage_idx: int, ctx: ParallelContext) -> ModuleInstance:
+        """绑定单个stage"""
+    
+    def estimate_pp_time(self, backend: KernelBackend) -> Dict[str, float]:
+        """估算PP整体时间（含bubble）"""
+```
+
+**PP时间估算**:
+```python
+def estimate_pp_time(self, backend):
+    # 1. 获取各stage时间
+    stage_times = [stage.bind(ctx).estimate_time(backend) for stage in self.stages]
+    
+    # 2. 计算ideal time
+    ideal_time = max(stage_times) * num_micro_batches
+    
+    # 3. 计算bubble time
+    bubble_time = ideal_time * pp_strategy.get_bubble_ratio()
+    
+    # 4. 计算stage间通信时间
+    activation_bytes = estimate_activation_bytes_between_stages()
+    comm_time = cluster.estimate_p2p_time(activation_bytes) * (num_stages - 1)
+    
+    # 5. vpp特殊处理
+    if vpp > 1:
+        vpp_comm_time = comm_time * vpp
+    
+    return {
+        "ideal_time_sec": ideal_time,
+        "bubble_time_sec": bubble_time,
+        "bubble_ratio": bubble_ratio,
+        "stage_comm_time_sec": comm_time,
+        "total_time_sec": ideal_time + bubble_time + comm_time,
+        "throughput_tokens_per_sec": ...,
+    }
+```
+
+##### 6.2.3 PPStageModule - PP Stage模块
+
+**需求**:
+- 代表一个PP stage包含的层
+- 继承ShardedModule，支持bind()和性能分析
+- 记录stage索引
+
+**接口设计**:
+```python
+class PPStageModule(ShardedModule):
+    def __init__(
+        self,
+        stage_idx: int,
+        layers: List[ShardedModule],
+        pp_strategy: PPStrategy,
+    )
+    
+    def get_layers(self) -> List[ShardedModule]:
+        """获取该stage的所有层"""
+```
+
+##### 6.2.4 PPSchedule - PP Schedule详细描述
+
+**需求**:
+- 生成不同schedule的操作序列
+- 可视化schedule
+- 支持schedule分析
+
+**Schedule类型**:
+
+| Schedule | 描述 | Bubble比例 | 适用场景 |
+|----------|------|-----------|---------|
+| GPipe | 朴素流水线，所有F然后所有B | 最高 | 简单场景 |
+| 1F1B | 1个F1个B交替，减少bubble | 中等 | 常用 |
+| Interleaved 1F1B | vpp下的1F1B | 最低 | 高效vpp |
+| VPP | 多stage在同一GPU | 需计算 | 高密度部署 |
+
+**接口设计**:
+```python
+class PPSchedule:
+    @staticmethod
+    def generate_gpipe_schedule(num_stages, num_micro_batches) -> List[List[str]]:
+        """生成GPipe schedule"""
+    
+    @staticmethod
+    def generate_1f1b_schedule(num_stages, num_micro_batches) -> List[List[str]]:
+        """生成1F1B schedule"""
+    
+    @staticmethod
+    def generate_interleaved_schedule(
+        num_stages, num_virtual_stages, num_micro_batches
+    ) -> List[List[str]]:
+        """生成Interleaved 1F1B (VPP) schedule"""
+    
+    @staticmethod
+    def visualize_schedule(schedules, stage_names):
+        """可视化schedule"""
+```
+
+**Schedule详解**:
+
+**GPipe Schedule**:
+```
+Stage 0: [F0, F1, F2, F3, F4, F5, F6, F7] -> [B0, B1, B2, B3, B4, B5, B6, B7]
+Stage 1:      [F0, F1, F2, F3, F4, F5, F6, F7] -> [B0, B1, B2, B3, B4, B5, B6, B7]
+...
+Bubble: (num_stages - 1) * stage_time
+```
+
+**1F1B Schedule**:
+```
+Stage 0: [F0, F1, F2, F3] -> [F4, B0] -> [F5, B1] -> [F6, B2] -> [F7, B3] -> [B4, B5, B6, B7]
+Stage 1:      [F0, F1, F2, F3] -> [F4, B0] -> [F5, B1] -> ...
+...
+Warmup: num_stages个F
+Steady: 1F1B交替
+Cooldown: 剩余B
+Bubble: 比GPipe小
+```
+
+**Interleaved 1F1B (VPP) Schedule**:
+```
+GPU 0 (Stage 0, 4): [F0_s0, F0_s4, F1_s0, F1_s4, ...] -> interleaved
+GPU 1 (Stage 1, 5): [F0_s1, F0_s5, F1_s1, F1_s5, ...] -> interleaved
+...
+Bubble: 最小
+```
+
+#### 6.3 使用示例
+
+```python
+# 1. 创建模型
+model = LlamaModel(
+    vocab_size=32000,
+    hidden_size=4096,
+    num_layers=32,
+    num_heads=32,
+    num_kv_heads=8,
+)
+
+# 2. 定义PP策略
+pp_strategy = PPStrategy(
+    num_stages=4,
+    num_virtual_stages=1,
+    schedule="1f1b",
+    num_micro_batches=8,
+    micro_batch_size=4,
+)
+
+# 3. 自定义stage划分
+pp_strategy_custom = PPStrategy(
+    num_stages=4,
+    schedule="1f1b",
+    num_micro_batches=8,
+    stage_assignment={
+        "layers.0": 0,
+        "layers.1": 0,
+        "layers.2": 1,
+        "layers.3": 1,
+        "layers.4": 2,
+        "layers.5": 2,
+        "layers.6": 3,
+        "layers.7": 3,
+    },
+)
+
+# 4. 内存平衡划分
+pp_strategy_balanced = PPStrategy(
+    num_stages=4,
+    schedule="1f1b",
+    num_micro_batches=8,
+)
+assignment = pp_strategy_balanced.assign_layers(model, method="memory_balanced")
+
+# 5. VPP配置
+vpp_strategy = PPStrategy(
+    num_stages=8,
+    num_virtual_stages=2,  # 每GPU负责2个stage
+    schedule="interleaved",
+    num_micro_batches=16,
+)
+
+# 6. 创建PP模型
+pp_model = PPModel(model, pp_strategy)
+
+# 7. 分析单个stage
+ctx = ParallelContext(tp_degree=8, pp_degree=4)
+stage_0 = pp_model.get_stage(0)
+stage_0_instance = stage_0.bind(ctx)
+print(f"Stage 0 params: {stage_0_instance.params_count_physical / 1e9:.2f}B")
+print(f"Stage 0 time: {stage_0_instance.estimate_time(backend) * 1000:.2f}ms")
+
+# 8. 分析PP整体性能
+pp_time = pp_model.estimate_pp_time(backend)
+print(f"PP bubble ratio: {pp_time['bubble_ratio']:.2%}")
+print(f"PP throughput: {pp_time['throughput_tokens_per_sec']:.0f} tokens/s")
+
+# 9. 可视化schedule
+schedule = PPSchedule.generate_1f1b_schedule(4, 8)
+PPSchedule.visualize_schedule(schedule)
+```
+
+#### 6.4 实现细节
+
+##### 6.4.1 文件结构
+
+```
+llm_perf/modeling/
+├── pp_strategy.py      # PPStrategy, PPSchedule
+├── pp_model.py         # PPModel, PPStageModule
+└── models.py           # 已有，需要支持bind(pp_strategy)
+```
+
+##### 6.4.2 与现有代码集成
+
+**ParallelContext扩展**:
+```python
+@dataclass
+class ParallelContext:
+    ...
+    pp_strategy: Optional[PPStrategy] = None
+```
+
+**LlamaModel.bind()扩展**:
+```python
+class LlamaModel(ShardedModule):
+    def bind(
+        self,
+        ctx: ParallelContext,
+        pp_strategy: Optional[PPStrategy] = None,
+    ) -> Union[ModuleInstance, PPModel]:
+        if pp_strategy is None:
+            return ModuleInstance(self, ctx)
+        else:
+            return PPModel(self, pp_strategy)
+```
+
+##### 6.4.3 测试需求
+
+```python
+# tests/test_modeling_pp.py
+
+class TestPPStrategy:
+    def test_pp_strategy_creation()
+    def test_bubble_ratio_gpipe()
+    def test_bubble_ratio_1f1b()
+    def test_bubble_ratio_interleaved()
+    def test_assign_layers_balanced()
+    def test_assign_layers_memory_balanced()
+    def test_assign_layers_custom()
+    def test_vpp_bubble_ratio()
+
+class TestPPSchedule:
+    def test_generate_gpipe_schedule()
+    def test_generate_1f1b_schedule()
+    def test_generate_interleaved_schedule()
+    def test_visualize_schedule()
+
+class TestPPModel:
+    def test_pp_model_creation()
+    def test_get_stage()
+    def test_get_all_stages()
+    def test_bind_stage()
+    def test_estimate_pp_time()
+    def test_pp_time_with_vpp()
+
+class TestPPStageModule:
+    def test_pp_stage_creation()
+    def test_pp_stage_bind()
+    def test_pp_stage_params_count()
+
+class TestPPIntegration:
+    def test_llama_with_pp()
+    def test_pp_with_tp_sp()
+    def test_pp_performance_analysis()
+```
+
+#### 6.5 设计文档
+
+完整设计已在本文档 **Section 12: Pipeline Parallelism 独立策略** 中描述。
+
+#### 6.6 待讨论事项
+
+1. **PP与其他并行策略组合**:
+   - PP + TP 如何处理？
+   - PP + SP 如何处理？
+   - PP + EP 如何处理？
+
+2. **Stage间通信带宽**:
+   - 如何获取PP stage间的P2P带宽？
+   - vpp的通信带宽如何处理？
+
+3. **Activation checkpointing与PP**:
+   - PP是否需要考虑activation checkpointing？
+   - 如何计算PP下的activation memory？
+
+4. **模型切分与PP**:
+   - PP stage划分后，每个stage的模型是否需要独立的切分建模？
+   - 还是沿用整体模型的切分约束？
+
+5. **Dynamic scheduling**:
+   - 是否需要支持动态调整micro-batch数量？
+   - 是否需要支持自适应schedule选择？
 
 ### Phase 7: 测试验证
-1. 单并行策略验证
-2. 高维并行组合验证
-3. PP策略验证
-4. 与现有实现对比验证
+
+**状态**: 已完成
+
+1. 单并行策略验证 (已完成)
+2. 高维并行组合验证 (已完成)
+3. PP策略验证 (待Phase 6完成后)
+4. 与现有实现对比验证 (已完成)
+
+---
+
+## 15. 实现进度跟踪
+
+| Phase | 内容 | 状态 | 测试数 | 完成日期 |
+|-------|------|------|--------|---------|
+| Phase 1 | 核心数据结构 | ✅ 完成 | 26 passed | 2026-04-17 |
+| Phase 2 | 基础模块 | ✅ 完成 | 22 passed | 2026-04-17 |
+| Phase 3 | MoE和组合模块 | ✅ 完成 | (Phase 4 tests) | 2026-04-17 |
+| Phase 4 | 完整模型 | ✅ 完成 | 12 passed | 2026-04-17 |
+| Phase 5 | ParallelContext和ModuleInstance | ✅ 完成 | (Phase 1 tests) | 2026-04-17 |
+| Phase 6 | PP策略 | ⏳ TODO | - | 待实现 |
+| Phase 7 | 测试验证 | ✅ 完成 | 557 total passed | 2026-04-17 |
+
+**总计**: 60 tests for modeling, 497 existing tests still passing
