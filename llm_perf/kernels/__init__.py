@@ -21,6 +21,14 @@ from .functional import (
     embedding,
 )
 from .utils import kernel_result_to_layer
+from .backend import (
+    KernelBackend,
+    TheoryBackend,
+    ProfilingBackend,
+    MicroarchBackend,
+    KernelBackendRegistry,
+    get_backend_registry,
+)
 
 __all__ = [
     # Base classes
@@ -49,4 +57,11 @@ __all__ = [
     "embedding",
     # Utilities
     "kernel_result_to_layer",
+    # Backend layer
+    "KernelBackend",
+    "TheoryBackend",
+    "ProfilingBackend",
+    "MicroarchBackend",
+    "KernelBackendRegistry",
+    "get_backend_registry",
 ]

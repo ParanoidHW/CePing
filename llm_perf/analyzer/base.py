@@ -1,7 +1,7 @@
 """Base analyzer with shared estimation logic."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, TYPE_CHECKING
 
 from ..models.base import BaseModel
 from ..hardware.device import Device
@@ -10,6 +10,9 @@ from ..strategy.base import StrategyConfig, SPType
 from ..kernels.compute import ComputeKernelRegistry
 from ..kernels.communication import CommKernelRegistry
 from ..utils.constants import DTYPE_SIZES
+
+if TYPE_CHECKING:
+    pass
 
 
 class BaseAnalyzer(ABC):
@@ -49,8 +52,20 @@ class BaseAnalyzer(ABC):
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
 
+        self._scheduler_model = None
+
         # Cache communication domain mapping
         self._comm_domain_cache: Optional[Dict[str, Dict[str, Any]]] = None
+
+    @property
+    def scheduler_model(self):
+        """Get scheduler model (lazy initialization to avoid circular import)."""
+        if self._scheduler_model is None:
+            from ..scheduler.base import SchedulerModel, SchedulerConfig
+
+            scheduler_config = SchedulerConfig.from_dict(self.strategy.scheduler)
+            self._scheduler_model = SchedulerModel(scheduler_config)
+        return self._scheduler_model
 
     def _get_communication_domain_mapping(self) -> Dict[str, Dict[str, Any]]:
         """Get cached communication domain mapping."""
@@ -78,14 +93,10 @@ class BaseAnalyzer(ABC):
             domain_info = comm_domain[domain_type]
             bandwidth_domain = domain_info.get("bandwidth_domain", "inter_node")
             devices_per_group = domain_info.get("devices_per_group", 1)
-            return self.cluster.get_bandwidth_for_topology_level(
-                bandwidth_domain, devices_per_group
-            )
+            return self.cluster.get_bandwidth_for_topology_level(bandwidth_domain, devices_per_group)
 
         # Fallback: use domain_type directly with strategy
-        return self.cluster.get_bandwidth_for_communication_domain(
-            domain_type, self.strategy
-        )
+        return self.cluster.get_bandwidth_for_communication_domain(domain_type, self.strategy)
 
     def _get_communication_ranks(self, domain_type: str) -> List[int]:
         """Get ranks for a specific communication domain type.
@@ -272,10 +283,7 @@ class BaseAnalyzer(ABC):
         activation_bytes = batch_size * seq_len * hidden_size * dtype_size
 
         # KV bytes per step for Ring
-        kv_bytes_per_step = (
-            batch_size * (seq_len // sp_degree) *
-            num_kv_heads * head_dim * 2 * dtype_size
-        )
+        kv_bytes_per_step = batch_size * (seq_len // sp_degree) * num_kv_heads * head_dim * 2 * dtype_size
 
         total_time = 0.0
 
@@ -284,9 +292,7 @@ class BaseAnalyzer(ABC):
             # Forward: 4 all-to-all per attention layer (Q, K, V pre-attention + O post-attention)
             # Backward: 4 all-to-all per attention layer (gradients flow in reverse)
             # Total: 8 all-to-all per layer
-            alltoall_time = self.cluster.estimate_alltoall_time(
-                activation_bytes, sp_ranks
-            )
+            alltoall_time = self.cluster.estimate_alltoall_time(activation_bytes, sp_ranks)
             total_time = alltoall_time * 8 * num_layers
 
         elif sp_type == SPType.RING_P2P:
@@ -315,17 +321,10 @@ class BaseAnalyzer(ABC):
             num_backward_rs = num_forward_ag
 
             allgather_bytes = kv_bytes_per_block * sp_degree
-            allgather_time = self.cluster.estimate_allgather_time(
-                allgather_bytes, sp_ranks
-            )
-            reducescatter_time = self.cluster.estimate_reducescatter_time(
-                allgather_bytes, sp_ranks
-            )
+            allgather_time = self.cluster.estimate_allgather_time(allgather_bytes, sp_ranks)
+            reducescatter_time = self.cluster.estimate_reducescatter_time(allgather_bytes, sp_ranks)
 
-            total_time = (
-                allgather_time * num_forward_ag +
-                reducescatter_time * num_backward_rs
-            ) * num_layers
+            total_time = (allgather_time * num_forward_ag + reducescatter_time * num_backward_rs) * num_layers
 
         elif sp_type == SPType.UNIFIED_2D:
             ulysses_degree, ring_degree = self._resolve_2d_sp_config(sp_degree)
@@ -340,9 +339,7 @@ class BaseAnalyzer(ABC):
                 ring_ranks = list(range(ring_degree))
 
             # Ulysses part: 8 all-to-all per layer (4 forward + 4 backward)
-            ulysses_time = self.cluster.estimate_alltoall_time(
-                activation_bytes, ulysses_ranks
-            ) * 8 * num_layers
+            ulysses_time = self.cluster.estimate_alltoall_time(activation_bytes, ulysses_ranks) * 8 * num_layers
 
             # Ring part
             ring_time = 0.0
@@ -350,10 +347,7 @@ class BaseAnalyzer(ABC):
                 # Forward: (ring_degree - 1) steps
                 # Backward: (ring_degree - 1) steps
                 # Total: 2 * (ring_degree - 1) steps per layer
-                ring_kv_bytes = (
-                    batch_size * (seq_len // sp_degree) *
-                    num_kv_heads * head_dim * 2 * dtype_size
-                )
+                ring_kv_bytes = batch_size * (seq_len // sp_degree) * num_kv_heads * head_dim * 2 * dtype_size
                 avg_bw = self._get_average_bandwidth(ring_ranks)
                 ring_step_time = ring_kv_bytes / (avg_bw * 1e9)
                 ring_time = ring_step_time * (ring_degree - 1) * 2 * num_layers
@@ -364,12 +358,8 @@ class BaseAnalyzer(ABC):
             # Megatron-SP: ReduceScatter + AllGather per layer
             # Communication volume: 2 * activation_bytes per layer (same as TP AllReduce)
             # But memory is sharded by sp_degree
-            rs_time = self.cluster.estimate_reducescatter_time(
-                activation_bytes, sp_ranks
-            )
-            ag_time = self.cluster.estimate_allgather_time(
-                activation_bytes, sp_ranks
-            )
+            rs_time = self.cluster.estimate_reducescatter_time(activation_bytes, sp_ranks)
+            ag_time = self.cluster.estimate_allgather_time(activation_bytes, sp_ranks)
             # Forward: 2 ops (1 rs + 1 ag)
             # Backward: 2 ops (1 rs + 1 ag, reverse direction)
             # Total: 4 ops per layer (2 rs + 2 ag)
@@ -474,11 +464,7 @@ class BaseAnalyzer(ABC):
         Returns:
             True if any parallelism degree > 1
         """
-        return (
-            self.strategy.tp_degree > 1
-            or self.strategy.dp_degree > 1
-            or self.strategy.pp_degree > 1
-        )
+        return self.strategy.tp_degree > 1 or self.strategy.dp_degree > 1 or self.strategy.pp_degree > 1
 
     def _apply_memory_calibration(self, memory_bytes: int) -> int:
         """Apply memory calibration factors.
@@ -550,3 +536,28 @@ class BaseAnalyzer(ABC):
             ComputeKernel or None
         """
         return self.compute_registry.get_or_create_activation(num_elements, activation, dtype)
+
+    def _apply_scheduler_features(
+        self,
+        compute_time: float,
+        comm_time: float,
+        memory_bytes: int,
+    ):
+        """Apply scheduler features to performance estimates.
+
+        Args:
+            compute_time: Compute time in seconds
+            comm_time: Communication time in seconds
+            memory_bytes: Memory usage in bytes
+
+        Returns:
+            SchedulerResult with optimized values
+        """
+        from ..scheduler.base import SchedulerResult
+
+        result = SchedulerResult(
+            compute_time=compute_time,
+            comm_time=comm_time,
+            memory_bytes=memory_bytes,
+        )
+        return self.scheduler_model.apply_all(result)

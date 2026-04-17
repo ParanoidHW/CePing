@@ -1,22 +1,27 @@
 """Base strategy classes."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    pass
 
 
 class ParallelType(Enum):
     """Types of parallelism."""
-    TENSOR = "tp"          # Tensor Parallelism
-    PIPELINE = "pp"        # Pipeline Parallelism
-    DATA = "dp"            # Data Parallelism
-    EXPERT = "ep"          # Expert Parallelism (MoE)
-    SEQUENCE = "sp"        # Sequence Parallelism
-    CONTEXT = "cp"         # Context Parallelism
+
+    TENSOR = "tp"  # Tensor Parallelism
+    PIPELINE = "pp"  # Pipeline Parallelism
+    DATA = "dp"  # Data Parallelism
+    EXPERT = "ep"  # Expert Parallelism (MoE)
+    SEQUENCE = "sp"  # Sequence Parallelism
+    CONTEXT = "cp"  # Context Parallelism
 
 
 class SPType(Enum):
     """Types of sequence parallelism."""
+
     ULYSSES = "ulysses"
     RING_P2P = "ring_p2p"
     RING_ALLGATHER = "ring_allgather"
@@ -27,9 +32,10 @@ class SPType(Enum):
 @dataclass
 class ParallelConfig:
     """Configuration for a specific parallelism type."""
+
     enabled: bool = False
     degree: int = 1  # Parallelism degree (e.g., TP=4 means 4 GPUs)
-    
+
     # Additional options
     options: Dict[str, Any] = field(default_factory=dict)
 
@@ -37,23 +43,23 @@ class ParallelConfig:
 @dataclass
 class StrategyConfig:
     """Complete parallelism strategy configuration."""
-    
+
     # Model configuration reference
     model_name: str = ""
-    
+
     # Parallelism degrees
-    tp_degree: int = 1   # Tensor Parallelism
-    pp_degree: int = 1   # Pipeline Parallelism
-    dp_degree: int = 1   # Data Parallelism
-    ep_degree: int = 1   # Expert Parallelism
-    sp_degree: int = 1   # Sequence Parallelism
-    cp_degree: int = 1   # Context Parallelism
-    
+    tp_degree: int = 1  # Tensor Parallelism
+    pp_degree: int = 1  # Pipeline Parallelism
+    dp_degree: int = 1  # Data Parallelism
+    ep_degree: int = 1  # Expert Parallelism
+    sp_degree: int = 1  # Sequence Parallelism
+    cp_degree: int = 1  # Context Parallelism
+
     # Sequence parallelism configuration
     sp_type: SPType = SPType.ULYSSES
     ulysses_degree: int = 1
     ring_degree: int = 1
-    
+
     # Scheduling options
     pipeline_schedule: str = "1f1b"  # 1F1B, GPipe, etc.
     micro_batch_size: int = 1
@@ -65,21 +71,23 @@ class StrategyConfig:
     activation_checkpointing: bool = False
     sequence_parallel: bool = False
     use_megatron: bool = True
-    
+
     # Memory optimization
     zero_stage: int = 0  # ZeRO stage (0-3)
-    
+
+    # Scheduler features (can be SchedulerConfig or dict)
+    scheduler: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        """Initialize scheduler if not provided."""
+        if self.scheduler is None:
+            self.scheduler = {}
+
     @property
     def world_size(self) -> int:
         """Total number of GPUs needed."""
-        return (
-            self.tp_degree * 
-            self.pp_degree * 
-            self.dp_degree * 
-            self.ep_degree * 
-            self.sp_degree
-        )
-    
+        return self.tp_degree * self.pp_degree * self.dp_degree * self.ep_degree * self.sp_degree
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -108,9 +116,10 @@ class StrategyConfig:
                 "use_megatron": self.use_megatron,
                 "zero_stage": self.zero_stage,
             },
+            "scheduler": self.scheduler if isinstance(self.scheduler, dict) else {},
             "world_size": self.world_size,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StrategyConfig":
         """Create from dictionary."""
@@ -118,13 +127,13 @@ class StrategyConfig:
         scheduling = data.get("scheduling", {})
         optimization = data.get("optimization", {})
         sp_config = data.get("sequence_parallelism", {})
-        
+
         sp_type_str = sp_config.get("sp_type", "ulysses")
         try:
             sp_type = SPType(sp_type_str)
         except ValueError:
             sp_type = SPType.ULYSSES
-        
+
         return cls(
             model_name=data.get("model_name", ""),
             tp_degree=parallel.get("tp", 1),
@@ -143,6 +152,7 @@ class StrategyConfig:
             sequence_parallel=optimization.get("sequence_parallel", False),
             use_megatron=optimization.get("use_megatron", True),
             zero_stage=optimization.get("zero_stage", 0),
+            scheduler=data.get("scheduler", {}),
         )
 
     def get_communication_domain_mapping(
@@ -186,9 +196,7 @@ class StrategyConfig:
         replica_size = stage_size * self.pp_degree
 
         # 获取各并行维度的分组
-        rank_assignment = self._build_parallel_groups(
-            total_devices, stage_size, replica_size
-        )
+        rank_assignment = self._build_parallel_groups(total_devices, stage_size, replica_size)
 
         result = {}
 
@@ -206,13 +214,15 @@ class StrategyConfig:
 
         # EP 通信域映射
         # EP 优先放在 node 内，如果超过则扩展到 rack
-        ep_topology_level = 0 if self.ep_degree <= devices_per_node else (
-            1 if self.ep_degree <= devices_per_rack else 2
+        ep_topology_level = (
+            0 if self.ep_degree <= devices_per_node else (1 if self.ep_degree <= devices_per_rack else 2)
         )
         ep_bandwidth_domain = (
-            "intra_node" if self.ep_degree <= devices_per_node else
-            "intra_rack" if self.ep_degree <= devices_per_rack else
-            "inter_rack"
+            "intra_node"
+            if self.ep_degree <= devices_per_node
+            else "intra_rack"
+            if self.ep_degree <= devices_per_rack
+            else "inter_rack"
         )
         result["ep"] = {
             "degree": self.ep_degree,
@@ -258,13 +268,9 @@ class StrategyConfig:
 
         # DP 通信域映射
         # DP 跨节点分布，每个 DP replica 包含完整的 TP+PP+EP+SP 组
-        dp_topology_level = 2 if self.dp_degree > nodes_per_rack else (
-            1 if self.dp_degree > 1 else 0
-        )
+        dp_topology_level = 2 if self.dp_degree > nodes_per_rack else (1 if self.dp_degree > 1 else 0)
         dp_bandwidth_domain = (
-            "inter_rack" if self.dp_degree > nodes_per_rack else
-            "intra_rack" if self.dp_degree > 1 else
-            "intra_node"
+            "inter_rack" if self.dp_degree > nodes_per_rack else "intra_rack" if self.dp_degree > 1 else "intra_node"
         )
         result["dp"] = {
             "degree": self.dp_degree,
@@ -276,13 +282,9 @@ class StrategyConfig:
 
         # PP 通信域映射
         # PP 跨节点分布，每个 PP stage 包含完整的 TP+EP+SP 组
-        pp_topology_level = 2 if self.pp_degree > nodes_per_rack else (
-            1 if self.pp_degree > 1 else 0
-        )
+        pp_topology_level = 2 if self.pp_degree > nodes_per_rack else (1 if self.pp_degree > 1 else 0)
         pp_bandwidth_domain = (
-            "inter_rack" if self.pp_degree > nodes_per_rack else
-            "intra_rack" if self.pp_degree > 1 else
-            "intra_node"
+            "inter_rack" if self.pp_degree > nodes_per_rack else "intra_rack" if self.pp_degree > 1 else "intra_node"
         )
         result["pp"] = {
             "degree": self.pp_degree,
@@ -416,9 +418,9 @@ class StrategyConfig:
         ulysses_groups = []
         if ulysses_degree > 1:
             # Ulysses 与 TP 共享通信域，每个 TP group 内的连续 ranks
-            for tp_group in (tp_groups if tp_groups else [[i] for i in range(total_devices)]):
+            for tp_group in tp_groups if tp_groups else [[i] for i in range(total_devices)]:
                 for i in range(0, len(tp_group), ulysses_degree):
-                    ulysses_group = tp_group[i:i + ulysses_degree]
+                    ulysses_group = tp_group[i : i + ulysses_degree]
                     if len(ulysses_group) == ulysses_degree:
                         ulysses_groups.append(ulysses_group)
         else:
@@ -529,9 +531,7 @@ class StrategyConfig:
         replica_size = stage_size * self.pp_degree
 
         # 构建并行分组
-        parallel_groups = self._build_parallel_groups(
-            total_devices, stage_size, replica_size
-        )
+        parallel_groups = self._build_parallel_groups(total_devices, stage_size, replica_size)
 
         # 构建 rank 到物理位置的映射
         rank_to_position = {}
@@ -589,102 +589,102 @@ class StrategyConfig:
 class ParallelStrategy:
     """
     Represents a parallel execution strategy.
-    
+
     This class tracks how different parts of the model are distributed
     across devices and what communication patterns are needed.
     """
-    
+
     def __init__(self, config: StrategyConfig):
         self.config = config
         self._layer_assignment: Dict[str, int] = {}  # layer -> pp_stage
-        self._tensor_sharding: Dict[str, int] = {}   # layer -> tp_group
-        self._expert_assignment: Dict[str, int] = {} # expert -> ep_group
-    
+        self._tensor_sharding: Dict[str, int] = {}  # layer -> tp_group
+        self._expert_assignment: Dict[str, int] = {}  # expert -> ep_group
+
     def assign_layer_to_stage(self, layer_name: str, pp_stage: int):
         """Assign a layer to a pipeline stage."""
         self._layer_assignment[layer_name] = pp_stage
-    
+
     def get_layer_stage(self, layer_name: str) -> int:
         """Get pipeline stage for a layer."""
         return self._layer_assignment.get(layer_name, 0)
-    
+
     def is_tp_enabled(self) -> bool:
         """Check if tensor parallelism is enabled."""
         return self.config.tp_degree > 1
-    
+
     def is_pp_enabled(self) -> bool:
         """Check if pipeline parallelism is enabled."""
         return self.config.pp_degree > 1
-    
+
     def is_dp_enabled(self) -> bool:
         """Check if data parallelism is enabled."""
         return self.config.dp_degree > 1
-    
+
     def is_ep_enabled(self) -> bool:
         """Check if expert parallelism is enabled."""
         return self.config.ep_degree > 1
-    
+
     def get_tp_group(self, rank: int) -> List[int]:
         """Get all ranks in the same TP group as given rank."""
         if not self.is_tp_enabled():
             return [rank]
-        
+
         # TP groups are formed within each DP group
         tp_size = self.config.tp_degree
-        
+
         # Find which DP replica this rank belongs to
         dp_replica = rank // tp_size
-        
+
         # Ranks in the same TP group
         start = dp_replica * tp_size
         return list(range(start, start + tp_size))
-    
+
     def get_dp_group(self, rank: int) -> List[int]:
         """Get all ranks in the same DP group as given rank."""
         if not self.is_dp_enabled():
             return [rank]
-        
+
         tp_size = self.config.tp_degree
         world_size = self.config.world_size
-        
+
         # DP groups span across TP groups
         # For each TP position, collect ranks across DP replicas
         tp_position = rank % tp_size
         return list(range(tp_position, world_size, tp_size))
-    
+
     def get_pp_group(self, rank: int) -> List[int]:
         """Get all ranks in the same PP group (all stages) as given rank."""
         if not self.is_pp_enabled():
             return [rank]
-        
+
         # PP groups are formed within each TP+DP combination
         # This is a simplification - actual PP groups depend on implementation
         pp_size = self.config.pp_degree
-        
+
         # Find position within PP stage
         ranks_per_stage = self.config.world_size // pp_size
-        
+
         # All ranks in all stages of this pipeline
         result = []
         for s in range(pp_size):
             start = s * ranks_per_stage
             result.extend(range(start, start + ranks_per_stage))
         return result
-    
+
     def get_ep_group(self, rank: int) -> List[int]:
         """Get all ranks in the same EP group as given rank."""
         if not self.is_ep_enabled():
             return [rank]
-        
+
         # EP groups typically span across TP
         ep_size = self.config.ep_degree
         tp_size = self.config.tp_degree
-        
+
         # Simplified: EP groups are formed within each TP group
         tp_position = rank % tp_size
         start = tp_position * ep_size
         return list(range(start, start + ep_size))
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
