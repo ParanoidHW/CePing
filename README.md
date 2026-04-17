@@ -2,114 +2,66 @@
 
 大模型训推性能评估工具 - 在给定策略下评估模型训练和推理的理论性能。
 
-## 功能特性
+## 核心特性
 
-### 🧠 模型支持
-- **Dense 模型**: Llama、LLaMA-2、LLaMA-3 等 Transformer 架构
-- **MoE 模型**: Mixtral 8x7B、DeepSeek-V3、Qwen-MoE 等专家混合模型
-- **自定义配置**: 灵活调整 hidden size、layers、attention heads、experts 等参数
+### 🚀 一行代码评估性能
 
-### 🖥️ 硬件建模
-- **NVIDIA GPU**: H100/H200、A100、L40S（支持 Tensor Core / CUDA Core 分离）
-- **AMD GPU**: MI300X（支持 Matrix Core / Stream Processor 分离）
-- **华为昇腾 NPU**: Ascend 910A/B/C、950/960/970（支持 CUBE Core / VECTOR Core 分离）
-- **精确算力建模**: 基于 Roofline 模型，区分矩阵运算和向量运算单元
+```python
+from llm_perf.modeling import create_model_from_config
+from llm_perf.analyzer.training import TrainingAnalyzer
 
-### 🌐 网络拓扑（新特性）
-- **2-Tier Simple**: 机内 NVLink + 机间 IB/Ethernet
-- **3-Tier Clos**: Leaf-Spine-Core 三级交换架构
-- **Fat-Tree**: 数据中心级胖树拓扑，支持超配配置
-- **CloudMatrix 超节点**: 华为 384 NPU 全对等超节点（arXiv:2506.12708）
-- **分层带宽建模**: 支持带宽随拓扑层级递减的真实场景
-
-### ⚡ 并行策略
-- **TP (Tensor Parallelism)**: 张量并行，支持 Megatron 风格
-- **PP (Pipeline Parallelism)**: 流水线并行，支持 1F1B 调度
-- **DP (Data Parallelism)**: 数据并行，支持 ZeRO-1/2/3
-- **EP (Expert Parallelism)**: 专家并行，针对 MoE 模型优化
-- **SP/CP**: 序列并行、上下文并行支持
-
-### 📊 性能评估
-- **训练评估**: 
-  - 吞吐量: samples/sec、tokens/sec
-  - 显存占用: 参数、梯度、优化器状态、激活值
-  - 通信开销: AllReduce/AllToAll 时间分解
-- **推理评估**:
-  - TTFT (Time To First Token): 首 token 延迟
-  - TPOT (Time Per Output Token): 每 token 生成时间
-  - TPS (Tokens Per Second): 吞吐率
-  - KV Cache 显存占用分析
-
-### 🌟 交互式 Web 界面（新特性）
-- **可视化配置**: 通过网页交互式选择模型、硬件、拓扑、策略
-- **实时评估**: 即时获取性能评估结果和分解
-- **HTTPS 支持**: 本地安全服务，支持自签名证书
-- **扁平化设计**: 简约现代的 UI 风格
-
-### 📚 完整文档
-- **架构文档**: 系统设计和模块说明
-- **数据来源 Wiki**: 硬件参数、FLOPs 计算、参考资料汇总
-- **拓扑文档**: Clos/Fat-Tree/CloudMatrix 网络建模详解
-- **示例代码**: 多种使用场景的示例配置
-
-## 架构设计
-
-```
-llm_perf/
-├── modeling/         # 新建模框架 (PyTorch-like ShardedModule)
-│   ├── models.py     # Llama, DeepSeek 等模型
-│   ├── layers.py     # ShardedEmbedding, ShardedAttention, ShardedFFN
-│   └── registry.py   # 模型注册和 presets
-├── legacy/models/    # 旧模型定义 (已弃用，保留兼容)
-├── hardware/         # 硬件抽象 (Device, Cluster, Topology)
-├── kernels/          # Kernel 评估 (Compute, Communication)
-├── strategy/         # 切分策略 (TP, PP, DP, EP)
-├── analyzer/         # 性能分析器 (Training, Inference)
-├── reporter/         # 报告生成 (Table, JSON, HTML)
-├── cli/              # 命令行接口
-└── web/              # Web 可视化界面 (HTTPS)
-    ├── app.py        # Flask 后端服务
-    ├── static/       # CSS/JS 前端资源
-    └── templates/    # HTML 模板
+model = create_model_from_config({"preset": "llama-7b"})
+result = TrainingAnalyzer(model, device, cluster, strategy).analyze(batch_size=32)
+print(f"吞吐量: {result.tokens_per_sec:.1f} tokens/s")
 ```
 
-### 核心模块说明
+### 🧠 支持主流模型架构
 
-#### 1. Modeling (`llm_perf/modeling/)
-- `models.py`: Llama, DeepSeek 等完整模型
-- `layers.py`: ShardedEmbedding, ShardedAttention, ShardedFFN, ShardedMoE
-- `mla.py`: MLA (Multi-head Latent Attention) 实现
-- `registry.py`: 模型注册、presets、create_model_from_config
+| 模型类型 | 支持模型 | 特性 |
+|---------|---------|------|
+| **Dense** | Llama-7B/13B/70B, GPT | GQA、RoPE、SwiGLU |
+| **MoE** | Mixtral-8x7B, DeepSeek-V3 | Expert Parallelism、共享专家 |
+| **Vision** | ResNet, VAE | CNN、图像分类/生成 |
+| **Video** | Wan2.1-T2V | 文本编码器 + DiT + 3D VAE |
 
-#### 2. Legacy Models (`llm_perf/legacy/models/)
-- 旧版模型接口，已弃用
-- 保留向后兼容
+### 🖥️ 多硬件平台支持
 
-#### 2. Hardware (`llm_perf/hardware/`)
-- `device.py`: 单卡 GPU 配置 (算力、带宽、显存)
-- `cluster.py`: 集群拓扑和通信带宽建模
+| 平台 | 设备 | 特性 |
+|------|------|------|
+| **NVIDIA** | H100/H200, A100, L40S | Tensor Core / CUDA Core 分离 |
+| **AMD** | MI300X | Matrix Core / Stream Processor 分离 |
+| **华为** | Ascend 910B/C, 950/960/970 | CUBE Core / VECTOR Core 分离 |
 
-#### 3. Kernels (`llm_perf/kernels/`)
-- `compute.py`: 算子性能评估 (GEMM, Attention, Activation)
-  - 基于 Roofline 模型
-  - 支持 FLOPs 和内存带宽建模
-- `communication.py`: 通信算子评估 (AllReduce, AllGather, AllToAll)
-  - 支持 Ring/Tree 算法建模
-  - 区分机内/机间带宽
+### ⚡ 全套并行策略
 
-#### 4. Strategy (`llm_perf/strategy/`)
-- `base.py`: 并行策略配置 (TP/PP/DP/EP 度数)
-- `planner.py`: 策略规划器 (自动搜索最优策略)
+- **TP**: 张量并行
+- **PP**: 流水线并行
+- **DP**: 数据并行 + ZeRO-1/2/3
+- **EP**: 专家并行
+- **SP/CP**: 序列并行、上下文并行
 
-#### 5. Analyzer (`llm_perf/analyzer/`)
-- `training.py`: 训练性能分析
-- `inference.py`: 推理性能分析 (Prefill + Decode)
-- `breakdown.py`: 性能分解 (计算/通信/内存)
+### 📊 详细性能分解
 
-#### 6. Reporter (`llm_perf/reporter/`)
-- `table.py`: 控制台表格报告
-- `json_reporter.py`: JSON 格式输出
-- `html_reporter.py`: HTML 可视化报告
+```
+Total Time: 64000.00 ms
+├── Compute:     51200.00 ms (80.0%)
+├── Communication: 12800.00 ms (20.0%)
+└── Memory Wait:     0.00 ms ( 0.0%)
+
+Memory Breakdown:
+├── Parameters:    70.00 GB
+├── Activations:    4.00 GB
+└── Gradients:     70.00 GB
+```
+
+### 🌐 网络拓扑建模
+
+- **2-Tier Simple**: 机内 NVLink + 机间 IB
+- **3-Tier Clos**: Leaf-Spine-Core 三级交换
+- **Fat-Tree**: 数据中心胖树拓扑
+- **CloudMatrix 超节点**: 华为 384 NPU 全对等
+
+---
 
 ## 快速开始
 
@@ -119,131 +71,152 @@ llm_perf/
 pip install -e .
 ```
 
-### Web 可视化界面（推荐）
-
-启动本地 HTTPS Web 服务，通过浏览器交互式配置和评估：
+### 方式一：Web 可视化界面（推荐）
 
 ```bash
-# 安装依赖
 pip install flask flask-cors cryptography
-
-# 启动 HTTPS 服务（默认 https://localhost:8443）
-cd web
-python app.py
-
-# 或使用 HTTP 模式
-python app.py --http
+cd web && python app.py
+# 访问 https://localhost:8443
 ```
 
-访问 https://localhost:8443，即可使用可视化界面：
-- 选择模型预设（Llama-7B/70B, Mixtral-8x7B, DeepSeek-V3）
-- 配置硬件（NVIDIA/AMD/Huawei GPU）
-- 设置网络拓扑（2-Tier/3-Tier Clos/Fat-Tree/CloudMatrix）
-- 调整并行策略（TP/PP/DP/EP）
-- 实时获取性能评估结果
+### 方式二：Python API
 
-### 运行示例
+#### 训练性能评估
 
-```bash
-# 运行所有示例
-python run_eval.py all
+```python
+from llm_perf.modeling import create_model_from_config
+from llm_perf.hardware.device import Device
+from llm_perf.hardware.cluster import Cluster
+from llm_perf.strategy.base import StrategyConfig
+from llm_perf.analyzer.training import TrainingAnalyzer
 
-# 运行特定示例
-python run_eval.py training
-python run_eval.py inference
-python run_eval.py moe
+# 创建模型（使用 preset）
+model = create_model_from_config({"preset": "llama-7b"})
 
-# 保存 JSON 结果
-python run_eval.py all --json
+# 配置硬件
+device = Device.from_preset("H100-SXM-80GB")
+cluster = Cluster.create_homogeneous(device.config, num_devices=8)
+
+# 设置策略
+strategy = StrategyConfig(tp_degree=8, pp_degree=1, dp_degree=1)
+
+# 评估性能
+analyzer = TrainingAnalyzer(model, device, cluster, strategy)
+result = analyzer.analyze(batch_size=32, seq_len=4096)
+
+# 输出结果
+print(f"吞吐量: {result.tokens_per_sec:.1f} tokens/s")
+print(f"显存: {result.memory_per_gpu_gb:.2f} GB")
+print(f"通信占比: {result.breakdown.communication_time_sec / result.breakdown.total_time_sec * 100:.1f}%")
 ```
 
-### CLI 使用
+#### 推理性能评估
+
+```python
+from llm_perf.analyzer.inference import InferenceAnalyzer
+
+analyzer = InferenceAnalyzer(model, device, cluster, strategy)
+result = analyzer.analyze(
+    batch_size=8,
+    prompt_len=1024,
+    generation_len=128,
+)
+
+print(f"TTFT: {result.prefill_time_sec*1000:.1f} ms")
+print(f"TPOT: {result.decode_time_per_step_sec*1000:.1f} ms")
+print(f"TPS:  {result.decode_tokens_per_sec:.1f} tokens/s")
+```
+
+#### MoE 模型评估
+
+```python
+# 使用 DeepSeek-V3 preset
+model = create_model_from_config({"preset": "deepseek-v3"})
+
+# EP 策略
+strategy = StrategyConfig(
+    tp_degree=4,
+    ep_degree=8,
+    num_experts=256,
+)
+
+result = analyzer.analyze(batch_size=16, seq_len=8192)
+print(f"EP 通信占比: {result.ep_communication_ratio:.1f}%")
+```
+
+### 方式三：CLI 命令行
 
 ```bash
-# 评估训练性能
+# 训练评估
 llm-perf evaluate \
-    --model-config llm_perf/configs/model_llama7b.json \
-    --hardware-config llm_perf/configs/hardware_h100_8gpu.json \
-    --strategy-config llm_perf/configs/strategy_tp8.json \
+    --model llama-7b \
+    --device H100-SXM-80GB \
+    --num-devices 8 \
+    --tp 8 \
     --mode training \
     --batch-size 32 \
-    --seq-len 4096 \
-    --json \
-    --output training_result.json
+    --seq-len 4096
 
-# 评估推理性能
+# 推理评估
 llm-perf evaluate \
-    --model-config llm_perf/configs/model_llama7b.json \
-    --hardware-config llm_perf/configs/hardware_h100_8gpu.json \
-    --strategy-config llm_perf/configs/strategy_tp8.json \
+    --model llama-70b \
+    --device H200-SXM-141GB \
+    --num-devices 16 \
+    --tp 8 --dp 2 \
     --mode inference \
     --batch-size 8 \
     --prompt-len 1024 \
-    --generation-len 128 \
-    --html \
-    --output inference_result.html
+    --generation-len 128
 
-# 对比多个策略
+# 策略对比
 llm-perf compare \
-    --model-config llm_perf/configs/model_llama70b.json \
-    --hardware-config llm_perf/configs/hardware_h100_8gpu.json \
-    --strategy-configs llm_perf/configs/strategy_tp8.json llm_perf/configs/strategy_tp4_dp2.json \
-    --mode training \
+    --model llama-70b \
+    --device H100 \
+    --strategies tp8 tp4_dp2 tp2_pp4 \
     --metric throughput
 ```
 
-## 配置文件格式
+---
 
-### 模型配置 (`model_*.json`)
+## 使用 Presets 快速配置
 
-```json
-{
-  "type": "llama",
-  "name": "llama-7b",
-  "vocab_size": 32000,
-  "hidden_size": 4096,
-  "num_layers": 32,
-  "num_attention_heads": 32,
-  "intermediate_size": 11008,
-  "max_seq_len": 4096,
-  "dtype": "fp16"
-}
+### 模型 Presets
+
+```python
+from llm_perf.modeling import get_model_presets, create_model_from_config
+
+# 查看所有 presets
+presets = get_model_presets()
+# {'llama-7b', 'llama-70b', 'deepseek-v3', 'mixtral-8x7b', 'resnet50', ...}
+
+# 使用 preset 创建模型
+model = create_model_from_config({"preset": "llama-7b"})
+model = create_model_from_config({"preset": "deepseek-v3"})
+model = create_model_from_config({"preset": "mixtral-8x7b"})
 ```
 
-### 硬件配置 (`hardware_*.json`)
+### 硬件 Presets
 
-```json
-{
-  "device_preset": "H100-SXM-80GB",
-  "num_devices": 8,
-  "devices_per_node": 8,
-  "intra_node_bw_gbps": 900,
-  "inter_node_bw_gbps": 400
-}
+```python
+from llm_perf.hardware.device import Device
+
+device = Device.from_preset("H100-SXM-80GB")
+device = Device.from_preset("H200-SXM-141GB")
+device = Device.from_preset("MI300X")
+device = Device.from_preset("Ascend-910C")
 ```
 
-支持的 device preset:
-- `H100-SXM-80GB`
-- `H100-NVL-94GB`
-- `H200-SXM-141GB`
-- `A100-SXM-40GB`
-- `A100-SXM-80GB`
-- `MI300X`
-- `L40S`
+### 策略 Presets
 
-### 策略配置 (`strategy_*.json`)
+```python
+from llm_perf.utils.config_loader import ConfigLoader
 
-```json
-{
-  "tp": 8,
-  "pp": 1,
-  "dp": 1,
-  "ep": 1,
-  "activation_checkpointing": true,
-  "sequence_parallel": true,
-  "zero_stage": 1
-}
+strategy = ConfigLoader.load_strategy_config("tp8")
+strategy = ConfigLoader.load_strategy_config("tp4_dp2")
+strategy = ConfigLoader.load_strategy_config("megatron_sp")
 ```
+
+---
 
 ## 输出示例
 
@@ -260,41 +233,52 @@ llm-perf compare \
 
 [Time]
   Time per step                   64.00 s
-  Time to solution              17.78 hours
 
 [Memory]
   Memory per GPU                  76.23 GB
 
 [Breakdown]
-================================================================================
-PERFORMANCE BREAKDOWN
-================================================================================
-
-Total Time: 64000.00 ms
-Throughput: 2048.00 tokens/sec
-
---- Time Breakdown ---
   Compute:        51200.00 ms ( 80.0%)
   Communication:  12800.00 ms ( 20.0%)
-  Memory Wait:        0.00 ms (  0.0%)
-
---- Memory Breakdown ---
-  Peak Memory:       79933.15 MB
-  Activations:        4096.00 MB
-  Parameters:        70000.00 MB
-
---- Communication Details ---
-  tensor_parallel: 12800.00 ms
-
+  
 --- Top Time-Consuming Layers ---
-  layer_0_down_proj                        2048.00 ms
-  layer_0_up_proj                          1536.00 ms
+  layer_0_down_proj    2048.00 ms
+  layer_0_up_proj      1536.00 ms
 ================================================================================
 ```
 
+---
+
+## 架构设计
+
+```
+llm_perf/
+├── modeling/         # PyTorch-like 建模框架
+│   ├── models.py     # Llama, DeepSeek, MoE
+│   ├── layers.py     # ShardedAttention, ShardedFFN, ShardedMoE
+│   ├── mla.py        # Multi-head Latent Attention
+│   ├── registry.py   # Presets & create_model_from_config
+│   └── vision_models.py  # ResNet, VAE
+├── hardware/         # 硬件抽象
+│   ├── device.py     # GPU/NPU 配置
+│   ├── cluster.py    # 集群拓扑
+│   └── topology.py   # 网络层级建模
+├── kernels/          # Kernel 评估
+│   ├── compute.py    # GEMM, Attention, Activation
+│   └── communication.py  # AllReduce, AllToAll
+├── strategy/         # 并行策略
+├── analyzer/         # 性能分析器
+│   ├── training.py   # 训练分析
+│   └── inference.py  # 推理分析 (Prefill + Decode)
+├── reporter/         # 报告生成
+└── web/              # Web 可视化界面
+```
+
+---
+
 ## 扩展开发
 
-### 添加新的模型类型
+### 添加新模型
 
 ```python
 from llm_perf.modeling import ShardedModule, ShardedTensor, ModelingRegistry
@@ -302,209 +286,28 @@ from llm_perf.modeling import ShardedModule, ShardedTensor, ModelingRegistry
 class MyModel(ShardedModule):
     def __init__(self, hidden_size, num_layers):
         super().__init__()
-        self.hidden_size = hidden_size
-        
-        # 定义权重（自动推导分片约束）
         self.weight = ShardedTensor(
             shape=(hidden_size, hidden_size),
             shardable={0: "tp"},  # 支持 TP 分片
             dtype="fp16",
-            name="my_weight",
         )
     
-    def forward(self, x: ShardedTensor) -> ShardedTensor:
+    def forward(self, x):
         return x @ self.weight
 
-# 注册到 Registry
-ModelingRegistry().register(
-    name="my_model",
-    model_class=MyModel,
-    description="My custom model",
-    default_config={"hidden_size": 4096, "num_layers": 32},
-)
+ModelingRegistry().register("my_model", MyModel)
 ```
 
-### 添加新的 Kernel 评估
-
-```python
-from llm_perf.kernels.compute import ComputeKernel, ComputeKernelConfig
-
-# Register custom matmul kernel
-kernel = compute_registry.get_or_create_matmul(m=1024, n=4096, k=4096, dtype="fp16")
-```
-
-### 添加自定义通信模式
-
-```python
-from llm_perf.kernels.communication import CommKernelRegistry
-
-# Create custom all-to-all for MoE
-comm_kernel = comm_registry.create_ep_alltoall(
-    layer_name="moe_layer_0",
-    token_bytes=8192,
-    ep_ranks=[0, 1, 2, 3]
-)
-```
-
-## Web 服务详细说明
-
-### 环境搭建
-
-#### 1. 安装 Python 依赖
-
-```bash
-# 基础依赖
-pip install flask flask-cors
-
-# SSL 证书生成（可选，用于 HTTPS）
-pip install cryptography
-
-# 或使用 requirements.txt
-cd web
-pip install -r requirements.txt
-```
-
-#### 2. 生成 SSL 证书（HTTPS）
-
-首次运行时会自动生成自签名证书，或手动生成：
-
-```bash
-cd web/certs
-
-# 使用 OpenSSL
-openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt -days 365 -nodes
-
-# 或使用 mkcert（推荐，会生成本地信任证书）
-mkcert -install
-mkcert localhost 127.0.0.1
-```
-
-### 启动服务
-
-```bash
-cd web
-
-# HTTPS 模式（默认）
-python app.py
-# 访问 https://localhost:8443
-
-# 指定端口
-python app.py --port 8080
-
-# HTTP 模式（开发调试）
-python app.py --http
-# 访问 http://localhost:8443
-
-# 绑定所有接口
-python app.py --host 0.0.0.0 --port 8080
-```
-
-### 功能特性
-
-#### 支持的配置项
-
-| 类别 | 配置项 |
-|------|--------|
-| **模型** | Llama/Dense, MoE (Mixtral/DeepSeek) |
-| **模型参数** | Hidden size, Layers, Attention heads, Experts (MoE) |
-| **硬件** | NVIDIA (H100/A100/L40S), AMD (MI300X), Huawei (Ascend 910B/C/950/960/970) |
-| **网络拓扑** | 2-Tier Simple, 3-Tier Clos, Fat-Tree, CloudMatrix Supernode |
-| **并行策略** | TP (Tensor), PP (Pipeline), DP (Data), EP (Expert) |
-| **优化选项** | Activation Checkpointing, ZeRO Stage |
-| **训练参数** | Batch size, Sequence length |
-| **推理参数** | Batch size, Prompt length, Generation length |
-
-#### 网络拓扑可视化
-
-Web 界面支持配置和可视化多种网络拓扑：
-
-1. **2-Tier Simple**: 机内 NVLink + 机间 IB
-2. **3-Tier Clos**: Leaf-Spine-Core 三级交换
-3. **Fat-Tree**: 数据中心常用胖树拓扑
-4. **CloudMatrix Supernode**: 华为 384 NPU 全对等超节点
-
-### 架构
-
-```
-web/
-├── app.py              # Flask 后端服务
-├── static/
-│   ├── css/
-│   │   └── style.css   # 扁平化简约样式
-│   └── js/
-│       └── app.js      # 前端交互逻辑
-├── templates/
-│   └── index.html      # 主页面
-└── certs/              # SSL 证书目录
-    ├── server.crt
-    └── server.key
-```
-
-### API 接口
-
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/` | GET | 主页面 |
-| `/api/devices` | GET | 获取设备预设列表 |
-| `/api/model/presets` | GET | 获取模型预设 |
-| `/api/topology/presets` | GET | 获取拓扑预设 |
-| `/api/evaluate/training` | POST | 训练性能评估 |
-| `/api/evaluate/inference` | POST | 推理性能评估 |
-
-### 示例：通过 API 直接调用
-
-```bash
-# 训练评估
-curl -X POST https://localhost:8443/api/evaluate/training \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": {"type": "llama", "hidden_size": 4096, "num_layers": 32, ...},
-    "device": "H100-SXM-80GB",
-    "num_devices": 8,
-    "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 900, ...},
-    "strategy": {"tp": 8, "pp": 1, "dp": 1, ...},
-    "training": {"batch_size": 32, "seq_len": 4096}
-  }'
-```
-
-## 算法说明
-
-### Roofline 模型
-
-算子性能使用 Roofline 模型估算:
-
-```
-achievable_flops = min(
-    peak_flops,
-    arithmetic_intensity * memory_bandwidth
-)
-```
-
-其中 `arithmetic_intensity = flops / bytes_accessed`
-
-### 通信时间估算
-
-- **AllReduce (Ring)**: `2 * (n-1) * data_size / (n * bandwidth)`
-- **AllGather**: 约为 AllReduce 的一半
-- **AllToAll**: `(n-1)/n * data_size / bandwidth`
-
-### 内存估算
-
-- **Parameters**: `params * dtype_size / tp_degree`
-- **Activations**: 取决于 batch size 和 sequence length
-- **Gradients**: 与 parameters 相同 (ZeRO 可减少)
-- **Optimizer States**: Adam 需要 2x parameters (fp32)
-- **KV Cache**: `2 * num_layers * num_kv_heads * head_dim * seq_len * batch * dtype_size`
+---
 
 ## 路线图
 
-- [ ] 更精确的 FlashAttention kernel 建模
-- [ ] 支持更多的并行策略 (FSDP, 3D Parallelism，Ulysses-SP，Unified-SP)
-- [ ] 自动策略搜索 (DP + Genetic Algorithm)
-- [ ] 集成实际的 kernel benchmark 数据
-- [ ] 支持更多的模型架构 (DeepSeek-V3, LongCat-Flash, etc.)
-- [ ] 可视化工具 (roofline plot, timeline)
-- [ ] 支持更多场景（LLM、多模态理解、多模态生成、Agentic、RL训练）
+- [ ] FlashAttention kernel 精确建模
+- [ ] FSDP、Ulysses-SP、Unified-SP 支持
+- [ ] 自动策略搜索 (遗传算法)
+- [ ] Kernel benchmark 数据集成
+- [ ] Roofline plot 可视化
+- [ ] 多模态理解、Agentic、RL训练场景
 
 ## License
 
