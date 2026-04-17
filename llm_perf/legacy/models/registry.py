@@ -6,7 +6,7 @@ This module should be imported to register all models.
 
 from typing import Optional
 
-from llm_perf.core.registry import ModelRegistry
+from llm_perf.legacy.core.registry import ModelRegistry
 
 # Import all model classes
 from .llama import LlamaConfig, LlamaModel

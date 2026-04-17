@@ -1,17 +1,35 @@
-"""
-LLM Performance Evaluator
+"""LLM Performance Evaluator.
 
-A comprehensive tool for evaluating training and inference performance
-of Large Language Models under various parallel strategies.
+Main package for LLM training and inference performance evaluation.
 """
 
-__version__ = "0.1.0"
+from .modeling import (
+    ShardedTensor,
+    ShardedModule,
+    LlamaModel,
+    DeepSeekModel,
+    ShardedVAE,
+    ShardedResNet,
+    create_model_from_config,
+    get_model_presets,
+    ModelingRegistry,
+)
 
-from .app import Evaluator, StrategyOptimizer, BatchOptimizer, LatencyBudget
+from .hardware.device import Device
+from .hardware.cluster import Cluster
+from .strategy.base import StrategyConfig
 
 __all__ = [
-    "Evaluator",
-    "StrategyOptimizer",
-    "BatchOptimizer",
-    "LatencyBudget",
+    "ShardedTensor",
+    "ShardedModule",
+    "LlamaModel",
+    "DeepSeekModel",
+    "ShardedVAE",
+    "ShardedResNet",
+    "create_model_from_config",
+    "get_model_presets",
+    "ModelingRegistry",
+    "Device",
+    "Cluster",
+    "StrategyConfig",
 ]

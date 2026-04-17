@@ -1,21 +1,21 @@
-"""Utility functions and constants."""
+"""Utility modules for LLM Performance Evaluator."""
 
 from .constants import (
-    COMMUNICATION_BOUND,
-    COMPUTE_BOUND,
-    DP,
     DTYPE_SIZES,
-    EP,
-    KERNEL_COMMUNICATION,
-    KERNEL_COMPUTE,
-    KERNEL_MEMORY,
+    COMPUTE_BOUND,
     MEMORY_BOUND,
-    PHASE_DECODE,
-    PHASE_PREFILL,
-    PHASE_TRAINING,
-    PP,
-    SP,
+    COMMUNICATION_BOUND,
     TP,
+    PP,
+    DP,
+    EP,
+    SP,
+    PHASE_TRAINING,
+    PHASE_PREFILL,
+    PHASE_DECODE,
+    KERNEL_COMPUTE,
+    KERNEL_COMMUNICATION,
+    KERNEL_MEMORY,
 )
 from .helpers import (
     ceil_div,
@@ -24,12 +24,6 @@ from .helpers import (
     format_time,
     load_json,
     save_json,
-)
-from .config_loader import (
-    ConfigLoader,
-    ModelConfigDict,
-    HardwareConfigDict,
-    StrategyConfigDict,
 )
 
 __all__ = [
@@ -54,8 +48,4 @@ __all__ = [
     "format_bytes",
     "format_time",
     "format_throughput",
-    "ConfigLoader",
-    "ModelConfigDict",
-    "HardwareConfigDict",
-    "StrategyConfigDict",
 ]
