@@ -1,14 +1,16 @@
 """Training performance analyzer."""
 
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from ..models.base import BaseModel, SubmoduleType
+from ..models.sharding import ShardedLayerConfig
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from ..kernels.compute import ComputeKernelRegistry
 from ..kernels.communication import CommKernelRegistry
+from ..kernels.backend.registry import KernelBackendRegistry
 from ..utils.constants import DTYPE_SIZES
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
 from .detailed_breakdown import DetailedPerformanceResult
@@ -65,17 +67,32 @@ class TrainingAnalyzer:
         device: Device,
         cluster: Cluster,
         strategy: StrategyConfig,
+        use_sharded_layers: bool = True,
     ):
         self.model = model
         self.device = device
         self.cluster = cluster
         self.strategy = strategy
+        self.use_sharded_layers = use_sharded_layers
 
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
 
         self.memory_estimator = MemoryEstimator(model, device, cluster, strategy)
         self.comm_estimator = CommunicationEstimator(model, device, cluster, strategy)
+
+        self._sharded_layers: Optional[List[ShardedLayerConfig]] = None
+        self._backend_registry = KernelBackendRegistry()
+        self._backend = self._backend_registry.get_backend("theory")
+
+    def _get_sharded_layers(self) -> List[ShardedLayerConfig]:
+        """Get cached sharded layers."""
+        if self._sharded_layers is None and self.use_sharded_layers:
+            try:
+                self._sharded_layers = self.model.build_sharded_layers(self.strategy)
+            except Exception:
+                self.use_sharded_layers = False
+        return self._sharded_layers or []
 
     def analyze(
         self,
@@ -86,7 +103,10 @@ class TrainingAnalyzer:
         """Analyze training performance."""
         local_batch_size = batch_size // self.strategy.dp_degree
 
-        compute_time = self._estimate_compute_time(local_batch_size, seq_len)
+        if self.use_sharded_layers and self._get_sharded_layers():
+            compute_time = self._estimate_compute_time_from_sharded_layers(local_batch_size, seq_len)
+        else:
+            compute_time = self._estimate_compute_time(local_batch_size, seq_len)
 
         comm_time, comm_breakdown = self.comm_estimator.estimate_training_communication(
             seq_len, self.strategy.micro_batch_size
@@ -163,6 +183,72 @@ class TrainingAnalyzer:
             memory=memory_breakdown,
             communication=comm_breakdown,
         )
+
+    def _estimate_compute_time_from_sharded_layers(
+        self,
+        batch_size: int,
+        seq_len: int,
+    ) -> float:
+        """Estimate compute time using sharded layers.
+
+        This method uses build_sharded_layers() to get accurate
+        per-GPU FLOPs and shape information after TP/SP sharding.
+
+        Args:
+            batch_size: Local batch size (after DP sharding)
+            seq_len: Sequence length
+
+        Returns:
+            Total compute time for forward + backward
+        """
+        dtype = self.model.config.dtype
+        sharded_layers = self._get_sharded_layers()
+
+        if not sharded_layers:
+            return self._estimate_compute_time(batch_size, seq_len)
+
+        effective_seq_len = self._get_effective_seq_len(seq_len)
+        bandwidth_gbps = self.cluster.get_bandwidth_for_communication_domain("tp", self.strategy)
+
+        forward_time = 0.0
+        backward_time = 0.0
+        total_comm_time = 0.0
+
+        hidden_size = self.model.config.hidden_size
+
+        for sharded_layer in sharded_layers:
+            result = self._backend.estimate_sharded_layer_time(
+                sharded_layer,
+                self.device,
+                bandwidth_gbps=bandwidth_gbps,
+                dtype=dtype,
+                batch_size=batch_size,
+                seq_len=effective_seq_len,
+                hidden_size=hidden_size,
+                tp_degree=self.strategy.tp_degree,
+            )
+
+            forward_time += result.sharded_time
+            backward_time += result.sharded_time * 2
+            total_comm_time += result.comm_time
+
+        total_compute_time = forward_time + backward_time
+
+        if self.strategy.dp_degree > 1 or self.strategy.zero_stage > 0:
+            effective_params = self.model.total_params // max(self.strategy.tp_degree, 1)
+            if self.strategy.pp_degree > 1:
+                effective_params = effective_params // self.strategy.pp_degree
+
+            if self.strategy.zero_stage >= 1:
+                effective_params = effective_params // self.strategy.dp_degree
+
+            opt_ops = effective_params * 3
+            dtype_size = DTYPE_SIZES.get(dtype, 2)
+            opt_bytes = opt_ops * dtype_size
+            opt_time = opt_bytes / (self.device.get_memory_bw_gbps() * 1e9)
+            total_compute_time += opt_time
+
+        return total_compute_time
 
     def _estimate_compute_time(self, batch_size: int, seq_len: int) -> float:
         """Estimate compute time for one training step."""

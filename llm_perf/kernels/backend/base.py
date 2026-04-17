@@ -4,12 +4,46 @@ Defines the interface for pluggable kernel evaluation strategies.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, TYPE_CHECKING
 from dataclasses import dataclass
 
 from ..functional import KernelResult
 from ..base import KernelConfig
 from ...hardware.device import Device
+
+if TYPE_CHECKING:
+    from ...models.sharding import ShardingInfo, ShardedLayerConfig
+    from ...strategy.base import StrategyConfig
+
+
+@dataclass
+class ShardedKernelResult:
+    """Result of sharded kernel evaluation.
+
+    Attributes:
+        sharded_shape: Shape after sharding (on single GPU)
+        sharded_flops: FLOPs after sharding
+        sharded_time: Execution time after sharding
+        comm_time: Communication time associated with this kernel
+        sharded_memory: Memory usage after sharding
+    """
+
+    sharded_shape: Tuple[int, ...]
+    sharded_flops: int
+    sharded_time: float
+    comm_time: float = 0.0
+    sharded_memory: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "sharded_shape": self.sharded_shape,
+            "sharded_flops": self.sharded_flops,
+            "sharded_time_sec": self.sharded_time,
+            "sharded_time_ms": self.sharded_time * 1000,
+            "comm_time_sec": self.comm_time,
+            "comm_time_ms": self.comm_time * 1000,
+            "sharded_memory_bytes": self.sharded_memory,
+        }
 
 
 @dataclass
@@ -144,6 +178,189 @@ class KernelBackend(ABC):
             Estimated memory usage in bytes
         """
         pass
+
+    def estimate_sharded_compute_time(
+        self,
+        original_result: KernelResult,
+        sharding_info: "ShardingInfo",
+        strategy: "StrategyConfig",
+        device: Device,
+        bandwidth_gbps: float = 400.0,
+        **kwargs,
+    ) -> ShardedKernelResult:
+        """Estimate sharded kernel performance.
+
+        This method computes the performance of a kernel after applying
+        parallelism sharding. Each backend can implement its own strategy
+        for evaluating sharded kernels.
+
+        Args:
+            original_result: Original (unsharded) KernelResult
+            sharding_info: Sharding metadata from the layer
+            strategy: Parallelism strategy configuration
+            device: Target device
+            bandwidth_gbps: Communication bandwidth (for comm time estimation)
+            **kwargs: Additional parameters
+
+        Returns:
+            ShardedKernelResult with sharded shape, flops, time, and comm time
+        """
+        tp = strategy.tp_degree
+
+        sharded_flops = original_result.flops // max(tp, 1)
+        sharded_shape = self._compute_sharded_shape(original_result.output, sharding_info, strategy)
+
+        sharded_time = self._estimate_time_from_flops(sharded_flops, sharded_shape, original_result.dtype, device)
+
+        comm_time = 0.0
+        if sharding_info and sharding_info.comm_patterns:
+            for pattern in sharding_info.comm_patterns:
+                if tp > 1:
+                    comm_bytes = sharding_info.get_comm_bytes_for_tp(
+                        batch_size=kwargs.get("batch_size", 1),
+                        seq_len=kwargs.get("seq_len", 512),
+                        hidden_size=kwargs.get("hidden_size", 4096),
+                        dtype=original_result.dtype,
+                    )
+                    comm_time += self.estimate_comm_time(
+                        pattern.comm_type,
+                        comm_bytes,
+                        tp,
+                        bandwidth_gbps,
+                    )
+
+        sharded_memory = original_result.bytes_accessed // max(tp, 1)
+
+        return ShardedKernelResult(
+            sharded_shape=sharded_shape,
+            sharded_flops=sharded_flops,
+            sharded_time=sharded_time,
+            comm_time=comm_time,
+            sharded_memory=sharded_memory,
+        )
+
+    def estimate_sharded_layer_time(
+        self,
+        sharded_layer: "ShardedLayerConfig",
+        device: Device,
+        bandwidth_gbps: float = 400.0,
+        **kwargs,
+    ) -> ShardedKernelResult:
+        """Estimate time for a ShardedLayerConfig directly.
+
+        Args:
+            sharded_layer: ShardedLayerConfig from build_sharded_layers()
+            device: Target device
+            bandwidth_gbps: Communication bandwidth
+            **kwargs: Additional parameters (batch_size, seq_len, hidden_size)
+
+        Returns:
+            ShardedKernelResult with time and comm time
+        """
+        sharded_time = self._estimate_time_from_flops(
+            sharded_layer.sharded_flops,
+            sharded_layer.sharded_output_shape,
+            kwargs.get("dtype", "fp16"),
+            device,
+        )
+
+        comm_time = 0.0
+        if sharded_layer.comm_after_bytes > 0:
+            tp = kwargs.get("tp_degree", 1)
+            if tp > 1:
+                comm_time = self.estimate_comm_time(
+                    "allreduce",
+                    sharded_layer.comm_after_bytes,
+                    tp,
+                    bandwidth_gbps,
+                )
+
+        return ShardedKernelResult(
+            sharded_shape=sharded_layer.sharded_output_shape,
+            sharded_flops=sharded_layer.sharded_flops,
+            sharded_time=sharded_time,
+            comm_time=comm_time,
+            sharded_memory=sharded_layer.sharded_activation_bytes,
+        )
+
+    def _compute_sharded_shape(
+        self,
+        original_shape: Tuple[int, ...],
+        sharding_info: Optional["ShardingInfo"],
+        strategy: "StrategyConfig",
+    ) -> Tuple[int, ...]:
+        """Compute sharded shape from original shape and sharding info.
+
+        Args:
+            original_shape: Original output shape
+            sharding_info: Sharding metadata
+            strategy: Parallelism strategy
+
+        Returns:
+            Sharded shape (on single GPU)
+        """
+        if not sharding_info or not original_shape:
+            return original_shape
+
+        tp = strategy.tp_degree
+        sp = strategy.sp_degree
+
+        sharded_shape = list(original_shape)
+
+        if "seq_len" in sharding_info.shardable_dims and sp > 1:
+            seq_dim = sharding_info.shardable_dims["seq_len"]
+            sharded_seq = seq_dim.get_sharded_size(sp)
+            if len(sharded_shape) >= 2:
+                sharded_shape[1] = sharded_seq
+
+        return tuple(sharded_shape)
+
+    def _estimate_time_from_flops(
+        self,
+        flops: int,
+        shape: Tuple[int, ...],
+        dtype: str,
+        device: Device,
+    ) -> float:
+        """Estimate time from FLOPs using Roofline model.
+
+        Args:
+            flops: FLOPs count
+            shape: Output shape (for memory bound detection)
+            dtype: Data type
+            device: Target device
+
+        Returns:
+            Estimated time in seconds
+        """
+        dtype_sizes = {"fp32": 4, "fp16": 2, "bf16": 2, "int8": 1}
+        dtype_size = dtype_sizes.get(dtype, 2)
+
+        elements = 1
+        for dim in shape:
+            if isinstance(dim, int) and dim > 0:
+                elements *= dim
+
+        bytes_accessed = elements * dtype_size * 2
+
+        peak_flops = device.get_compute_tflops(dtype) * 1e12
+        memory_bw = device.get_memory_bw_gbps() * 1e9
+
+        arithmetic_intensity = flops / bytes_accessed if bytes_accessed > 0 else float("inf")
+
+        threshold_cube = 200.0
+
+        if arithmetic_intensity < threshold_cube:
+            achievable_flops = min(peak_flops, arithmetic_intensity * memory_bw)
+        else:
+            achievable_flops = peak_flops
+
+        efficiency = 0.7
+        achievable_flops *= efficiency
+
+        time_sec = flops / achievable_flops if achievable_flops > 0 else 0
+
+        return time_sec
 
     def estimate_training_time(
         self,

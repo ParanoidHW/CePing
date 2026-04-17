@@ -1,14 +1,16 @@
 """Inference performance analyzer."""
 
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from ..models.base import BaseModel
+from ..models.sharding import ShardedLayerConfig
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from ..kernels.compute import ComputeKernelRegistry
 from ..kernels.communication import CommKernelRegistry
+from ..kernels.backend.registry import KernelBackendRegistry
 from ..utils.constants import DTYPE_SIZES, PHASE_PREFILL, PHASE_DECODE
 from .breakdown import PerformanceBreakdown, LayerBreakdown, KernelBreakdown
 from .detailed_breakdown import DetailedPerformanceResult
@@ -81,17 +83,32 @@ class InferenceAnalyzer:
         device: Device,
         cluster: Cluster,
         strategy: StrategyConfig,
+        use_sharded_layers: bool = True,
     ):
         self.model = model
         self.device = device
         self.cluster = cluster
         self.strategy = strategy
+        self.use_sharded_layers = use_sharded_layers
 
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
 
         self.memory_estimator = MemoryEstimator(model, device, cluster, strategy)
         self.comm_estimator = CommunicationEstimator(model, device, cluster, strategy)
+
+        self._sharded_layers: Optional[List[ShardedLayerConfig]] = None
+        self._backend_registry = KernelBackendRegistry()
+        self._backend = self._backend_registry.get_backend("theory")
+
+    def _get_sharded_layers(self) -> List[ShardedLayerConfig]:
+        """Get cached sharded layers."""
+        if self._sharded_layers is None and self.use_sharded_layers:
+            try:
+                self._sharded_layers = self.model.build_sharded_layers(self.strategy)
+            except Exception:
+                self.use_sharded_layers = False
+        return self._sharded_layers or []
 
     def analyze(
         self,
