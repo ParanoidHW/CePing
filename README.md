@@ -144,7 +144,141 @@ result = analyzer.analyze(batch_size=16, seq_len=8192)
 print(f"EP 通信占比: {result.ep_communication_ratio:.1f}%")
 ```
 
-### 方式三：CLI 命令行
+### 方式三：高级工具 API
+
+#### Evaluator - 一行代码快速评估
+
+```python
+from llm_perf.app import Evaluator
+
+evaluator = Evaluator()
+
+# 训练评估 - 使用 preset
+result = evaluator.evaluate_training(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategy="tp8",
+    batch_size=32,
+)
+print(f"吞吐量: {result.tokens_per_sec:.1f} tokens/s")
+
+# 推理评估 - 使用 preset
+result = evaluator.evaluate_inference(
+    model="llama-70b",
+    hardware="h200_8gpu",
+    strategy="tp8",
+    batch_size=8,
+    prompt_len=1024,
+    generation_len=128,
+)
+print(f"TTFT: {result.prefill_time_sec*1000:.1f} ms")
+print(f"TPS:  {result.decode_tokens_per_sec:.1f}")
+
+# 策略对比
+comparison = evaluator.compare_strategies(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategies=["tp1", "tp2", "tp4", "tp8"],
+    mode="training",
+    batch_size=32,
+)
+print(f"最佳策略: {comparison['best_strategy']}")
+```
+
+#### StrategyOptimizer - 自动搜索最优策略
+
+```python
+from llm_perf.app import StrategyOptimizer, StrategyConstraints, OptimizeObjective
+
+optimizer = StrategyOptimizer()
+
+# 设置约束
+constraints = StrategyConstraints(
+    max_gpus=8,
+    max_memory_gb=80,
+    require_tp=True,
+)
+
+# 搜索最优策略 (Grid搜索)
+result = optimizer.search_best_strategy(
+    model="llama-70b",
+    hardware="h100_8gpu",
+    mode="training",
+    constraints=constraints,
+    objective=OptimizeObjective.THROUGHPUT,
+)
+print(f"最优策略: TP={result.best_strategy.tp_degree}")
+print(f"吞吐量: {result.best_metric:.1f} samples/s")
+print(f"搜索时间: {result.search_time_sec:.2f}s")
+
+# 对比特定策略
+comparison = optimizer.compare_strategies(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategies=["tp8", "tp4_dp2", "tp2_pp4"],
+    mode="training",
+    batch_size=32,
+)
+```
+
+#### BatchOptimizer - 在约束下找最大 Batch
+
+```python
+from llm_perf.app import BatchOptimizer, LatencyBudget
+
+optimizer = BatchOptimizer()
+
+# 训练场景：内存约束下找最大 batch
+result = optimizer.find_max_batch(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategy="tp4",
+    mode="training",
+    memory_budget_gb=80,
+)
+print(f"最大 Batch: {result.best_batch_size}")
+print(f"停止原因: {result.reason}")
+
+# 推理场景：TTFT 约束
+result = optimizer.find_max_batch(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategy="tp4",
+    mode="inference",
+    latency_budget=LatencyBudget(ttft_budget_ms=50.0),
+)
+
+# 推理场景：TPOT 约束
+result = optimizer.find_max_batch(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategy="tp4",
+    mode="inference",
+    latency_budget=LatencyBudget(tpot_budget_ms=2.0),
+)
+
+# 推理场景：总延迟约束
+result = optimizer.find_max_batch(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    strategy="tp4",
+    mode="inference",
+    latency_budget=LatencyBudget(
+        total_latency_budget_ms=500.0,
+        generation_len=128,
+    ),
+)
+
+# 综合优化：策略 + Batch 联合搜索
+result = optimizer.find_max_tps(
+    model="llama-7b",
+    hardware="h100_8gpu",
+    mode="training",
+)
+print(f"最优配置: {result['best_strategy']}, batch={result['best_batch_size']}")
+```
+
+### 方式四：CLI 命令行
 
 ```bash
 # 训练评估

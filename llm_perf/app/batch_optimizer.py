@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
 from llm_perf.legacy.models.base import BaseModel, ModelConfig
+from ..modeling import create_model_from_config
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from .evaluator import Evaluator

@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Union
 
 from ..utils.config_loader import ConfigLoader, HardwareConfigDict
 from llm_perf.legacy.models.base import BaseModel, ModelConfig
+from ..modeling import create_model_from_config
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from ..analyzer.training import TrainingAnalyzer, TrainingResult
@@ -265,7 +266,7 @@ class Evaluator:
         """Resolve model specification to BaseModel instance.
 
         Args:
-            model: Model specification
+            model: Model specification (preset name, config dict, or BaseModel)
             **kwargs: Additional parameters
 
         Returns:
@@ -274,17 +275,19 @@ class Evaluator:
         if isinstance(model, BaseModel):
             return model
 
-        if isinstance(model, ModelConfig):
-            return ConfigLoader.create_model_from_config(model)
-
         cache_key = None
         if isinstance(model, str):
             cache_key = model
             if cache_key in self._model_cache:
                 return self._model_cache[cache_key]
 
-        model_config = ConfigLoader.load_model_config(model, **kwargs)
-        model_obj = ConfigLoader.create_model_from_config(model_config)
+        if isinstance(model, dict) and "preset" in model:
+            model_obj = create_model_from_config(model)
+        elif isinstance(model, str) and model in ["llama-7b", "llama-70b", "deepseek-v3", "mixtral-8x7b"]:
+            model_obj = create_model_from_config({"preset": model})
+        else:
+            model_config = ConfigLoader.load_model_config(model, **kwargs)
+            model_obj = ConfigLoader.create_model_from_config(model_config)
 
         if cache_key:
             self._model_cache[cache_key] = model_obj
