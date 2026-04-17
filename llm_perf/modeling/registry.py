@@ -8,10 +8,12 @@ Provides unified interface for model creation via:
 
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
+from llm_perf.modeling.models import LlamaModel, DeepSeekModel
+from llm_perf.modeling.vision import ShardedVAE, ShardedResNet
+from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
+
 if TYPE_CHECKING:
-    from llm_perf.modeling.models import LlamaModel, DeepSeekModel
-    from llm_perf.modeling.models import ShardedVAE, ShardedResNet
-    from llm_perf.modeling.models import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
+    pass
 
 
 class ModelInfo:

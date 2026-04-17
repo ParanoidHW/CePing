@@ -66,63 +66,25 @@ from .wan import (
     ShardedWanVAE,
 )
 
-from llm_perf.strategy.parallel_context import ParallelContext, SPType, CommDomain
-from llm_perf.strategy.pp_strategy import PPStrategy, PPSchedule
-from llm_perf.strategy.pp_model import PPModel, PPStageModule
+from llm_perf.strategy import (
+    ParallelContext,
+    SPType,
+    CommDomain,
+    PPStrategy,
+    PPSchedule,
+    PPModel,
+    PPStageModule,
+)
 
 from .config_compat import SimpleModelConfig
-
-
-def get_registry():
-    """Lazy load registry to avoid circular imports."""
-    from .registry import (
-        ModelingRegistry,
-        ModelInfo,
-        register_all_models,
-        get_model_presets,
-        get_presets_by_sparse_type,
-        create_model_from_config,
-    )
-
-    return (
-        ModelingRegistry,
-        ModelInfo,
-        register_all_models,
-        get_model_presets,
-        get_presets_by_sparse_type,
-        create_model_from_config,
-    )
-
-
-ModelingRegistry = None
-ModelInfo = None
-register_all_models = None
-get_model_presets = None
-get_presets_by_sparse_type = None
-create_model_from_config = None
-
-
-def __getattr__(name):
-    if name in [
-        "ModelingRegistry",
-        "ModelInfo",
-        "register_all_models",
-        "get_model_presets",
-        "get_presets_by_sparse_type",
-        "create_model_from_config",
-    ]:
-        funcs = get_registry()
-        mapping = {
-            "ModelingRegistry": funcs[0],
-            "ModelInfo": funcs[1],
-            "register_all_models": funcs[2],
-            "get_model_presets": funcs[3],
-            "get_presets_by_sparse_type": funcs[4],
-            "create_model_from_config": funcs[5],
-        }
-        return mapping[name]
-    raise AttributeError(f"module {__name__} has no attribute {name}")
-
+from .registry import (
+    ModelingRegistry,
+    ModelInfo,
+    register_all_models,
+    get_model_presets,
+    get_presets_by_sparse_type,
+    create_model_from_config,
+)
 
 __all__ = [
     "ShardedTensor",
