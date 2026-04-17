@@ -195,7 +195,7 @@ class InferenceAnalyzer(BaseAnalyzer):
             return 0.0
 
         data_size = batch_size * seq_len * hidden_size * 2
-        kernel = self.comm_registry.create_allreduce(data_size, tp, "fp16")
+        kernel = self.comm_registry.create_allreduce("tp_allreduce", data_size, list(range(tp)))
         return kernel.estimate_time()
 
     def _estimate_memory(

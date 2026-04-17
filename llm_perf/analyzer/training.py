@@ -174,7 +174,7 @@ class TrainingAnalyzer(BaseAnalyzer):
 
         if tp > 1:
             data_size = batch_size * seq_len * hidden_size * 2
-            allreduce_kernel = self.comm_registry.create_allreduce(data_size, tp, "fp16")
+            allreduce_kernel = self.comm_registry.create_allreduce("tp_allreduce", data_size, list(range(tp)))
             total_time += allreduce_kernel.estimate_time() * 32
 
         return total_time
