@@ -8,7 +8,8 @@ LLM Performance Evaluator 采用分层架构设计，将应用接口、场景建
 1. **易用性**: 一行代码评估性能，自动搜索最优策略，给定预算求最大Batch
 2. **高可扩展性**: 新模型/新场景通过继承基类并注册，无需修改现有代码
 3. **合理分层**: Kernel评估支持多种方案（理论/实测/微架构），避免霰弹式修改
-4. **框架调度预留**: 为上层训推框架的调度特性建模预留扩展接口
+4. **统一建模**: Torch-like接口定义模型，自动推导切分约束和通信开销
+5. **框架调度预留**: 为上层训推框架的调度特性建模预留扩展接口
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -27,6 +28,24 @@ LLM Performance Evaluator 采用分层架构设计，将应用接口、场景建
 │  │ Diffusion  │ │ MultiModal │ │      Custom Scenario           │   │
 │  │(扩散生成)  │ │ (多模态)   │ │    (用户自定义场景)            │   │
 │  └────────────┘ └────────────┘ └────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────┤
+│                   Unified Modeling Layer (v4.0 新增)                 │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │      Torch-like接口 - 像PyTorch一样定义模型                     │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐  │  │
+│  │  │ShardedTensor│ │ShardedModule│ │    ParallelContext      │  │  │
+│  │  │(切分张量)   │ │(切分模块)   │ │   (并行策略上下文)       │  │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────────────────┘  │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐  │  │
+│  │  │ModuleInst.  │ │ Basic Layers│ │    Complete Models      │  │  │
+│  │  │(物理形态)   │ │Embed/Attn/FFN│ │Llama/DeepSeek/Custom    │  │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│  核心能力:                                                          │  │
+│  - 自动推导切分约束 (matmul/view/transpose操作自动传播)             │  │
+│  - Forward/Backward FLOPs估算 (调用functional API)                  │  │
+│  - 通信操作推导 (从切分状态变化自动推导AllReduce/All2All等)         │  │
+│  - 物理形态计算 (逻辑shape + parallel degrees -> 物理shape)         │  │
 ├─────────────────────────────────────────────────────────────────────┤
 │                    Scheduler Layer (框架调度预留)                    │
 │  ┌───────────────────────────────────────────────────────────────┐  │
@@ -67,6 +86,10 @@ LLM Performance Evaluator 采用分层架构设计，将应用接口、场景建
 │  │  - attention       │  │  - allgather                         │  │
 │  │  - conv2d/conv3d   │  │  - alltoall                          │  │
 │  └────────────────────┘  └──────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │        Functional API (Torch-like, Unified Modeling调用)       │  │
+│  │  linear(), flash_attention(), rms_norm(), silu(), conv2d()... │  │
+│  └───────────────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Hardware Layer                               │
 │  ┌────────────────────┐  ┌──────────────────────────────────────┐  │
@@ -193,7 +216,157 @@ result = Evaluator.evaluate_scenario(
 )
 ```
 
-### 3. Scheduler Layer (框架调度预留)
+### 3. Unified Modeling Layer (v4.0 新增)
+
+**职责**: 提供Torch-like接口定义模型，自动推导切分约束、FLOPs和通信开销
+
+**设计思想**: 
+- 用户像写PyTorch代码一样定义模型（直观）
+- 切分约束自动推导（matmul/view/transpose自动传播）
+- 绑定ParallelContext后获得物理形态和性能估算（灵活）
+
+**核心类**:
+
+| 类名 | 职责 | 类似PyTorch |
+|------|------|-------------|
+| `ShardedTensor` | 带切分约束的张量 | `torch.Tensor` |
+| `ShardedModule` | 模块基类，管理权重和激活 | `torch.nn.Module` |
+| `ParallelContext` | 并行策略上下文（TP/SP/EP/DP/PP） | 策略配置 |
+| `ModuleInstance` | 绑定ctx后的物理形态实例 | 运行时实例 |
+
+**基础模块**:
+
+| 模块 | 切分方式 | 通信 |
+|------|----------|------|
+| `ShardedEmbedding` | vocab被TP切分 | AllGather (推理) |
+| `ShardedRMSNorm` | 不切分（权重完整复制） | 无 |
+| `ShardedAttention` | heads被TP切分，seq可被SP切分 | AllReduce/All2All |
+| `ShardedFFN` | intermediate被TP切分 | AllReduce |
+| `ShardedLMHead` | vocab被TP切分 | AllGather (推理) |
+
+**完整模型**:
+
+| 模型 | 结构 |
+|------|------|
+| `ShardedTransformerBlock` | Attention + FFN + RMSNorms |
+| `LlamaModel` | Embedding + N×Block + FinalNorm + LMHead |
+
+**使用示例**:
+
+```python
+from llm_perf.modeling import (
+    ShardedTensor,
+    ShardedModule,
+    LlamaModel,
+    ParallelContext,
+    ShardedAttention,
+    ShardedFFN,
+)
+
+# 1. 定义模型（类似PyTorch）
+model = LlamaModel(
+    vocab_size=32000,
+    hidden_size=4096,
+    num_layers=32,
+    num_heads=32,
+    num_kv_heads=8,  # GQA
+    intermediate_size=11008,
+)
+
+# 2. 自动计算参数量
+print(f"Total params: {model.params_count() / 1e9:.2f}B")
+print(f"Params breakdown: {model.params_count_breakdown()}")
+
+# 3. 定义并行策略
+ctx = ParallelContext(
+    tp_degree=8,
+    sp_degree=4,
+    pp_degree=1,
+    ep_degree=1,
+    dp_degree=16,
+    dtype="fp16",
+)
+
+# 4. 绑定模型
+instance = model.bind(ctx)
+
+# 5. 自动推导物理形态和开销
+print(f"Logical params: {model.params_count() / 1e9:.2f}B")
+print(f"Physical params per GPU: {instance.params_count_physical / 1e9:.2f}B")
+print(f"Forward FLOPs: {instance.flops_forward_physical / 1e9:.2f}G")
+print(f"Total FLOPs (forward+backward): {instance.flops_total_physical / 1e9:.2f}G")
+
+# 6. 分析通信
+for comm_op in instance.total_comm_ops:
+    print(f"{comm_op.comm_type} ({comm_op.ptype}): {comm_op.data_bytes / 1e6:.2f}MB")
+
+# 7. 估算时间（使用KernelBackend）
+from llm_perf.kernels.backend import TheoryBackend
+backend = TheoryBackend()
+time = instance.estimate_time(backend)
+print(f"Total time: {time * 1000:.2f}ms")
+
+# 8. 输出完整分析
+result = instance.to_dict()
+print(json.dumps(result, indent=2))
+```
+
+**切分约束自动推导示例**:
+
+```python
+# matmul操作自动推导切分约束
+input = ShardedTensor(
+    shape=(batch, seq, hidden),
+    shardable={1: "sp", 2: "tp"},  # seq被SP切分，hidden被TP切分
+)
+
+weight = ShardedTensor(
+    shape=(hidden, num_heads * head_dim),
+    shardable={1: "tp"},  # heads维度被TP切分
+)
+
+output = input @ weight  # matmul操作
+# output.shardable 自动推导为: {1: "sp", 2: "tp"}
+# 因为:
+#   - seq维度来自input，继承SP切分
+#   - heads维度来自weight列切分，继承TP切分
+#   - 自动记录操作历史，用于后续推导FLOPs和通信
+
+# 绑定ctx后自动推导物理shape
+ctx = ParallelContext(tp_degree=8, sp_degree=4)
+instance = output.bind(ctx)
+# instance.physical_shape = (batch, seq/4, hidden/8)
+# instance.flops = 使用physical shape调用functional API计算
+# instance.comm_ops = 从切分状态变化推导
+```
+
+**自定义模型示例**:
+
+```python
+class MyModel(ShardedModule):
+    def __init__(self, hidden_size, num_heads, intermediate_size):
+        super().__init__()
+        
+        # 定义权重（带切分约束）
+        self.q_weight = ShardedTensor(
+            shape=(hidden_size, num_heads * head_dim),
+            shardable={1: "tp"},  # heads维度可被TP切分
+        )
+        self.ffn_weight = ShardedTensor(
+            shape=(hidden_size, intermediate_size),
+            shardable={1: "tp"},  # intermediate可被TP切分
+        )
+    
+    def forward(self, input):
+        # 像PyTorch一样写forward
+        q_proj = input @ self.q_weight
+        q = q_proj.view(batch, seq, num_heads, head_dim).transpose(1, 2)
+        # ... attention计算
+        output = hidden @ self.ffn_weight
+        return output
+```
+
+### 4. Scheduler Layer (框架调度预留)
 
 **职责**: 为上层训推框架的调度特性建模预留扩展接口
 
@@ -227,7 +400,7 @@ scheduler = SchedulerModel.from_strategy(strategy)
 result = scheduler.apply_all(analyzer_result)
 ```
 
-### 4. Kernel Layer (可插拔 Backend)
+### 5. Kernel Layer (可插拔 Backend)
 
 **职责**: 独立评估算子和通信性能，支持多种评估方案
 
@@ -266,7 +439,7 @@ KernelBackendRegistry.set_default_backend("microarch")
 | Element-wise | VECTOR/CUDA Core | `silu`, `rms_norm`, `softmax` | 低算术强度 |
 | Communication | N/A | `allreduce`, `alltoall` | 网络带宽受限 |
 
-### 5. Strategy Layer
+### 6. Strategy Layer
 
 **职责**: 管理并行策略、优化器配置、调度特性
 
@@ -289,7 +462,7 @@ KernelBackendRegistry.set_default_backend("microarch")
 | Lion | 1x params (m only) | 内存节省 |
 | Muon | 预留 | 自定义优化器 |
 
-### 6. Analyzer Layer
+### 7. Analyzer Layer
 
 **职责**: 综合分析性能，生成详细分解报告
 
@@ -308,7 +481,7 @@ KernelBackendRegistry.set_default_backend("microarch")
 | `memory.py` | 内存估算模块 |
 | `communication.py` | 通信估算模块 |
 
-### 7. Hardware Layer
+### 8. Hardware Layer
 
 **职责**: 抽象硬件能力和网络拓扑
 
@@ -330,7 +503,7 @@ KernelBackendRegistry.set_default_backend("microarch")
 | Fat-Tree | 数据中心胖树 | 大规模集群 |
 | CloudMatrix | 384 NPU全对等超节点 | 华为超节点 |
 
-### 8. Model Layer
+### 9. Model Layer
 
 **职责**: 定义模型结构和层配置
 
@@ -457,12 +630,30 @@ strategy = StrategyConfig(
 | 易用性 | Application Layer | 一行代码评估，降低使用门槛 |
 | 可扩展性 | Scenario + Registry | 新场景无需修改现有代码 |
 | Kernel API | Torch-like functional | 开发者友好，易于上手 |
+| **统一建模** | **ShardedTensor + ShardedModule** | **Torch-like接口，自动推导切分约束** |
 
 ---
 
 ## 版本历史
 
-### v3.0 (最新)
+### v4.0 (最新)
+- **Unified Modeling Layer**: Torch-like接口定义模型
+  - `ShardedTensor`: 带切分约束的张量，类似`torch.Tensor`
+  - `ShardedModule`: 模块基类，类似`torch.nn.Module`
+  - `ParallelContext`: 并行策略上下文（TP/SP/EP/DP/PP）
+  - `ModuleInstance`: 绑定ctx后的物理形态实例
+- **自动推导能力**:
+  - 切分约束自动传播（matmul/view/transpose）
+  - FLOPs自动计算（调用functional API）
+  - 通信自动推导（从切分状态变化）
+  - 物理shape自动计算（逻辑shape + parallel degrees）
+- **基础模块**: Embedding/RMSNorm/Attention/FFN/LMHead
+- **完整模型**: TransformerBlock/LlamaModel
+- **Forward/Backward**: 双模式支持，自动估算backward FLOPs和通信
+- **参数量**: 自动计算params_count和params_count_breakdown
+- **激活值**: forward自动记录激活，用于内存估算
+
+### v3.0
 - **Application Layer**: Evaluator/StrategyOptimizer/BatchOptimizer 便捷API
 - **Scenario Layer**: 场景基类和注册机制，支持LLM/PD-Disagg/RL/Diffusion
 - **Kernel Backend**: Theory/Profiling/Microarch 三种可插拔评估方案
