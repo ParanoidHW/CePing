@@ -3,7 +3,11 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .sharding import ShardingInfo, ShardedLayerConfig
+    from ..strategy.base import StrategyConfig
 
 
 class SubmoduleType(str, Enum):
@@ -15,6 +19,7 @@ class SubmoduleType(str, Enum):
     - final_norm -> LM_HEAD
     NORM is kept for backward compatibility but not actively used.
     """
+
     EMBEDDING = "embedding"
     ATTENTION = "attention"
     FFN = "ffn"
@@ -27,6 +32,7 @@ class SubmoduleType(str, Enum):
 @dataclass
 class LayerConfig:
     """Configuration for a single layer."""
+
     name: str
     input_shape: tuple  # (batch_size, seq_len, hidden_dim) or similar
     output_shape: tuple
@@ -35,6 +41,7 @@ class LayerConfig:
     activation_bytes: int  # Activation memory in bytes
     is_moe: bool = False  # Whether this is an MoE layer
     submodule_type: SubmoduleType = SubmoduleType.OTHER  # Submodule type for transformer components
+    sharding_info: Optional["ShardingInfo"] = None  # Sharding metadata for parallelism
 
 
 @dataclass
@@ -118,43 +125,94 @@ class ModelConfig:
     num_experts: Optional[int] = None
     num_experts_per_token: Optional[int] = None
     # Memory calibration config
-    memory_calibration: MemoryCalibrationConfig = field(
-        default_factory=MemoryCalibrationConfig
-    )
+    memory_calibration: MemoryCalibrationConfig = field(default_factory=MemoryCalibrationConfig)
 
 
 class BaseModel(ABC):
     """Abstract base class for all models."""
-    
+
     def __init__(self, config: ModelConfig):
         self.config = config
         self._layers: List[LayerConfig] = []
-    
+
     @property
     def layers(self) -> List[LayerConfig]:
         """Get all layer configurations."""
         return self._layers
-    
+
     @abstractmethod
     def build_layers(self) -> List[LayerConfig]:
-        """Build and return layer configurations."""
+        """Build and return layer configurations (original, unsharded)."""
         pass
-    
+
+    def build_sharded_layers(
+        self,
+        strategy: "StrategyConfig",
+    ) -> List["ShardedLayerConfig"]:
+        """Build and return sharded layer configurations.
+
+        This method creates a view of the model after applying parallelism
+        sharding. Each ShardedLayerConfig represents what a single GPU
+        actually computes.
+
+        Args:
+            strategy: Parallelism strategy configuration
+
+        Returns:
+            List of ShardedLayerConfig, one per original layer, representing
+            the computation on a single GPU rank
+
+        Note:
+            Subclasses should override this method to provide accurate sharding
+            implementation. The default implementation provides a simple
+            approximation that divides FLOPs by TP degree.
+        """
+        from .sharding import ShardedLayerConfig
+
+        sharded_layers = []
+        tp = strategy.tp_degree
+        sp = strategy.sp_degree
+
+        for idx, layer in enumerate(self._layers):
+            # Simple approximation: divide by TP
+            sharded_flops = layer.flops // max(tp, 1)
+            sharded_params = layer.params_count // max(tp, 1)
+            sharded_activation = layer.activation_bytes // max(tp, 1)
+
+            # Adjust for SP if sequence-related
+            if sp > 1 and "attention" in layer.name:
+                sharded_flops = sharded_flops // max(sp, 1)
+                sharded_activation = sharded_activation // max(sp, 1)
+
+            sharded_layer = ShardedLayerConfig(
+                name=layer.name,
+                original_layer_idx=idx,
+                sharded_input_shape=layer.input_shape,
+                sharded_output_shape=layer.output_shape,
+                sharded_flops=sharded_flops,
+                sharded_params=sharded_params,
+                sharded_activation_bytes=sharded_activation,
+                sharding_info=layer.sharding_info,
+            )
+            sharded_layers.append(sharded_layer)
+
+        return sharded_layers
+
     @property
     def total_params(self) -> int:
         """Total number of parameters."""
         return sum(layer.params_count for layer in self._layers)
-    
+
     @property
     def total_flops_forward(self) -> int:
         """Total FLOPs for forward pass."""
         return sum(layer.flops for layer in self._layers)
-    
+
     @property
     def total_flops_backward(self) -> int:
         """Total FLOPs for backward pass (typically 2x forward)."""
         return self.total_flops_forward * 2
-    
+
     @property
     def activation_memory(self) -> int:
         """Total activation memory in bytes.
@@ -237,9 +295,7 @@ class BaseModel(ABC):
             return 0
 
         # Find max single layer activation
-        max_layer_activation = max(
-            layer.activation_bytes for layer in self._layers
-        )
+        max_layer_activation = max(layer.activation_bytes for layer in self._layers)
 
         # Scale by batch size (assuming linear scaling)
         # Note: This is a simplification; actual scaling depends on layer type
@@ -306,14 +362,14 @@ class BaseModel(ABC):
 
         dtype_size = self._get_dtype_size()
         return num_elements * dtype_size
-    
+
     def get_layer_by_name(self, name: str) -> Optional[LayerConfig]:
         """Get layer configuration by name."""
         for layer in self._layers:
             if layer.name == name:
                 return layer
         return None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert model to dictionary representation."""
         return {
@@ -351,5 +407,5 @@ class BaseModel(ABC):
                     "submodule_type": layer.submodule_type.value,
                 }
                 for layer in self._layers
-            ]
+            ],
         }
