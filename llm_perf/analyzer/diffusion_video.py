@@ -12,7 +12,7 @@ Based on Wan2.1 architecture with Flow Matching framework.
 from dataclasses import dataclass
 from typing import Dict, Any, Tuple, Optional
 
-from ..models.wan_video import WanTextEncoder, WanDiTModel, WanVAEModel
+from llm_perf.legacy.models.wan_video import WanTextEncoder, WanDiTModel, WanVAEModel
 from ..hardware.device import Device, ComputeUnitType
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
@@ -561,7 +561,7 @@ def create_wan_analyzer(
     dtype: str = "bf16",
 ) -> DiffusionVideoAnalyzer:
     """Convenience function to create a Wan2.1 analyzer."""
-    from ..models.wan_video import (
+    from llm_perf.legacy.models.wan_video import (
         create_wan_t2v_14b_text_encoder,
         create_wan_t2v_14b_dit,
         create_wan_t2v_vae,

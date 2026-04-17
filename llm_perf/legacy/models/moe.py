@@ -5,9 +5,9 @@ from typing import List
 
 from .base import BaseModel, LayerConfig, SubmoduleType
 from .llama import LlamaConfig
-from ..utils.constants import DTYPE_SIZES
-from ..kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding, softmax
-from ..kernels.utils import kernel_result_to_layer
+from llm_perf.utils.constants import DTYPE_SIZES
+from llm_perf.kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding, softmax
+from llm_perf.kernels.utils import kernel_result_to_layer
 
 
 @dataclass

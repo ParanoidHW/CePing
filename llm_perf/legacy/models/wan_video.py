@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 from .base import BaseModel, ModelConfig, LayerConfig
-from ..utils.constants import DTYPE_SIZES
-from ..kernels import linear, layer_norm, rms_norm, gelu, silu, conv3d, embedding
-from ..kernels.utils import kernel_result_to_layer
+from llm_perf.utils.constants import DTYPE_SIZES
+from llm_perf.kernels import linear, layer_norm, rms_norm, gelu, silu, conv3d, embedding
+from llm_perf.kernels.utils import kernel_result_to_layer
 
 
 @dataclass
@@ -207,7 +207,7 @@ class WanTextEncoder(BaseModel):
         # Attention computation (Q @ K^T @ V)
         # Using bmm kernel for batch matrix multiply
         head_dim = cfg.hidden_size // cfg.num_attention_heads
-        from ..kernels import bmm
+        from llm_perf.kernels import bmm
         
         # Softmax + @V
         attn_v_result = bmm(
@@ -255,7 +255,7 @@ class WanTextEncoder(BaseModel):
             result=ffn_in_result))
         
         # GeLU activation using gelu kernel
-        from ..kernels import gelu
+        from llm_perf.kernels import gelu
         gelu_result = gelu(
             input=(1, seq_len, cfg.intermediate_size),
             approximate="tanh",
@@ -487,7 +487,7 @@ class WanDiTModel(BaseModel):
         
         # Self-attention computation using scaled_dot_product_attention kernel
         head_dim = cfg.hidden_size // cfg.num_attention_heads
-        from ..kernels import scaled_dot_product_attention
+        from llm_perf.kernels import scaled_dot_product_attention
         attn_result = scaled_dot_product_attention(
             query=(1, cfg.num_attention_heads, seq_len, head_dim),
             key=(1, cfg.num_attention_heads, seq_len, head_dim),

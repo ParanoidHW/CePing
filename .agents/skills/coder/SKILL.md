@@ -53,7 +53,7 @@ from ..utils.constants import DTYPE_SIZES
   - `E741`: 歧义变量名
 
 ```bash
-ruff check llm_perf/models/*.py --select=F401,F841,E741
+ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 ```
 
 ### 1.3 命名规范
@@ -112,7 +112,7 @@ class PerformanceBreakdown:
 
 ```bash
 # 查找手动计算 activation 的位置
-grep -rn "activation_bytes=" llm_perf/models/*.py | grep -v "kernel_result_to_layer"
+grep -rn "activation_bytes=" llm_perf/modeling/*.py | grep -v "kernel_result_to_layer"
 ```
 
 ### 4.2 重构步骤
@@ -125,7 +125,7 @@ grep -rn "activation_bytes=" llm_perf/models/*.py | grep -v "kernel_result_to_la
 4. **更新 tests**：修改测试期望以反映新的层结构
 
 ### 4.3 验证步骤
-1. **代码检查**：`ruff check llm_perf/models/*.py --select=F401,F841,E741`
+1. **代码检查**：`ruff check llm_perf/modeling/*.py --select=F401,F841,E741`
 2. **单元测试**：`python -m pytest tests/test_models.py -v`
 3. **集成测试**：运行相关模型测试
 4. **全量测试**：`python -m pytest tests/ -v`
@@ -140,7 +140,7 @@ git commit -m "feat(kernels): add functional API and conv2d kernel
 - Add kernel_result_to_layer utility
 - Add FLOPs and memory calculation for all kernels"
 
-git add llm_perf/models/
+git add llm_perf/modeling/
 git commit -m "refactor(models): migrate all models to kernel API
 
 - Migrate Llama, MoE, DeepSeek, ResNet, VAE, Wan models
@@ -247,16 +247,16 @@ def _build_modulation_layer(self, layer_idx: int):
 
 ```bash
 # 代码检查
-ruff check llm_perf/models/*.py --select=F401,F841,E741
+ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 
 # 查找手动计算 activation
-grep -n "activation_bytes=" llm_perf/models/*.py | grep -v "kernel_result_to_layer" | grep -v "# NOTE"
+grep -n "activation_bytes=" llm_perf/modeling/*.py | grep -v "kernel_result_to_layer" | grep -v "# NOTE"
 
 # 运行测试
 python -m pytest tests/test_models.py -v --tb=short
 
 # 验证模型
-python -c "from llm_perf.models.llama import LlamaModel, LlamaConfig; m = LlamaModel(LlamaConfig()); print(f'{len(m.layers)} layers')"
+python -c "from llm_perf.modeling import LlamaModel; m = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32); print(f'{len(m.layers)} layers')"
 
 # 查看 git 状态
 git status

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .base import Scenario, ScenarioConfig, ScenarioResult, ScenarioType, ParallelismType
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
@@ -169,7 +169,7 @@ class DiffusionScenario(Scenario):
 
     Example:
         >>> from llm_perf.scenarios.registry import ScenarioRegistry
-        >>> from llm_perf.models.wan_video import WanTextEncoder, WanDiTModel, WanVAEModel
+        >>> from llm_perf.modeling import WanTextEncoder, WanDiTModel, WanVAEModel
         >>> from llm_perf.hardware.device import Device
         >>> from llm_perf.hardware.cluster import Cluster
         >>> from llm_perf.strategy.base import StrategyConfig

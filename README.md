@@ -56,25 +56,34 @@
 
 ```
 llm_perf/
-├── models/          # 模型定义 (Llama, MoE)
-├── hardware/        # 硬件抽象 (Device, Cluster, Topology)
-├── kernels/         # Kernel 评估 (Compute, Communication)
-├── strategy/        # 切分策略 (TP, PP, DP, EP)
-├── analyzer/        # 性能分析器 (Training, Inference)
-├── reporter/        # 报告生成 (Table, JSON, HTML)
-├── cli/             # 命令行接口
-└── web/             # Web 可视化界面 (HTTPS)
-    ├── app.py       # Flask 后端服务
-    ├── static/      # CSS/JS 前端资源
-    └── templates/   # HTML 模板
+├── modeling/         # 新建模框架 (PyTorch-like ShardedModule)
+│   ├── models.py     # Llama, DeepSeek 等模型
+│   ├── layers.py     # ShardedEmbedding, ShardedAttention, ShardedFFN
+│   └── registry.py   # 模型注册和 presets
+├── legacy/models/    # 旧模型定义 (已弃用，保留兼容)
+├── hardware/         # 硬件抽象 (Device, Cluster, Topology)
+├── kernels/          # Kernel 评估 (Compute, Communication)
+├── strategy/         # 切分策略 (TP, PP, DP, EP)
+├── analyzer/         # 性能分析器 (Training, Inference)
+├── reporter/         # 报告生成 (Table, JSON, HTML)
+├── cli/              # 命令行接口
+└── web/              # Web 可视化界面 (HTTPS)
+    ├── app.py        # Flask 后端服务
+    ├── static/       # CSS/JS 前端资源
+    └── templates/    # HTML 模板
 ```
 
 ### 核心模块说明
 
-#### 1. Models (`llm_perf/models/`)
-- `base.py`: 基础模型类和层配置
-- `llama.py`: Llama 模型实现
-- `moe.py`: MoE 模型实现 (支持 EP)
+#### 1. Modeling (`llm_perf/modeling/)
+- `models.py`: Llama, DeepSeek 等完整模型
+- `layers.py`: ShardedEmbedding, ShardedAttention, ShardedFFN, ShardedMoE
+- `mla.py`: MLA (Multi-head Latent Attention) 实现
+- `registry.py`: 模型注册、presets、create_model_from_config
+
+#### 2. Legacy Models (`llm_perf/legacy/models/)
+- 旧版模型接口，已弃用
+- 保留向后兼容
 
 #### 2. Hardware (`llm_perf/hardware/`)
 - `device.py`: 单卡 GPU 配置 (算力、带宽、显存)
@@ -288,15 +297,31 @@ Throughput: 2048.00 tokens/sec
 ### 添加新的模型类型
 
 ```python
-from llm_perf.models.base import BaseModel, ModelConfig, LayerConfig
+from llm_perf.modeling import ShardedModule, ShardedTensor, ModelingRegistry
 
-class MyModelConfig(ModelConfig):
-    custom_param: int = 0
+class MyModel(ShardedModule):
+    def __init__(self, hidden_size, num_layers):
+        super().__init__()
+        self.hidden_size = hidden_size
+        
+        # 定义权重（自动推导分片约束）
+        self.weight = ShardedTensor(
+            shape=(hidden_size, hidden_size),
+            shardable={0: "tp"},  # 支持 TP 分片
+            dtype="fp16",
+            name="my_weight",
+        )
+    
+    def forward(self, x: ShardedTensor) -> ShardedTensor:
+        return x @ self.weight
 
-class MyModel(BaseModel):
-    def build_layers(self) -> List[LayerConfig]:
-        # Implement layer building logic
-        pass
+# 注册到 Registry
+ModelingRegistry().register(
+    name="my_model",
+    model_class=MyModel,
+    description="My custom model",
+    default_config={"hidden_size": 4096, "num_layers": 32},
+)
 ```
 
 ### 添加新的 Kernel 评估

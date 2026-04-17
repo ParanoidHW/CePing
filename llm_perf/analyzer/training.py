@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
-from ..models.base import BaseModel, SubmoduleType
-from ..models.sharding import ShardedLayerConfig
+from llm_perf.legacy.models.base import BaseModel, SubmoduleType
+from llm_perf.legacy.models.sharding import ShardedLayerConfig
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig

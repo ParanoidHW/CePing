@@ -6,7 +6,10 @@ from llm_perf.modeling import (
     ShardedModule,
     ParallelContext,
     ShardedTransformerBlock,
+    ShardedMoEBlock,
+    ShardedMoE,
     LlamaModel,
+    DeepSeekModel,
 )
 
 
@@ -245,3 +248,211 @@ class TestEndToEnd:
         instance = model.bind(ctx)
 
         assert logits.shape == (1, 512, 32000)
+
+
+class TestShardedMoE:
+    """Test ShardedMoE."""
+
+    def test_moe_creation(self):
+        """Test creating MoE layer."""
+        moe = ShardedMoE(
+            hidden_size=4096,
+            intermediate_size=2048,
+            num_experts=64,
+            num_experts_per_token=8,
+        )
+
+        assert moe.hidden_size == 4096
+        assert moe.intermediate_size == 2048
+        assert moe.num_experts == 64
+        assert moe.num_experts_per_token == 8
+
+    def test_moe_with_shared_experts(self):
+        """Test MoE with shared experts."""
+        moe = ShardedMoE(
+            hidden_size=4096,
+            intermediate_size=2048,
+            num_experts=64,
+            num_experts_per_token=8,
+            shared_expert_intermediate=4096,
+        )
+
+        assert moe.shared_expert_intermediate == 4096
+        assert "shared_gate_weight" in moe._weights
+
+    def test_moe_params_count(self):
+        """Test MoE params count."""
+        moe = ShardedMoE(
+            hidden_size=4096,
+            intermediate_size=2048,
+            num_experts=64,
+            num_experts_per_token=8,
+            shared_expert_intermediate=4096,
+        )
+
+        router_params = 4096 * 64
+        expert_gate = 64 * 4096 * 2048
+        expert_up = 64 * 4096 * 2048
+        expert_down = 64 * 2048 * 4096
+        routed_params = router_params + expert_gate + expert_up + expert_down
+
+        shared_gate = 4096 * 4096
+        shared_up = 4096 * 4096
+        shared_down = 4096 * 4096
+        shared_params = shared_gate + shared_up + shared_down
+
+        expected = routed_params + shared_params
+        assert moe.params_count() == expected
+
+    def test_moe_forward(self):
+        """Test MoE forward."""
+        moe = ShardedMoE(
+            hidden_size=4096,
+            intermediate_size=2048,
+            num_experts=64,
+            num_experts_per_token=8,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        output = moe(hidden)
+
+        assert output.shape == (1, 512, 4096)
+
+
+class TestShardedMoEBlock:
+    """Test ShardedMoEBlock."""
+
+    def test_moe_block_creation(self):
+        """Test creating MoE block."""
+        block = ShardedMoEBlock(
+            hidden_size=4096,
+            num_heads=32,
+            num_kv_heads=8,
+            intermediate_size=2048,
+            num_experts=64,
+            num_experts_per_token=8,
+        )
+
+        assert block.hidden_size == 4096
+        assert block.num_experts == 64
+
+    def test_moe_block_submodules(self):
+        """Test MoE block has correct submodules."""
+        block = ShardedMoEBlock(4096, 32, 8, 2048, 64, 8)
+
+        assert "input_norm" in block._submodules
+        assert "attention" in block._submodules
+        assert "post_attn_norm" in block._submodules
+        assert "moe" in block._submodules
+
+    def test_moe_block_forward(self):
+        """Test MoE block forward."""
+        block = ShardedMoEBlock(4096, 32, 8, 2048, 64, 8)
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        output = block(hidden)
+
+        assert output.shape == (1, 512, 4096)
+        assert "attn_out" in block._activations
+        assert "moe_out" in block._activations
+
+
+class TestDeepSeekModel:
+    """Test DeepSeekModel."""
+
+    def test_deepseek_creation(self):
+        """Test creating DeepSeek model."""
+        model = DeepSeekModel(
+            vocab_size=102400,
+            hidden_size=5120,
+            num_layers=60,
+            num_heads=128,
+            num_kv_heads=128,
+            first_k_dense_layers=1,
+            num_experts=160,
+            num_experts_per_token=6,
+            shared_expert_intermediate=2048,
+            moe_intermediate_size=1536,
+        )
+
+        assert model.vocab_size == 102400
+        assert model.hidden_size == 5120
+        assert model.num_layers == 60
+        assert model.num_experts == 160
+        assert model.first_k_dense_layers == 1
+
+    def test_deepseek_mixed_layers(self):
+        """Test DeepSeek has mixed dense and MoE layers."""
+        model = DeepSeekModel(
+            vocab_size=102400,
+            hidden_size=5120,
+            num_layers=4,
+            num_heads=128,
+            first_k_dense_layers=1,
+            num_experts=64,
+        )
+
+        assert len(model.layers) == 4
+        assert isinstance(model.layers[0], ShardedTransformerBlock)
+        assert isinstance(model.layers[1], ShardedMoEBlock)
+
+    def test_deepseek_forward(self):
+        """Test DeepSeek forward."""
+        model = DeepSeekModel(
+            vocab_size=102400,
+            hidden_size=5120,
+            num_layers=2,
+            num_heads=128,
+            first_k_dense_layers=1,
+            num_experts=64,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 128))
+        logits = model(input_ids)
+
+        assert logits.shape == (1, 128, 102400)
+
+    def test_deepseek_module_instance(self):
+        """Test DeepSeek module instance."""
+        model = DeepSeekModel(
+            vocab_size=102400,
+            hidden_size=5120,
+            num_layers=2,
+            num_heads=128,
+            num_experts=64,
+        )
+
+        ctx = ParallelContext(tp_degree=8, ep_degree=2)
+
+        instance = model.bind(ctx)
+
+        assert instance.params_count_logical == model.params_count()
+        assert instance.params_count_physical < instance.params_count_logical
+
+    def test_deepseek_all_dense(self):
+        """Test DeepSeek with all dense layers."""
+        model = DeepSeekModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=4,
+            num_heads=32,
+            first_k_dense_layers=4,
+            num_experts=0,
+        )
+
+        for layer in model.layers:
+            assert isinstance(layer, ShardedTransformerBlock)
+
+    def test_deepseek_all_moe(self):
+        """Test DeepSeek with all MoE layers."""
+        model = DeepSeekModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=4,
+            num_heads=32,
+            first_k_dense_layers=0,
+            num_experts=64,
+        )
+
+        for layer in model.layers:
+            assert isinstance(layer, ShardedMoEBlock)

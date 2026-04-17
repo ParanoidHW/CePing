@@ -6,7 +6,7 @@ Searches for maximum batch size given memory or latency constraints.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
-from ..models.base import BaseModel, ModelConfig
+from llm_perf.legacy.models.base import BaseModel, ModelConfig
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from .evaluator import Evaluator

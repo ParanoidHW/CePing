@@ -18,23 +18,25 @@
 ### 示例 1: 快速开始
 
 ```python
-from llm_perf.models.llama import LlamaConfig, LlamaModel
+from llm_perf.modeling import LlamaModel, create_model_from_config
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.cluster import Cluster, NetworkConfig
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.analyzer.training import TrainingAnalyzer
 
-# 1. 创建模型
-model_config = LlamaConfig(
-    name="llama-7b",
+# 1. 创建模型 (推荐使用 preset)
+model = create_model_from_config({"preset": "llama-7b"})
+print(f"模型参数量: {model.total_params / 1e9:.2f}B")
+
+# 或者直接创建
+model = LlamaModel(
     vocab_size=32000,
     hidden_size=4096,
     num_layers=32,
-    num_attention_heads=32,
+    num_heads=32,
+    intermediate_size=11008,
     dtype="fp16",
 )
-model = LlamaModel(model_config)
-print(f"模型参数量: {model.total_params / 1e9:.2f}B")
 
 # 2. 配置硬件
 device = Device.from_preset("H100-SXM-80GB")
@@ -246,17 +248,21 @@ Llama-7B, seq=32K, fp16:
 评估 MoE 模型的 Expert Parallelism：
 
 ```python
-from llm_perf.models.moe import MoEConfig, MoEModel
+from llm_perf.modeling import ShardedMoE, create_model_from_config
 
-model_config = MoEConfig(
-    name="mixtral-8x7b",
+# 使用 preset 创建 MoE 模型
+model = create_model_from_config({
+    "preset": "mixtral-8x7b",
+})
+
+# 或直接创建
+model = ShardedMoE(
     hidden_size=4096,
-    num_layers=32,
+    intermediate_size=14336,
     num_experts=8,
     num_experts_per_token=2,
     dtype="fp16",
 )
-model = MoEModel(model_config)
 
 # EP 策略
 strategy = StrategyConfig(
@@ -356,25 +362,26 @@ cluster = Cluster.create_homogeneous(
 实现新的模型架构：
 
 ```python
-from llm_perf.models.base import BaseModel, ModelConfig, LayerConfig
+from llm_perf.modeling import ShardedModule, ShardedTensor
 
-class CustomConfig(ModelConfig):
-    custom_param: int = 128
-
-class CustomModel(BaseModel):
-    def build_layers(self) -> List[LayerConfig]:
-        layers = []
-        # 自定义层构建逻辑
-        for i in range(self.config.num_layers):
-            layers.append(LayerConfig(
-                name=f"custom_layer_{i}",
-                input_shape=(1, 1, self.config.hidden_size),
-                output_shape=(1, 1, self.config.hidden_size),
-                params_count=self.config.hidden_size ** 2,
-                flops=self.config.hidden_size ** 2 * 2,
-                activation_bytes=self.config.hidden_size * 2,
-            ))
-        return layers
+class CustomModel(ShardedModule):
+    def __init__(self, hidden_size, num_layers):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.layers = []
+        for i in range(num_layers):
+            weight = ShardedTensor(
+                shape=(hidden_size, hidden_size),
+                shardable={0: "tp"},  # 支持 TP 分片
+                dtype="fp16",
+                name=f"layer_{i}_weight",
+            )
+            self.layers.append(weight)
+    
+    def forward(self, x):
+        for weight in self.layers:
+            x = x @ weight
+        return x
 ```
 
 ### 示例 11: 批量评估与导出

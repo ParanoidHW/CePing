@@ -3,7 +3,7 @@
 import math
 from typing import Tuple, Optional
 from .functional import KernelResult
-from ..models.base import LayerConfig, SubmoduleType
+from llm_perf.legacy.models.base import LayerConfig, SubmoduleType
 
 
 def kernel_result_to_layer(

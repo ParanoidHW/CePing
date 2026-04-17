@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.registry import ModelRegistry
-from ..models.registry import get_model_presets, create_model_from_config  # Models auto-registered on import
+from llm_perf.legacy.models.registry import get_model_presets, create_model_from_config  # Models auto-registered on import
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster, NetworkConfig
 from ..strategy.base import StrategyConfig

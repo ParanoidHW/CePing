@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import List
 
 from .base import BaseModel, ModelConfig, LayerConfig
-from ..utils.constants import DTYPE_SIZES
-from ..kernels import conv2d
-from ..kernels.utils import kernel_result_to_layer
+from llm_perf.utils.constants import DTYPE_SIZES
+from llm_perf.kernels import conv2d
+from llm_perf.kernels.utils import kernel_result_to_layer
 
 
 @dataclass

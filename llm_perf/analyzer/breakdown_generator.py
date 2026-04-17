@@ -6,7 +6,7 @@ and pipelines, including memory by type, communication by parallelism, etc.
 
 from typing import List, Dict, Any, Optional, Tuple
 
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..strategy.base import StrategyConfig
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster

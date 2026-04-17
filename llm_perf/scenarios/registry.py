@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type
 
 from .base import Scenario, ScenarioConfig, ScenarioType
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig

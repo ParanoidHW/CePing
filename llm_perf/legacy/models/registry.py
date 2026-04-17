@@ -6,7 +6,7 @@ This module should be imported to register all models.
 
 from typing import Optional
 
-from ..core.registry import ModelRegistry
+from llm_perf.core.registry import ModelRegistry
 
 # Import all model classes
 from .llama import LlamaConfig, LlamaModel
@@ -300,7 +300,6 @@ def get_model_presets() -> dict:
             "dtype": "fp16",
             "description": "LLaMA 70B - Dense transformer with GQA",
         },
-
         # ===== Sparse (Standard MoE) Presets =====
         "mixtral-8x7b": {
             "architecture": "mixtral",
@@ -318,7 +317,6 @@ def get_model_presets() -> dict:
             "num_experts_per_token": 2,
             "description": "Mixtral 8x7B - Standard MoE (periodic layers) with GQA",
         },
-
         # ===== Sparse (DeepSeek MoE) Presets =====
         "deepseek-v3": {
             "architecture": "deepseek",
@@ -336,7 +334,6 @@ def get_model_presets() -> dict:
             "num_experts_per_token": 8,
             "description": "DeepSeek V3 - DeepSeek MoE + MLA attention",
         },
-
         # ===== Video Generation Pipeline Preset =====
         "wan-t2v-14b": {
             "architecture": "wan_pipeline",

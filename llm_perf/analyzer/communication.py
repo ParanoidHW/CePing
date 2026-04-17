@@ -2,7 +2,7 @@
 
 from typing import Dict, Tuple
 
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig, SPType

@@ -30,7 +30,7 @@ python编码规范需遵守PEP 8，你会逐行检查编码不符合规范的地
 ### 1.1 Ruff 检查
 必须无警告：
 ```bash
-ruff check llm_perf/models/*.py --select=F401,F841,E741
+ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 ```
 
 - [ ] **F401**: 无未使用的导入
@@ -112,7 +112,7 @@ python -m pytest tests/test_models.py tests/test_deepseek.py \
 
 ```bash
 # 1. 代码质量检查
-ruff check llm_perf/models/*.py --select=F401,F841,E741
+ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 
 # 2. 运行测试
 python -m pytest tests/test_models.py tests/test_deepseek.py \
@@ -120,14 +120,14 @@ python -m pytest tests/test_models.py tests/test_deepseek.py \
 
 # 3. 验证模型
 python -c "
-from llm_perf.models.llama import LlamaModel, LlamaConfig
-from llm_perf.models.deepseek import DeepSeekV3Model
+from llm_perf.modeling import LlamaModel, create_model_from_config
+from llm_perf.modeling import DeepSeekModel
 print('Llama:', len(LlamaModel(LlamaConfig()).layers), 'layers')
 print('DeepSeek V3:', len(DeepSeekV3Model().layers), 'layers')
 "
 
 # 4. 检查 NOTE 注释
-grep -n "# NOTE" llm_perf/models/*.py
+grep -n "# NOTE" llm_perf/modeling/*.py
 ```
 
 ---

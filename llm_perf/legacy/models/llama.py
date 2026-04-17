@@ -5,9 +5,9 @@ from typing import List, Optional, TYPE_CHECKING
 
 from .base import BaseModel, ModelConfig, LayerConfig, SubmoduleType
 from .sharding import ShardingInfo, ShardableDim, CommPattern, CommPosition, ShardedLayerConfig, ParallelDimType
-from ..utils.constants import DTYPE_SIZES
-from ..kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding
-from ..kernels.utils import kernel_result_to_layer
+from llm_perf.utils.constants import DTYPE_SIZES
+from llm_perf.kernels import linear, rms_norm, silu, scaled_dot_product_attention, embedding
+from llm_perf.kernels.utils import kernel_result_to_layer
 
 if TYPE_CHECKING:
     from ..strategy.base import StrategyConfig

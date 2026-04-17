@@ -554,26 +554,34 @@ KernelBackendRegistry.set_default_backend("microarch")
 ### 添加新模型
 
 ```python
-from llm_perf.models.base import BaseModel, LayerConfig
-from llm_perf.kernels import linear, rms_norm, flash_attention
-from llm_perf.kernels.utils import kernel_result_to_layer
+from llm_perf.modeling import ShardedModule, ShardedTensor, flash_attention
+from llm_perf.modeling import ModelingRegistry
 
-class MyModel(BaseModel):
-    def build_layers(self) -> List[LayerConfig]:
-        layers = []
+class MyModel(ShardedModule):
+    def __init__(self, vocab_size, hidden_size, num_layers, num_heads):
+        super().__init__()
+        self.hidden_size = hidden_size
         
-        # 使用 Kernel API 构建层
-        q_result = linear(input=(batch, seq, hidden), weight=(q_dim, hidden))
-        layers.append(kernel_result_to_layer(name="q_proj", result=q_result))
-        
-        attn_result = flash_attention(...)
-        layers.append(kernel_result_to_layer(name="attention", result=attn_result))
-        
-        return layers
+        # 定义权重（自动推导分片约束）
+        self.weight = ShardedTensor(
+            shape=(hidden_size, hidden_size),
+            shardable={0: "tp"},  # 支持 TP 分片
+            dtype="fp16",
+            name="my_weight",
+        )
+    
+    def forward(self, x: ShardedTensor) -> ShardedTensor:
+        output = x @ self.weight
+        return output
 
 # 注册模型
-from llm_perf.models import ModelRegistry
-ModelRegistry.register("my_model", MyModel, MyConfig)
+ModelingRegistry().register(
+    name="my_model",
+    model_class=MyModel,
+    description="My custom model",
+    architecture="my_model",
+    default_config={"vocab_size": 32000, "hidden_size": 4096},
+)
 ```
 
 ### 添加新 Kernel Backend

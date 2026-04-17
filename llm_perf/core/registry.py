@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
 # Delayed import to avoid circular imports
-# from ..models.base import BaseModel, ModelConfig
+# from llm_perf.legacy.models.base import BaseModel, ModelConfig
 
 # Type variables for generic registry
 # Type variables - actual bounds checked at runtime to avoid circular imports

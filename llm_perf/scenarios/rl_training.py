@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .base import Scenario, ScenarioConfig, ScenarioResult, ScenarioType, ParallelismType
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
@@ -168,7 +168,7 @@ class RLTrainingScenario(Scenario):
 
     Example:
         >>> from llm_perf.scenarios.registry import ScenarioRegistry
-        >>> from llm_perf.models.llama import LlamaModel, LlamaConfig
+        >>> from llm_perf.modeling import LlamaModel, LlamaConfig
         >>>
         >>> registry = ScenarioRegistry()
         >>> policy = LlamaModel(LlamaConfig(...))

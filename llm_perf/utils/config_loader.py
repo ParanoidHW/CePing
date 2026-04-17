@@ -13,12 +13,12 @@ from dataclasses import dataclass, asdict
 from ..hardware.device import Device, DeviceConfig
 from ..hardware.cluster import Cluster, NetworkConfig
 from ..hardware.topology import NetworkTopology, TopologyType
-from ..models.base import ModelConfig, BaseModel
+from ..legacy.models.base import ModelConfig, BaseModel
 from ..strategy.base import StrategyConfig, SPType
 
 if TYPE_CHECKING:
-    from ..models.llama import LlamaModel, LlamaConfig
-    from ..models.moe import MoEModel, MoEConfig
+    from ..legacy.models.llama import LlamaModel, LlamaConfig
+    from ..legacy.models.moe import MoEModel, MoEConfig
 
 T = TypeVar("T")
 
@@ -594,8 +594,8 @@ class ConfigLoader:
         Raises:
             ValueError: If model type is unknown
         """
-        from ..models.llama import LlamaModel, LlamaConfig
-        from ..models.moe import MoEModel, MoEConfig
+        from llm_perf.legacy.models.llama import LlamaModel, LlamaConfig
+        from llm_perf.legacy.models.moe import MoEModel, MoEConfig
 
         if isinstance(model_config, dict):
             model_config = cls.load_model_config(model_config)

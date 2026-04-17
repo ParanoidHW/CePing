@@ -448,3 +448,130 @@ class ShardedLMHead(ShardedModule):
         logits = hidden @ self.weight
 
         return logits
+
+
+class ShardedMoE(ShardedModule):
+    """Mixture of Experts layer.
+
+    Sharding:
+    - Router: not sharded (replicated)
+    - Expert weights: EP-sharded (experts), TP-sharded (intermediate)
+    - Shared experts: TP-sharded only
+    - Communication: All2All (EP) + AllReduce (TP)
+
+    Args:
+        hidden_size: Hidden size
+        intermediate_size: Expert intermediate size
+        num_experts: Number of experts
+        num_experts_per_token: Number of active experts per token
+        shared_expert_intermediate: Shared expert intermediate size (optional)
+        dtype: Data type
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        num_experts: int,
+        num_experts_per_token: int = 1,
+        shared_expert_intermediate: Optional[int] = None,
+        dtype: str = "fp16",
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.num_experts = num_experts
+        self.num_experts_per_token = num_experts_per_token
+        self.shared_expert_intermediate = shared_expert_intermediate
+
+        self.router_weight = ShardedTensor(
+            shape=(hidden_size, num_experts),
+            shardable={},
+            dtype=dtype,
+            name="router_weight",
+        )
+
+        self.expert_gate_weight = ShardedTensor(
+            shape=(num_experts, hidden_size, intermediate_size),
+            shardable={0: "ep", 2: "tp"},
+            dtype=dtype,
+            name="expert_gate_weight",
+        )
+        self.expert_up_weight = ShardedTensor(
+            shape=(num_experts, hidden_size, intermediate_size),
+            shardable={0: "ep", 2: "tp"},
+            dtype=dtype,
+            name="expert_up_weight",
+        )
+        self.expert_down_weight = ShardedTensor(
+            shape=(num_experts, intermediate_size, hidden_size),
+            shardable={0: "ep", 1: "tp"},
+            dtype=dtype,
+            name="expert_down_weight",
+        )
+
+        if shared_expert_intermediate:
+            self.shared_gate_weight = ShardedTensor(
+                shape=(hidden_size, shared_expert_intermediate),
+                shardable={1: "tp"},
+                dtype=dtype,
+                name="shared_gate_weight",
+            )
+            self.shared_up_weight = ShardedTensor(
+                shape=(hidden_size, shared_expert_intermediate),
+                shardable={1: "tp"},
+                dtype=dtype,
+                name="shared_up_weight",
+            )
+            self.shared_down_weight = ShardedTensor(
+                shape=(shared_expert_intermediate, hidden_size),
+                shardable={0: "tp"},
+                dtype=dtype,
+                name="shared_down_weight",
+            )
+
+    def forward(self, hidden: ShardedTensor) -> ShardedTensor:
+        """MoE forward.
+
+        Args:
+            hidden: (batch, seq, hidden_size)
+
+        Returns:
+            output: (batch, seq, hidden_size)
+        """
+        router_logits = hidden @ self.router_weight
+
+        from .op import MoEExpertOp
+
+        expert_out = ShardedTensor(
+            shape=hidden.shape,
+            shardable=hidden.shardable,
+            dtype=hidden.dtype,
+            name="expert_out",
+        )
+        expert_out._op_history = hidden._op_history + [
+            MoEExpertOp(
+                dtype=hidden.dtype,
+                hidden=hidden,
+                expert_gate_weights=self.expert_gate_weight,
+                expert_up_weights=self.expert_up_weight,
+                expert_down_weights=self.expert_down_weight,
+                num_experts_per_token=self.num_experts_per_token,
+                output=expert_out,
+            )
+        ]
+
+        if self.shared_expert_intermediate:
+            shared_gate = hidden @ self.shared_gate_weight
+            shared_gate = silu(shared_gate)
+            shared_up = hidden @ self.shared_up_weight
+            shared_intermediate = shared_gate * shared_up
+            shared_out = shared_intermediate @ self.shared_down_weight
+            output = expert_out + shared_out
+        else:
+            output = expert_out
+
+        self._activations["router_logits"] = router_logits
+        self._activations["expert_out"] = expert_out
+
+        return output

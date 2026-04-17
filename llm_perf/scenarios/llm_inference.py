@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 from .base import Scenario, ScenarioConfig, ScenarioResult, ScenarioType, ParallelismType
 from ..analyzer.inference import InferenceAnalyzer, InferenceResult
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
@@ -97,7 +97,7 @@ class LLMInferenceScenario(Scenario):
     Uses InferenceAnalyzer for prefill and decode estimation.
 
     Example:
-        >>> from llm_perf.models.registry import create_model_from_config
+        >>> from llm_perf.modeling import create_model_from_config
         >>> from llm_perf.hardware.device import Device
         >>> from llm_perf.hardware.cluster import Cluster
         >>> from llm_perf.strategy.base import StrategyConfig

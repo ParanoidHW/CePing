@@ -145,7 +145,7 @@ memory_bound = (arithmetic_intensity < threshold)
 ```python
 from llm_perf.kernels import linear, rms_norm, scaled_dot_product_attention
 from llm_perf.kernels.utils import kernel_result_to_layer
-from llm_perf.models.base import LayerConfig
+from llm_perf.legacy.models.base import LayerConfig
 
 layers: List[LayerConfig] = []
 

@@ -189,3 +189,56 @@ class CommOp:
             "ptype": self.ptype,
             "direction": self.direction,
         }
+
+
+@dataclass
+class Conv2dOp(Op):
+    """2D Convolution operation."""
+
+    kernel_name: str = "conv2d"
+    dtype: str = "fp16"
+    input: Any = None
+    weight: Any = None
+    output: Any = None
+    inputs: List[Any] = None
+    stride: Tuple[int, int] = (1, 1)
+    padding: Tuple[int, int] = (0, 0)
+
+    def __post_init__(self):
+        if self.inputs is None:
+            self.inputs = [self.input, self.weight]
+
+
+@dataclass
+class Conv3dOp(Op):
+    """3D Convolution operation."""
+
+    kernel_name: str = "conv3d"
+    dtype: str = "fp16"
+    input: Any = None
+    weight: Any = None
+    output: Any = None
+    inputs: List[Any] = None
+    stride: Tuple[int, int, int] = (1, 1, 1)
+    padding: Tuple[int, int, int] = (0, 0, 0)
+
+    def __post_init__(self):
+        if self.inputs is None:
+            self.inputs = [self.input, self.weight]
+
+
+@dataclass
+class GroupNormOp(Op):
+    """Group Normalization operation."""
+
+    kernel_name: str = "group_norm"
+    dtype: str = "fp16"
+    input: Any = None
+    weight: Any = None
+    output: Any = None
+    inputs: List[Any] = None
+    num_groups: int = 32
+
+    def __post_init__(self):
+        if self.inputs is None:
+            self.inputs = [self.input, self.weight]

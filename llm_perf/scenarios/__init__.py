@@ -14,7 +14,7 @@ The Scenario abstraction provides:
 
 Example:
     >>> from llm_perf.scenarios import ScenarioRegistry, ScenarioType
-    >>> from llm_perf.models.registry import create_model_from_config
+    >>> from llm_perf.modeling import create_model_from_config
     >>> from llm_perf.hardware.device import Device
     >>> from llm_perf.hardware.cluster import Cluster
     >>> from llm_perf.strategy.base import StrategyConfig

@@ -3263,7 +3263,170 @@ class TestPPIntegration:
 | Phase 3 | MoE和组合模块 | ✅ 完成 | (Phase 4 tests) | 2026-04-17 |
 | Phase 4 | 完整模型 | ✅ 完成 | 12 passed | 2026-04-17 |
 | Phase 5 | ParallelContext和ModuleInstance | ✅ 完成 | (Phase 1 tests) | 2026-04-17 |
-| Phase 6 | PP策略 | ⏳ TODO | - | 待实现 |
-| Phase 7 | 测试验证 | ✅ 完成 | 557 total passed | 2026-04-17 |
+| Phase 6 | PP策略 | ✅ 完成 | 33 passed | 2026-04-17 |
+| Phase 7 | 测试验证 | ✅ 完成 | 603 total passed | 2026-04-17 |
+| Phase 8 | Vision/Video模块 | ✅ 完成 | 29 passed | 2026-04-17 |
+| Phase 9 | Wan视频生成模型 | ✅ 完成 | 21 passed | 2026-04-17 |
 
-**总计**: 60 tests for modeling, 497 existing tests still passing
+**总计**: 168 tests for modeling (Phase 1-9), 485 existing tests still passing
+
+---
+
+## 16. 新增模型支持
+
+### 16.1 ShardedMoE
+
+```python
+from llm_perf.modeling import ShardedMoE
+
+moe = ShardedMoE(
+    hidden_size=4096,
+    intermediate_size=2048,
+    num_experts=64,
+    num_experts_per_token=8,
+    shared_expert_intermediate=4096,  # 可选：共享专家
+)
+```
+
+### 16.2 ShardedMoEBlock
+
+```python
+from llm_perf.modeling import ShardedMoEBlock
+
+block = ShardedMoEBlock(
+    hidden_size=4096,
+    num_heads=32,
+    num_kv_heads=8,
+    intermediate_size=2048,
+    num_experts=64,
+    num_experts_per_token=8,
+)
+```
+
+### 16.3 DeepSeekModel
+
+```python
+from llm_perf.modeling import DeepSeekModel
+
+model = DeepSeekModel(
+    vocab_size=102400,
+    hidden_size=5120,
+    num_layers=60,
+    num_heads=128,
+    first_k_dense_layers=1,  # 前1层用Dense FFN
+    num_experts=160,
+    num_experts_per_token=6,
+    shared_expert_intermediate=2048,
+)
+```
+
+### 16.4 Vision/Video模块
+
+**Conv层** (无切分策略):
+```python
+from llm_perf.modeling import ShardedConv2d, ShardedConv3d, ShardedGroupNorm
+
+conv2d = ShardedConv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+conv3d = ShardedConv3d(64, 128, kernel_size=(3, 3, 3))  # 视频卷积
+norm = ShardedGroupNorm(num_groups=32, num_channels=512)
+```
+
+**VAE模型**:
+```python
+from llm_perf.modeling import ShardedVAE, ShardedVAEEncoder, ShardedVAEDecoder
+
+vae = ShardedVAE(
+    in_channels=3,
+    out_channels=3,
+    latent_channels=4,
+    block_out_channels=(128, 256, 512, 512),
+    use_3d=True,  # 视频VAE
+)
+
+latent = vae.encode(video)  # 编码
+reconstructed = vae.decode(latent)  # 解码
+```
+
+### 16.5 Wan视频生成模型
+
+**Text Encoder** (umT5-XXL):
+```python
+from llm_perf.modeling import ShardedWanTextEncoder
+
+encoder = ShardedWanTextEncoder(
+    vocab_size=256384,
+    hidden_size=4096,
+    num_layers=24,
+    num_heads=64,
+)
+text_embed = encoder(input_ids)
+```
+
+**DiT Model**:
+```python
+from llm_perf.modeling import ShardedWanDiT
+
+dit = ShardedWanDiT(
+    hidden_size=5120,
+    num_layers=40,
+    num_heads=40,
+    intermediate_size=13824,
+    in_channels=16,  # VAE latent channels
+    text_dim=4096,
+)
+
+output = dit(latent, text_embed, time_embed)
+```
+
+**Wan VAE**:
+```python
+from llm_perf.modeling import ShardedWanVAE
+
+vae = ShardedWanVAE(
+    in_channels=3,
+    latent_channels=16,  # Wan uses 16 channels
+)
+```
+
+---
+
+## 17. 新旧接口共存说明
+
+### 17.1 旧接口 (`llm_perf/models/`)
+
+**状态**: Legacy，保留供现有功能使用
+
+**用途**:
+- Web API (`web/app.py`)
+- Analyzer (`llm_perf/analyzer/`)
+- 场景模板 (`llm_perf/scenarios/`)
+- 非LLM模型 (ResNet, VAE, WanVideo)
+
+**关键类**:
+- `BaseModel`, `ModelConfig`, `LayerConfig`
+- `LlamaModel`, `DeepSeekModel`, `MoEModel` (旧版)
+- `ShardingInfo`, `ShardedLayerConfig`
+
+### 17.2 新接口 (`llm_perf/modeling/`)
+
+**状态**: 推荐，未来的统一建模方案
+
+**用途**:
+- LLM模型性能分析
+- 高维并行组合评估
+- PP策略规划
+
+**关键类**:
+- `ShardedTensor`, `ShardedModule`
+- `ShardedEmbedding`, `ShardedAttention`, `ShardedFFN`, `ShardedMoE`
+- `LlamaModel`, `DeepSeekModel` (新版)
+- `ParallelContext`, `ModuleInstance`
+- `PPStrategy`, `PPModel`
+
+### 17.3 迁移路径
+
+**推荐迁移顺序**:
+1. 新模型定义使用 `modeling` 接口
+2. Analyzer 逐步迁移到 `ModuleInstance`
+3. Web API 适配新接口
+4. 非LLM模型考虑简化或保留旧接口

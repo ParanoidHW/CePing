@@ -7,7 +7,7 @@ performance with support for various input formats (preset names, configs, objec
 from typing import Any, Dict, Optional, Union
 
 from ..utils.config_loader import ConfigLoader, HardwareConfigDict
-from ..models.base import BaseModel, ModelConfig
+from llm_perf.legacy.models.base import BaseModel, ModelConfig
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
 from ..analyzer.training import TrainingAnalyzer, TrainingResult

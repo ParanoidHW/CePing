@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
-from ..models.base import BaseModel
+from ..legacy.models.base import BaseModel
 from ..hardware.device import Device
 from ..hardware.cluster import Cluster
 from ..strategy.base import StrategyConfig
@@ -134,10 +134,7 @@ class PipelineResult:
         result = {
             "total_time_sec": self.total_time_sec,
             "step_times": self.step_times,
-            "step_results": {
-                k: v.to_dict() if hasattr(v, "to_dict") else v
-                for k, v in self.step_results.items()
-            },
+            "step_results": {k: v.to_dict() if hasattr(v, "to_dict") else v for k, v in self.step_results.items()},
             "memory_peak_gb": self.memory_peak_gb,
             "throughput": self.throughput,
             "metadata": self.metadata,
@@ -226,14 +223,10 @@ class Pipeline(ABC):
         for step in self._steps:
             for dep in step.depends_on:
                 if dep not in step_names:
-                    raise ValueError(
-                        f"Step '{step.name}' depends on unknown step '{dep}'"
-                    )
+                    raise ValueError(f"Step '{step.name}' depends on unknown step '{dep}'")
 
     @abstractmethod
-    def execute_step(
-        self, step: PipelineStep, inputs: Dict[str, Any]
-    ) -> Tuple[Any, float]:
+    def execute_step(self, step: PipelineStep, inputs: Dict[str, Any]) -> Tuple[Any, float]:
         """Execute a single pipeline step.
 
         Args:
@@ -311,9 +304,7 @@ class Pipeline(ABC):
 
             # Execute step
             if step.is_iterative and step.iteration_config is not None:
-                result, step_time, num_iters = self.execute_iterative_step(
-                    step, step_inputs, step.iteration_config
-                )
+                result, step_time, num_iters = self.execute_iterative_step(step, step_inputs, step.iteration_config)
                 step_results[step.name] = {
                     "result": result,
                     "iterations": num_iters,
@@ -411,9 +402,7 @@ class SimplePipeline(Pipeline):
         """
         return self.config.steps
 
-    def execute_step(
-        self, step: PipelineStep, inputs: Dict[str, Any]
-    ) -> Tuple[Any, float]:
+    def execute_step(self, step: PipelineStep, inputs: Dict[str, Any]) -> Tuple[Any, float]:
         """Execute a single step using roofline estimation.
 
         Args:

@@ -26,7 +26,7 @@ from llm_perf.hardware.device import Device
 from llm_perf.hardware.topology import (
     NetworkTopology,
 )
-from llm_perf.models.registry import create_model_from_config, get_model_presets, get_presets_by_sparse_type
+from llm_perf.modeling import create_model_from_config, get_model_presets, get_presets_by_sparse_type
 from llm_perf.pipelines.register import get_pipeline_presets
 from llm_perf.strategy.base import StrategyConfig
 
@@ -187,7 +187,7 @@ def get_model_presets_endpoint():
 def refresh_models():
     """Refresh model registry."""
     try:
-        from llm_perf.models import registry as _registry_module  # noqa: F401
+        from llm_perf.modeling import registry as _registry_module  # noqa: F401
 
         return jsonify(
             {

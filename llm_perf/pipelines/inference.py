@@ -6,7 +6,7 @@ from ..analyzer.inference import InferenceAnalyzer
 from ..core.pipeline import Pipeline, PipelineConfig, PipelineResult, PipelineStep
 from ..hardware.cluster import Cluster
 from ..hardware.device import Device
-from ..models.base import BaseModel
+from llm_perf.legacy.models.base import BaseModel
 from ..strategy.base import StrategyConfig
 
 
