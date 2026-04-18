@@ -30,12 +30,12 @@ class Evaluator:
     - Instance objects: ShardedModule, Cluster, StrategyConfig
 
     Supports multiple workloads:
-    - Built-in presets: "llm-training", "llm-inference", "diffusion-inference"
+    - Built-in presets: "training", "autoregressive-inference", "diffusion-pipeline"
     - Custom workloads via WorkloadConfig
 
     Example:
         >>> evaluator = Evaluator()
-        >>> result = evaluator.evaluate("llama-7b", "H100", "llm-training", batch_size=32)
+        >>> result = evaluator.evaluate("llama-7b", "H100", "training", batch_size=32)
         >>> print(f"Throughput: {result.throughput['tokens_per_sec']:.2f}")
     """
 
@@ -144,7 +144,7 @@ class Evaluator:
         models: Dict[str, Union[str, Dict, ShardedModule]],
         hardware: Union[str, Dict, Cluster],
         strategy: Union[str, Dict, StrategyConfig] = None,
-        workload: str = "diffusion-inference",
+        workload: str = "diffusion-pipeline",
         num_frames: int = 81,
         height: int = 720,
         width: int = 1280,

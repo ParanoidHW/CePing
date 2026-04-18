@@ -137,8 +137,8 @@ class TestScenarioRegistry:
         """Test listing scenarios."""
         registry = ScenarioRegistry()
         scenarios = registry.list_scenarios()
-        assert "llm-training" in scenarios
-        assert "llm-inference" in scenarios
+        assert "training" in scenarios
+        assert "autoregressive-inference" in scenarios
 
     def test_list_by_type(self):
         """Test listing by type."""
@@ -150,14 +150,14 @@ class TestScenarioRegistry:
     def test_get_scenario_info(self):
         """Test getting scenario info."""
         registry = ScenarioRegistry()
-        info = registry.get("llm-training")
-        assert info.name == "llm-training"
+        info = registry.get("training")
+        assert info.name == "training"
         assert info.scenario_type == ScenarioType.LLM_TRAINING
 
     def test_is_registered(self):
         """Test checking registration."""
         registry = ScenarioRegistry()
-        assert registry.is_registered("llm-training")
+        assert registry.is_registered("training")
         assert not registry.is_registered("nonexistent")
 
 
@@ -473,7 +473,7 @@ class TestRegistryCreateScenario:
 
         registry = ScenarioRegistry()
         scenario = registry.create_scenario(
-            "llm-training",
+            "training",
             models={"main": model},
             device=device,
             cluster=cluster,
@@ -495,7 +495,7 @@ class TestRegistryCreateScenario:
 
         registry = ScenarioRegistry()
         scenario = registry.create_scenario(
-            "llm-inference",
+            "autoregressive-inference",
             models={"main": model},
             device=device,
             cluster=cluster,

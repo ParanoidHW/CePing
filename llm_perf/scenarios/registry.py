@@ -187,7 +187,7 @@ def register_all_scenarios() -> None:
     registry = ScenarioRegistry()
 
     registry.register(
-        name="llm-training",
+        name="training",
         scenario_class=LLMTrainingScenario,
         config_class=LLMTrainingConfig,
         description="Standard LLM training scenario (forward + backward)",
@@ -201,7 +201,7 @@ def register_all_scenarios() -> None:
     )
 
     registry.register(
-        name="llm-inference",
+        name="autoregressive-inference",
         scenario_class=LLMInferenceScenario,
         config_class=LLMInferenceConfig,
         description="Standard LLM inference scenario (prefill + decode)",

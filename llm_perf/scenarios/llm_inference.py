@@ -74,7 +74,7 @@ class LLMInferenceScenario(Scenario):
     """LLM inference performance scenario.
 
     Evaluates inference performance for a single LLM model.
-    Uses UnifiedAnalyzer with llm-inference workload.
+    Uses UnifiedAnalyzer with autoregressive-inference workload.
     """
 
     def __init__(
@@ -158,7 +158,7 @@ class LLMInferenceScenario(Scenario):
 
         analyzer = self.get_analyzer()
         result = analyzer.analyze(
-            "llm-inference",
+            "autoregressive-inference",
             batch_size=batch_size,
             prompt_len=max_seq_len // 2,
             generation_len=max_seq_len // 2,

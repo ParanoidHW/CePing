@@ -65,7 +65,7 @@ class LLMTrainingScenario(Scenario):
     """LLM training performance scenario.
 
     Evaluates training performance for a single LLM model.
-    Uses UnifiedAnalyzer with llm-training workload.
+    Uses UnifiedAnalyzer with training workload.
     """
 
     def __init__(
@@ -99,7 +99,7 @@ class LLMTrainingScenario(Scenario):
 
         analyzer = self.get_analyzer()
         unified_result = analyzer.analyze(
-            "llm-training",
+            "training",
             batch_size=batch_size,
             seq_len=seq_len,
         )
@@ -129,5 +129,5 @@ class LLMTrainingScenario(Scenario):
         seq_len = seq_len or self.config.seq_len
 
         analyzer = self.get_analyzer()
-        result = analyzer.analyze("llm-training", batch_size=batch_size, seq_len=seq_len)
+        result = analyzer.analyze("training", batch_size=batch_size, seq_len=seq_len)
         return result.peak_memory_gb
