@@ -92,6 +92,7 @@ function setupEventListeners() {
             elements.modeTabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             state.mode = tab.dataset.mode;
+            populateModelPresets();
             updateModeUI();
         });
     });
