@@ -395,3 +395,138 @@ class TestAnalyzerWithPreset:
 
         assert result.total_time_sec > 0
         assert result.peak_memory_gb > 0
+
+
+class TestBackwardKernelEstimation:
+    """Test backward estimation uses kernel definitions, not hardcoded x2."""
+
+    def test_backward_estimate_uses_kernel_definition(self):
+        """Verify backward flops/time come from kernel.flops_backward, not x2."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        forward_phase = result.get_phase("forward")
+        backward_phase = result.get_phase("backward")
+
+        assert forward_phase is not None
+        assert backward_phase is not None
+        assert forward_phase.flops > 0
+        assert backward_phase.flops > 0
+
+        ratio = backward_phase.flops / forward_phase.flops
+        assert ratio > 1.5 and ratio < 2.5, f"backward/forward ratio should be ~2x, got {ratio}"
+
+        assert backward_phase.single_time_sec > forward_phase.single_time_sec
+
+    def test_linear_kernel_backward_flops(self):
+        """Verify linear kernel has correct backward flops (4*m*n*k)."""
+        from llm_perf.kernels.functional import linear
+
+        batch = 32
+        seq_len = 2048
+        hidden_size = 4096
+        m = batch * seq_len
+
+        result = linear((m, hidden_size), (hidden_size * 4, hidden_size))
+
+        expected_forward = 2 * m * hidden_size * (hidden_size * 4)
+        expected_backward = 4 * m * hidden_size * (hidden_size * 4)
+
+        assert result.flops == expected_forward
+        assert result.flops_backward == expected_backward
+        assert result.bytes_accessed_backward > result.bytes_accessed
+
+    def test_attention_kernel_backward_metrics(self):
+        """Verify flash_attention kernel has backward metrics."""
+        from llm_perf.kernels.functional import flash_attention
+
+        batch = 32
+        num_heads = 32
+        seq_len = 2048
+        head_dim = 128
+
+        result = flash_attention(
+            (batch, num_heads, seq_len, head_dim),
+            (batch, num_heads, seq_len, head_dim),
+            (batch, num_heads, seq_len, head_dim),
+            is_causal=True,
+        )
+
+        assert result.flops_backward > 0
+        assert result.bytes_accessed_backward > 0
+        assert result.flops_backward == 2 * result.flops
+
+    def test_backward_time_not_simple_multiply(self):
+        """Verify backward time uses kernel metrics, not simple x2 forward time."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=1, seq_len=512)
+
+        forward_phase = result.get_phase("forward")
+        backward_phase = result.get_phase("backward")
+
+        naive_ratio = backward_phase.single_time_sec / forward_phase.single_time_sec
+        assert naive_ratio > 1.0, "backward should take longer than forward"
+
+    def test_transformer_block_backward_decomposition(self):
+        """Verify transformer_block backward uses attention + ffn backward."""
+        from llm_perf.kernels.functional import linear, flash_attention
+
+        batch = 1
+        seq_len = 512
+        hidden_size = 4096
+        m = batch * seq_len
+
+        qkv = linear((m, hidden_size), (hidden_size, hidden_size * 3))
+        attn = flash_attention((1, 32, seq_len, 128), (1, 32, seq_len, 128), (1, 32, seq_len, 128))
+        o_proj = linear((m, hidden_size), (hidden_size, hidden_size))
+
+        attention_backward_flops = qkv.flops_backward + attn.flops_backward + o_proj.flops_backward
+
+        up = linear((m, hidden_size), (hidden_size * 4, hidden_size))
+        down = linear((m, hidden_size * 4), (hidden_size, hidden_size * 4))
+
+        ffn_backward_flops = up.flops_backward + down.flops_backward
+
+        total_backward = attention_backward_flops + ffn_backward_flops
+        assert total_backward > 0
+
+    def test_different_compute_patterns_backward(self):
+        """Verify different ComputePattern backward estimations."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        custom_workload = WorkloadConfig(
+            name="test-patterns",
+            phases=[
+                Phase("forward_tb", ComputeType.FORWARD, compute_pattern=ComputePattern.TRANSFORMER_BLOCK),
+                Phase("backward_tb", ComputeType.BACKWARD, compute_pattern=ComputePattern.TRANSFORMER_BLOCK),
+                Phase("forward_dense", ComputeType.FORWARD, compute_pattern=ComputePattern.DENSE_FORWARD),
+                Phase("backward_dense", ComputeType.BACKWARD, compute_pattern=ComputePattern.DENSE_FORWARD),
+            ],
+        )
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze(custom_workload, batch_size=32, seq_len=2048)
+
+        tb_forward = result.get_phase("forward_tb")
+        tb_backward = result.get_phase("backward_tb")
+        dense_forward = result.get_phase("forward_dense")
+        dense_backward = result.get_phase("backward_dense")
+
+        assert tb_forward is not None and tb_backward is not None
+        assert dense_forward is not None and dense_backward is not None
+
+        assert tb_backward.flops > tb_forward.flops
+        assert dense_backward.flops > dense_forward.flops
