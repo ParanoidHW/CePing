@@ -4,8 +4,7 @@ from typing import Dict, Any, Union
 from pathlib import Path
 
 from .base import BaseReporter
-from llm_perf.analyzer.training import TrainingResult
-from llm_perf.analyzer.inference import InferenceResult
+from llm_perf.analyzer import UnifiedResult
 
 
 class HTMLReporter(BaseReporter):
@@ -74,63 +73,37 @@ class HTMLReporter(BaseReporter):
             font-size: 0.9em;
             opacity: 0.9;
         }}
-        .breakdown-table {{
+        .phase-table {{
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
         }}
-        .breakdown-table th,
-        .breakdown-table td {{
+        .phase-table th,
+        .phase-table td {{
             padding: 12px;
             text-align: left;
             border-bottom: 1px solid #eee;
         }}
-        .breakdown-table th {{
+        .phase-table th {{
             background: #667eea;
             color: white;
         }}
-        .breakdown-table tr:hover {{
+        .phase-table tr:hover {{
             background: #f5f5f5;
-        }}
-        .progress-bar {{
-            background: #e0e0e0;
-            border-radius: 10px;
-            height: 20px;
-            overflow: hidden;
-        }}
-        .progress-fill {{
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            height: 100%;
-            border-radius: 10px;
-            transition: width 0.3s ease;
-        }}
-        .config-section {{
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 10px 0;
-        }}
-        .config-section code {{
-            background: #e9ecef;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
         }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>{title}</h1>
-        <p>LLM Performance Evaluation Report</p>
+        <p>Workload: {workload_name} ({workload_type})</p>
     </div>
 
     {content}
 
     <div class="card">
-        <h2>System Configuration</h2>
-        <div class="config-section">
-            <pre><code>{config_json}</code></pre>
-        </div>
+        <h2>Parameters</h2>
+        <pre><code>{params_json}</code></pre>
     </div>
 
     <footer style="text-align: center; padding: 20px; color: #666;">
@@ -140,177 +113,114 @@ class HTMLReporter(BaseReporter):
 </html>
 """
 
-    def report_training(
-        self,
-        result: TrainingResult,
-        title: str = "Training Performance Report",
-        config: Dict[str, Any] = None,
-        **kwargs,
-    ) -> str:
-        """Generate training HTML report."""
-        import json
-
-        content = self._training_content(result)
-        config_json = json.dumps(config or {}, indent=2)
-
-        return self.template.format(title=title, content=content, config_json=config_json)
-
-    def report_inference(
-        self,
-        result: InferenceResult,
-        title: str = "Inference Performance Report",
-        config: Dict[str, Any] = None,
-        generation_len: int = 128,
-        **kwargs,
-    ) -> str:
-        """Generate inference HTML report."""
-        import json
-
-        content = self._inference_content(result, generation_len)
-        config_json = json.dumps(config or {}, indent=2)
-
-        return self.template.format(title=title, content=content, config_json=config_json)
-
     def report(
         self,
-        result: Union[TrainingResult, InferenceResult],
+        result: UnifiedResult,
         title: str = "Performance Report",
-        config: Dict[str, Any] = None,
+        generation_len: int = 0,
         **kwargs,
     ) -> str:
-        """Generate HTML report (convenience method)."""
-        return super().report(result, title=title, config=config, **kwargs)
+        """Generate HTML report."""
+        import json
 
-    def _training_content(self, result: TrainingResult) -> str:
-        """Generate training report content."""
-        return f"""
+        content = self._generate_content(result, generation_len)
+        params_json = json.dumps(result.params, indent=2)
+
+        return self.template.format(
+            title=title,
+            workload_name=result.workload_name,
+            workload_type=result.workload_type.value,
+            content=content,
+            params_json=params_json,
+        )
+
+    def _generate_content(self, result: UnifiedResult, generation_len: int = 0) -> str:
+        """Generate report content."""
+        html = f"""
     <div class="card">
-        <h2>Training Throughput</h2>
+        <h2>Performance Summary</h2>
         <div class="metrics-grid">
             <div class="metric">
-                <span class="metric-value">{result.samples_per_sec:.2f}</span>
-                <span class="metric-label">Samples/sec</span>
+                <span class="metric-value">{result.total_time_sec * 1000:.1f}</span>
+                <span class="metric-label">Total Time (ms)</span>
             </div>
             <div class="metric">
-                <span class="metric-value">{result.tokens_per_sec / 1000:.1f}K</span>
+                <span class="metric-value">{result.peak_memory_gb:.1f}</span>
+                <span class="metric-label">Peak Memory (GB)</span>
+            </div>
+        </div>
+    </div>
+"""
+
+        if result.throughput:
+            html += """
+    <div class="card">
+        <h2>Throughput</h2>
+        <div class="metrics-grid">
+"""
+            for metric_name, metric_value in result.throughput.items():
+                if metric_name == "tokens_per_sec":
+                    html += f"""
+            <div class="metric">
+                <span class="metric-value">{metric_value / 1000:.1f}K</span>
                 <span class="metric-label">Tokens/sec</span>
             </div>
+"""
+                elif metric_name == "samples_per_sec":
+                    html += f"""
             <div class="metric">
-                <span class="metric-value">{result.time_per_step_sec * 1000:.1f}</span>
-                <span class="metric-label">ms/step</span>
+                <span class="metric-value">{metric_value:.2f}</span>
+                <span class="metric-label">Samples/sec</span>
             </div>
+"""
+                elif metric_name == "pixels_per_sec":
+                    html += f"""
             <div class="metric">
-                <span class="metric-value">{result.memory_per_gpu_gb:.1f}</span>
-                <span class="metric-label">GB/GPU</span>
+                <span class="metric-value">{metric_value / 1e6:.1f}M</span>
+                <span class="metric-label">Pixels/sec</span>
             </div>
+"""
+            html += """
         </div>
     </div>
-
-    <div class="card">
-        <h2>Time Analysis</h2>
-        <p><strong>Time per step:</strong> {result.time_per_step_sec * 1000:.2f} ms</p>
-    </div>
-
-    {self._breakdown_section(result.breakdown) if result.breakdown else ""}
 """
 
-    def _inference_content(self, result: InferenceResult, generation_len: int = 128) -> str:
-        """Generate inference report content."""
-        total_time = result.prefill_time_sec + result.decode_time_per_step_sec * generation_len
-        return f"""
-    <div class="card">
-        <h2>Inference Performance</h2>
-        <div class="metrics-grid">
-            <div class="metric">
-                <span class="metric-value">{result.prefill_time_sec * 1000:.1f}</span>
-                <span class="metric-label">TTFT (ms)</span>
-            </div>
-            <div class="metric">
-                <span class="metric-value">{result.decode_time_per_step_sec * 1000:.1f}</span>
-                <span class="metric-label">TPOT (ms)</span>
-            </div>
-            <div class="metric">
-                <span class="metric-value">{result.decode_tokens_per_sec:.1f}</span>
-                <span class="metric-label">TPS</span>
-            </div>
-            <div class="metric">
-                <span class="metric-value">{result.memory_per_gpu_gb:.1f}</span>
-                <span class="metric-label">GB/GPU</span>
-            </div>
-        </div>
-    </div>
-
+        if result.phases:
+            html += """
     <div class="card">
         <h2>Phase Breakdown</h2>
-        <h3>Prefill Phase</h3>
-        <p>Time to First Token (TTFT): {result.prefill_time_sec * 1000:.2f} ms</p>
-        <p>Throughput: {result.prefill_tokens_per_sec / 1000:.1f}K tokens/sec</p>
-
-        <h3>Decode Phase</h3>
-        <p>Time Per Output Token (TPOT): {result.decode_time_per_step_sec * 1000:.2f} ms</p>
-        <p>Tokens Per Second (TPS): {result.decode_tokens_per_sec:.2f}</p>
-
-        <h3>End-to-End</h3>
-        <p>Total time: {total_time:.2f} sec</p>
-    </div>
-
-    {self._breakdown_section(result.breakdown, "Performance Breakdown") if result.breakdown else ""}
+        <table class="phase-table">
+            <tr>
+                <th>Phase</th>
+                <th>Component</th>
+                <th>Single Time (ms)</th>
+                <th>Repeats</th>
+                <th>Total Time (ms)</th>
+            </tr>
 """
-
-    def _breakdown_section(self, breakdown, title: str = "Performance Breakdown") -> str:
-        """Generate breakdown section."""
-        if breakdown is None:
-            return ""
-
-        total_time = breakdown.total_time_sec
-        compute_time = breakdown.compute_time_sec
-        comm_time = breakdown.communication_time_sec
-
-        compute_percent = (compute_time / total_time * 100) if total_time > 0 else 0
-        comm_percent = (comm_time / total_time * 100) if total_time > 0 else 0
-
-        return f"""
-    <div class="card">
-        <h2>{title}</h2>
-
-        <h3>Time Distribution</h3>
-        <table class="breakdown-table">
+            for phase in result.phases:
+                html += f"""
             <tr>
-                <th>Category</th>
-                <th>Time (ms)</th>
-                <th>Percentage</th>
-                <th>Visual</th>
+                <td>{phase.name}</td>
+                <td>{phase.component}</td>
+                <td>{phase.single_time_sec * 1000:.2f}</td>
+                <td>{phase.repeat_count}</td>
+                <td>{phase.total_time_sec * 1000:.2f}</td>
             </tr>
-            <tr>
-                <td>Compute</td>
-                <td>{compute_time * 1000:.2f}</td>
-                <td>{compute_percent:.1f}%</td>
-                <td>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: {compute_percent}%"></div>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <td>Communication</td>
-                <td>{comm_time * 1000:.2f}</td>
-                <td>{comm_percent:.1f}%</td>
-                <td>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: {comm_percent}%"></div>
-                    </div>
-                </td>
-            </tr>
+"""
+            html += """
         </table>
     </div>
 """
 
+        return html
+
     def save(
         self,
-        result: Union[TrainingResult, InferenceResult],
+        result: UnifiedResult,
         path: Union[str, Path],
         title: str = "Performance Report",
-        config: Dict[str, Any] = None,
+        generation_len: int = 0,
         **kwargs,
     ) -> None:
         """Save HTML report to file."""
@@ -318,4 +228,4 @@ class HTMLReporter(BaseReporter):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(path, "w", encoding="utf-8") as f:
-            f.write(self.report(result, title=title, config=config, **kwargs))
+            f.write(self.report(result, title=title, generation_len=generation_len, **kwargs))

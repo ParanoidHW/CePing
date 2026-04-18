@@ -10,12 +10,13 @@ import time
 from llm_perf.modeling import ShardedModule
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.strategy.base import StrategyConfig
+from llm_perf.analyzer import infer_workload
 from .evaluator import Evaluator
 
 
 @dataclass
 class LatencyBudget:
-    """Latency budget for inference with prefill/decode separation."""
+    """Latency budget for inference."""
 
     ttft_budget_ms: Optional[float] = None
     tpot_budget_ms: Optional[float] = None
@@ -46,7 +47,7 @@ class BatchOptimizer:
         model: Union[str, Dict, ShardedModule],
         hardware: Union[str, Dict, Cluster],
         strategy: Union[str, Dict, StrategyConfig],
-        mode: str = "training",
+        workload: Optional[str] = None,
         latency_budget: Optional[Union[float, LatencyBudget]] = None,
         memory_budget_gb: Optional[float] = None,
         target_tps: Optional[float] = None,
@@ -60,8 +61,8 @@ class BatchOptimizer:
             model: Model specification
             hardware: Hardware specification
             strategy: Strategy specification
-            mode: "training" or "inference"
-            latency_budget: Latency budget (float or LatencyBudget)
+            workload: Workload preset name (auto-inferred if None)
+            latency_budget: Latency budget
             memory_budget_gb: Maximum memory per GPU
             target_tps: Minimum throughput requirement
             batch_step: Step size for batch iteration
@@ -76,6 +77,11 @@ class BatchOptimizer:
         cluster_obj = self.evaluator._resolve_hardware(hardware, **kwargs)
         strategy_obj = self.evaluator._resolve_strategy(strategy, **kwargs)
 
+        if workload is None:
+            mode = kwargs.get("mode", "training")
+            model_type = self.evaluator._get_model_type(model)
+            workload = infer_workload(model_type, mode)
+
         if isinstance(latency_budget, float):
             latency_budget = LatencyBudget(ttft_budget_ms=latency_budget)
 
@@ -89,49 +95,37 @@ class BatchOptimizer:
 
         while batch_size <= max_batch:
             try:
-                if mode == "training":
-                    result = self.evaluator.evaluate_training(
-                        model_obj,
-                        cluster_obj,
-                        strategy_obj,
-                        batch_size=batch_size,
-                        seq_len=kwargs.get("seq_len", 2048),
-                    )
-                    metric = result.samples_per_sec
-                    memory_gb = result.memory_per_gpu_gb
+                result = self.evaluator.evaluate(
+                    model_obj,
+                    cluster_obj,
+                    workload,
+                    strategy_obj,
+                    batch_size=batch_size,
+                    **kwargs,
+                )
 
-                    result_data = {
-                        "batch_size": batch_size,
-                        "samples_per_sec": result.samples_per_sec,
-                        "tokens_per_sec": result.tokens_per_sec,
-                        "memory_gb": memory_gb,
-                        "valid": True,
-                    }
+                throughput = result.throughput.get(
+                    "tokens_per_sec",
+                    result.throughput.get("samples_per_sec", result.throughput.get("pixels_per_sec", 0)),
+                )
+                memory_gb = result.peak_memory_gb
 
-                else:
-                    result = self.evaluator.evaluate_inference(
-                        model_obj,
-                        cluster_obj,
-                        strategy_obj,
-                        batch_size=batch_size,
-                        prompt_len=kwargs.get("prompt_len", 512),
-                        generation_len=kwargs.get("generation_len", 128),
-                    )
-                    metric = result.decode_tokens_per_sec
-                    memory_gb = result.memory_per_gpu_gb
+                prefill_phase = result.get_phase("prefill")
+                decode_phase = result.get_phase("decode")
 
-                    ttft_ms = result.prefill_time_sec * 1000
-                    tpot_ms = result.decode_time_per_step_sec * 1000
+                ttft_ms = prefill_phase.total_time_sec * 1000 if prefill_phase else 0
+                tpot_ms = decode_phase.single_time_sec * 1000 if decode_phase else 0
 
-                    result_data = {
-                        "batch_size": batch_size,
-                        "prefill_tps": result.prefill_tokens_per_sec,
-                        "decode_tps": result.decode_tokens_per_sec,
-                        "ttft_ms": ttft_ms,
-                        "tpot_ms": tpot_ms,
-                        "memory_gb": memory_gb,
-                        "valid": True,
-                    }
+                result_data = {
+                    "batch_size": batch_size,
+                    "throughput": throughput,
+                    "total_throughput": result.throughput,
+                    "memory_gb": memory_gb,
+                    "ttft_ms": ttft_ms,
+                    "tpot_ms": tpot_ms,
+                    "total_time_sec": result.total_time_sec,
+                    "valid": True,
+                }
 
                 should_stop = False
 
@@ -140,44 +134,36 @@ class BatchOptimizer:
                     constraint_type = "memory"
                     should_stop = True
 
-                if mode == "inference" and latency_budget is not None:
-                    if latency_budget.ttft_budget_ms and result_data.get("ttft_ms", 0) > latency_budget.ttft_budget_ms:
+                if latency_budget is not None:
+                    if latency_budget.ttft_budget_ms and ttft_ms > latency_budget.ttft_budget_ms:
                         stop_reason = "latency_budget_exceeded"
                         constraint_type = "ttft"
                         should_stop = True
 
-                    if latency_budget.tpot_budget_ms and result_data.get("tpot_ms", 0) > latency_budget.tpot_budget_ms:
+                    if latency_budget.tpot_budget_ms and tpot_ms > latency_budget.tpot_budget_ms:
                         stop_reason = "latency_budget_exceeded"
                         constraint_type = "tpot"
                         should_stop = True
 
-                if target_tps is not None and metric < target_tps:
+                if target_tps is not None and throughput < target_tps:
                     stop_reason = "target_tps_not_met"
-                    constraint_type = "tps"
+                    constraint_type = "throughput"
                     should_stop = True
 
                 all_results.append(result_data)
 
-                if not should_stop:
-                    if metric > best_metric:
-                        best_metric = metric
-                        best_batch_size = batch_size
-                else:
+                if should_stop:
                     break
 
-                batch_size += batch_step
+                if throughput > best_metric:
+                    best_metric = throughput
+                    best_batch_size = batch_size
 
-            except Exception as e:
-                all_results.append(
-                    {
-                        "batch_size": batch_size,
-                        "valid": False,
-                        "error": str(e),
-                    }
-                )
-                stop_reason = "evaluation_error"
-                constraint_type = "error"
+            except Exception:
+                stop_reason = "error"
                 break
+
+            batch_size += batch_step
 
         search_time = time.perf_counter() - start_time
 
@@ -196,76 +182,63 @@ class BatchOptimizer:
         hardware: Union[str, Dict, Cluster],
         strategy: Union[str, Dict, StrategyConfig],
         batch_sizes: List[int],
-        mode: str = "training",
+        workload: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Compare performance across different batch sizes.
+        """Compare different batch sizes.
 
         Args:
             model: Model specification
             hardware: Hardware specification
             strategy: Strategy specification
             batch_sizes: List of batch sizes to compare
-            mode: "training" or "inference"
+            workload: Workload preset name
 
         Returns:
-            Comparison results
+            Dict with comparison results
         """
+        if workload is None:
+            mode = kwargs.get("mode", "training")
+            model_type = self.evaluator._get_model_type(model)
+            workload = infer_workload(model_type, mode)
+
         model_obj = self.evaluator._resolve_model(model, **kwargs)
         cluster_obj = self.evaluator._resolve_hardware(hardware, **kwargs)
         strategy_obj = self.evaluator._resolve_strategy(strategy, **kwargs)
 
-        all_results = []
-
+        results = []
         for batch_size in batch_sizes:
-            try:
-                if mode == "training":
-                    result = self.evaluator.evaluate_training(
-                        model_obj,
-                        cluster_obj,
-                        strategy_obj,
-                        batch_size=batch_size,
-                        seq_len=kwargs.get("seq_len", 2048),
-                    )
-                    all_results.append(
-                        {
-                            "batch_size": batch_size,
-                            "samples_per_sec": result.samples_per_sec,
-                            "tokens_per_sec": result.tokens_per_sec,
-                            "memory_gb": result.memory_per_gpu_gb,
-                            "valid": True,
-                        }
-                    )
-                else:
-                    result = self.evaluator.evaluate_inference(
-                        model_obj,
-                        cluster_obj,
-                        strategy_obj,
-                        batch_size=batch_size,
-                        prompt_len=kwargs.get("prompt_len", 512),
-                        generation_len=kwargs.get("generation_len", 128),
-                    )
-                    all_results.append(
-                        {
-                            "batch_size": batch_size,
-                            "prefill_tps": result.prefill_tokens_per_sec,
-                            "decode_tps": result.decode_tokens_per_sec,
-                            "ttft_ms": result.prefill_time_sec * 1000,
-                            "memory_gb": result.memory_per_gpu_gb,
-                            "valid": True,
-                        }
-                    )
+            result = self.evaluator.evaluate(
+                model_obj,
+                cluster_obj,
+                workload,
+                strategy_obj,
+                batch_size=batch_size,
+                **kwargs,
+            )
 
-            except Exception as e:
-                all_results.append(
-                    {
-                        "batch_size": batch_size,
-                        "valid": False,
-                        "error": str(e),
-                    }
-                )
+            results.append(
+                {
+                    "batch_size": batch_size,
+                    "throughput": result.throughput,
+                    "total_time_sec": result.total_time_sec,
+                    "peak_memory_gb": result.peak_memory_gb,
+                    "phases": [p.to_dict() for p in result.phases],
+                }
+            )
+
+        throughput_key = "tokens_per_sec"
+        best_idx = 0
+        best_metric = 0.0
+        for i, r in enumerate(results):
+            metric = r["throughput"].get(throughput_key, r["throughput"].get("samples_per_sec", 0))
+            if metric > best_metric:
+                best_metric = metric
+                best_idx = i
 
         return {
-            "mode": mode,
-            "results": all_results,
+            "workload": workload,
+            "best_batch_size": batch_sizes[best_idx],
+            "best_metric": best_metric,
+            "results": results,
         }

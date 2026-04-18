@@ -1,14 +1,14 @@
 """LLM Inference Scenario implementation.
 
 Standard inference scenario for single model with prefill and decode phases.
-Uses InferenceAnalyzer for performance estimation.
+Uses UnifiedAnalyzer for performance estimation.
 """
 
 from dataclasses import dataclass
 from typing import Any, Dict
 
 from .base import Scenario, ScenarioConfig, ScenarioResult, ScenarioType, ParallelismType
-from llm_perf.analyzer import InferenceAnalyzer, InferenceResult
+from llm_perf.analyzer import UnifiedAnalyzer, UnifiedResult
 from llm_perf.modeling import ShardedModule
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.cluster import Cluster
@@ -24,7 +24,6 @@ class LLMInferenceConfig(ScenarioConfig):
     generation_len: int = 128
 
     def __post_init__(self):
-        """Set scenario type and required models."""
         self.scenario_type = ScenarioType.LLM_INFERENCE
         if not self.required_models:
             self.required_models = ["main"]
@@ -48,10 +47,9 @@ class LLMInferenceResult(ScenarioResult):
     prefill_tokens_per_sec: float = 0.0
     decode_tokens_per_sec: float = 0.0
     memory_per_gpu_gb: float = 0.0
-    inference_result: InferenceResult = None
+    unified_result: UnifiedResult = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
         base = super().to_dict()
         base.update(
             {
@@ -66,7 +64,7 @@ class LLMInferenceResult(ScenarioResult):
                     "tokens_per_sec": self.decode_tokens_per_sec,
                 },
                 "memory_per_gpu_gb": self.memory_per_gpu_gb,
-                "inference_breakdown": self.inference_result.to_dict() if self.inference_result else None,
+                "unified_result": self.unified_result.to_dict() if self.unified_result else None,
             }
         )
         return base
@@ -76,7 +74,7 @@ class LLMInferenceScenario(Scenario):
     """LLM inference performance scenario.
 
     Evaluates inference performance for a single LLM model.
-    Uses InferenceAnalyzer for prefill and decode estimation.
+    Uses UnifiedAnalyzer with llm-inference workload.
     """
 
     def __init__(
@@ -87,24 +85,16 @@ class LLMInferenceScenario(Scenario):
         cluster: Cluster,
         strategy: StrategyConfig,
     ):
-        """Initialize LLM inference scenario."""
         super().__init__(config, models, device, cluster, strategy)
-        self._analyzer: InferenceAnalyzer = None
+        self._analyzer: UnifiedAnalyzer = None
 
     def _get_main_model(self) -> ShardedModule:
-        """Get the main inference model."""
         return self.models.get("main")
 
-    def get_analyzer(self) -> InferenceAnalyzer:
-        """Get or create the InferenceAnalyzer instance."""
+    def get_analyzer(self) -> UnifiedAnalyzer:
         if self._analyzer is None:
             model = self._get_main_model()
-            self._analyzer = InferenceAnalyzer(
-                model=model,
-                device=self.device,
-                cluster=self.cluster,
-                strategy=self.strategy,
-            )
+            self._analyzer = UnifiedAnalyzer(model, self.device, self.cluster, self.strategy)
         return self._analyzer
 
     def analyze(
@@ -114,40 +104,46 @@ class LLMInferenceScenario(Scenario):
         generation_len: int = None,
         **kwargs,
     ) -> LLMInferenceResult:
-        """Run inference performance analysis."""
         batch_size = batch_size or self.config.batch_size
         prompt_len = prompt_len or self.config.prompt_len
         generation_len = generation_len or self.config.generation_len
 
         analyzer = self.get_analyzer()
-        inference_result = analyzer.analyze(
+        unified_result = analyzer.analyze(
+            "llm-inference",
             batch_size=batch_size,
             prompt_len=prompt_len,
             generation_len=generation_len,
         )
 
-        total_gpus = self.strategy.world_size
-        total_time = inference_result.prefill_time_sec + inference_result.decode_time_per_step_sec * generation_len
+        prefill_phase = unified_result.get_phase("prefill")
+        decode_phase = unified_result.get_phase("decode")
+
+        prefill_time = prefill_phase.total_time_sec if prefill_phase else 0
+        decode_time_per_step = decode_phase.single_time_sec if decode_phase else 0
+
+        throughput = unified_result.throughput
+        total_time = prefill_time + decode_time_per_step * generation_len
+
+        prefill_tps = (batch_size * prompt_len) / prefill_time if prefill_time > 0 else 0
+        decode_tps = batch_size / decode_time_per_step if decode_time_per_step > 0 else 0
 
         return LLMInferenceResult(
             scenario_name=self.config.name,
             total_time_sec=total_time,
-            throughput=inference_result.decode_tokens_per_sec,
-            memory_peak_gb=inference_result.memory_per_gpu_gb,
-            prefill_time_sec=inference_result.prefill_time_sec,
-            decode_time_per_step_sec=inference_result.decode_time_per_step_sec,
-            prefill_tokens_per_sec=inference_result.prefill_tokens_per_sec,
-            decode_tokens_per_sec=inference_result.decode_tokens_per_sec,
-            memory_per_gpu_gb=inference_result.memory_per_gpu_gb,
-            inference_result=inference_result,
-            breakdown={
-                "prefill": inference_result.breakdown.to_dict() if inference_result.breakdown else {},
-            },
+            throughput=decode_tps,
+            memory_peak_gb=unified_result.peak_memory_gb,
+            prefill_time_sec=prefill_time,
+            decode_time_per_step_sec=decode_time_per_step,
+            prefill_tokens_per_sec=prefill_tps,
+            decode_tokens_per_sec=decode_tps,
+            memory_per_gpu_gb=unified_result.peak_memory_gb,
+            unified_result=unified_result,
+            breakdown=unified_result.to_dict(),
             metadata={
                 "batch_size": batch_size,
                 "prompt_len": prompt_len,
                 "generation_len": generation_len,
-                "total_gpus": total_gpus,
                 "strategy": self.strategy.to_dict(),
             },
         )
@@ -157,19 +153,19 @@ class LLMInferenceScenario(Scenario):
         batch_size: int = None,
         max_seq_len: int = None,
     ) -> Dict[str, float]:
-        """Estimate inference memory requirements."""
         batch_size = batch_size or self.config.batch_size
         max_seq_len = max_seq_len or (self.config.prompt_len + self.config.generation_len)
 
         analyzer = self.get_analyzer()
         result = analyzer.analyze(
+            "llm-inference",
             batch_size=batch_size,
             prompt_len=max_seq_len // 2,
             generation_len=max_seq_len // 2,
         )
 
         return {
-            "total_memory_gb": result.memory_per_gpu_gb,
+            "total_memory_gb": result.peak_memory_gb,
         }
 
     def estimate_latency(
@@ -178,17 +174,11 @@ class LLMInferenceScenario(Scenario):
         prompt_len: int = None,
         generation_len: int = None,
     ) -> Dict[str, float]:
-        """Estimate inference latency."""
         batch_size = batch_size or self.config.batch_size
         prompt_len = prompt_len or self.config.prompt_len
         generation_len = generation_len or self.config.generation_len
 
-        analyzer = self.get_analyzer()
-        result = analyzer.analyze(
-            batch_size=batch_size,
-            prompt_len=prompt_len,
-            generation_len=generation_len,
-        )
+        result = self.analyze(batch_size, prompt_len, generation_len)
 
         total_time = result.prefill_time_sec + result.decode_time_per_step_sec * generation_len
 

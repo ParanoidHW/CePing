@@ -1,21 +1,46 @@
-"""Performance analyzer module.
+"""Unified performance analyzer module.
 
-Provides training and inference performance analysis using ShardedModule models.
+Provides unified workload analysis for:
+- LLM training/inference
+- Diffusion training/inference
+- MoE training/inference
+- Mixed workloads (speculative decoding, RL PPO, etc.)
 """
 
-from .base import BaseAnalyzer, BaseResult, PerformanceBreakdown
-from .training import TrainingAnalyzer, TrainingResult
-from .inference import InferenceAnalyzer, InferenceResult
+from .base import (
+    ComputeType,
+    WorkloadType,
+    ThroughputMetric,
+    Phase,
+    PhaseResult,
+    UnifiedResult,
+    WorkloadConfig,
+)
+from .unified import UnifiedAnalyzer, analyze_workload
+from .presets import (
+    WORKLOAD_PRESETS,
+    get_workload,
+    register_workload,
+    list_workloads,
+    infer_workload,
+)
 from .breakdown import KernelBreakdown, LayerBreakdown
 
 __all__ = [
-    "BaseAnalyzer",
-    "BaseResult",
-    "PerformanceBreakdown",
-    "TrainingAnalyzer",
-    "TrainingResult",
-    "InferenceAnalyzer",
-    "InferenceResult",
+    "ComputeType",
+    "WorkloadType",
+    "ThroughputMetric",
+    "Phase",
+    "PhaseResult",
+    "UnifiedResult",
+    "WorkloadConfig",
+    "UnifiedAnalyzer",
+    "analyze_workload",
+    "WORKLOAD_PRESETS",
+    "get_workload",
+    "register_workload",
+    "list_workloads",
+    "infer_workload",
     "KernelBreakdown",
     "LayerBreakdown",
 ]

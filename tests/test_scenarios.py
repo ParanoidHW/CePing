@@ -303,7 +303,7 @@ class TestLLMTrainingScenario:
 
         assert data["samples_per_sec"] > 0
         assert data["tokens_per_sec"] > 0
-        assert "training_breakdown" in data
+        assert "unified_result" in data
 
 
 class TestLLMInferenceScenario:

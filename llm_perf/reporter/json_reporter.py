@@ -5,8 +5,7 @@ from typing import Dict, Any, Union
 from pathlib import Path
 
 from .base import BaseReporter
-from llm_perf.analyzer.training import TrainingResult
-from llm_perf.analyzer.inference import InferenceResult
+from llm_perf.analyzer import UnifiedResult
 
 
 class JSONReporter(BaseReporter):
@@ -15,38 +14,29 @@ class JSONReporter(BaseReporter):
     def __init__(self, indent: int = 2):
         self.indent = indent
 
-    def report_training(self, result: TrainingResult, metadata: Dict[str, Any] = None, **kwargs) -> str:
-        """Generate training JSON report."""
-        data = {"metadata": metadata or {}, "result": result.to_dict()}
-        return json.dumps(data, indent=self.indent, ensure_ascii=False)
-
-    def report_inference(self, result: InferenceResult, metadata: Dict[str, Any] = None, **kwargs) -> str:
-        """Generate inference JSON report."""
-        data = {"metadata": metadata or {}, "result": result.to_dict()}
-        return json.dumps(data, indent=self.indent, ensure_ascii=False)
-
-    def report_batch(
-        self, results: Dict[str, Union[TrainingResult, InferenceResult]], metadata: Dict[str, Any] = None
+    def report(
+        self,
+        result: UnifiedResult,
+        metadata: Dict[str, Any] = None,
+        **kwargs,
     ) -> str:
+        """Generate JSON report."""
+        data = {"metadata": metadata or {}, "result": result.to_dict()}
+        return json.dumps(data, indent=self.indent, ensure_ascii=False)
+
+    def report_batch(self, results: Dict[str, UnifiedResult], metadata: Dict[str, Any] = None) -> str:
         """Generate JSON report for multiple results."""
         data = {"metadata": metadata or {}, "results": {name: result.to_dict() for name, result in results.items()}}
         return json.dumps(data, indent=self.indent, ensure_ascii=False)
 
     def save(
         self,
-        result: Union[TrainingResult, InferenceResult],
+        result: UnifiedResult,
         path: Union[str, Path],
         metadata: Dict[str, Any] = None,
         **kwargs,
     ) -> None:
-        """Save report to file.
-
-        Args:
-            result: Analysis result (Training or Inference)
-            path: Output file path
-            metadata: Optional metadata to include
-            **kwargs: Additional options
-        """
+        """Save report to file."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -54,25 +44,7 @@ class JSONReporter(BaseReporter):
         with open(path, "w", encoding="utf-8") as f:
             f.write(report_str)
 
-    def report(self, result: Union[TrainingResult, InferenceResult], metadata: Dict[str, Any] = None, **kwargs) -> str:
-        """Generate JSON report (convenience method).
-
-        Args:
-            result: Analysis result (Training or Inference)
-            metadata: Optional metadata to include
-            **kwargs: Additional options
-
-        Returns:
-            JSON string
-        """
-        return super().report(result, metadata=metadata, **kwargs)
-
-    def save_batch(
-        self,
-        results: Dict[str, Union[TrainingResult, InferenceResult]],
-        path: Union[str, Path],
-        metadata: Dict[str, Any] = None,
-    ):
+    def save_batch(self, results: Dict[str, UnifiedResult], path: Union[str, Path], metadata: Dict[str, Any] = None):
         """Save batch report to file."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

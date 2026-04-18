@@ -1,95 +1,214 @@
-"""Base classes for performance analyzers."""
+"""Unified Analyzer base classes and data structures."""
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List, TYPE_CHECKING
+from enum import Enum
+from typing import Any, Dict, List, Union, Optional
 
-if TYPE_CHECKING:
-    from llm_perf.modeling import ShardedModule
-    from llm_perf.hardware.device import Device
-    from llm_perf.hardware.cluster import Cluster
-    from llm_perf.strategy.base import StrategyConfig
+
+class ComputeType(str, Enum):
+    """Types of compute operations."""
+
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    OPTIMIZER = "optimizer"
+    COMMUNICATION = "communication"
+
+
+class WorkloadType(str, Enum):
+    """Types of workloads."""
+
+    TRAINING = "training"
+    INFERENCE = "inference"
+    MIXED = "mixed"
+
+
+class ThroughputMetric(str, Enum):
+    """Types of throughput metrics."""
+
+    TOKENS_PER_SEC = "tokens_per_sec"
+    SAMPLES_PER_SEC = "samples_per_sec"
+    PIXELS_PER_SEC = "pixels_per_sec"
+    IMAGES_PER_SEC = "images_per_sec"
+    VIDEOS_PER_SEC = "videos_per_sec"
 
 
 @dataclass
-class BaseResult:
-    """Base result class for performance analysis."""
+class Phase:
+    """A compute phase in a workload.
+
+    Attributes:
+        name: Phase name (e.g., "prefill", "dit_denoise", "vae_decoder")
+        compute_type: Type of compute operation
+        component: Model component name (e.g., "main", "dit", "vae", "draft", "target")
+        repeat: Repeat count - can be int or dynamic parameter name like "generation_len"
+        seq_len_factor: Sequence length factor - can be float or expression like "1/seq_len"
+        extra_params: Additional phase-specific parameters
+    """
+
+    name: str
+    compute_type: ComputeType
+    component: str = "main"
+    repeat: Union[int, str] = 1
+    seq_len_factor: Union[float, str] = 1.0
+    extra_params: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {}
+        return {
+            "name": self.name,
+            "compute_type": self.compute_type.value,
+            "component": self.component,
+            "repeat": self.repeat,
+            "seq_len_factor": self.seq_len_factor,
+            "extra_params": self.extra_params,
+        }
 
 
 @dataclass
-class PerformanceBreakdown:
-    """Performance breakdown by category."""
+class PhaseResult:
+    """Result of a single phase analysis.
 
-    compute_time_sec: float = 0.0
-    communication_time_sec: float = 0.0
-    memory_time_sec: float = 0.0
+    Attributes:
+        name: Phase name
+        component: Model component name
+        compute_type: Type of compute operation
+        single_time_sec: Time for single execution
+        repeat_count: Actual repeat count (resolved from dynamic params)
+        total_time_sec: Total time (single_time × repeat_count)
+        memory_gb: Memory usage for this phase
+        flops: FLOPs for this phase (optional)
+    """
+
+    name: str
+    component: str
+    compute_type: ComputeType
+    single_time_sec: float = 0.0
+    repeat_count: int = 1
     total_time_sec: float = 0.0
+    memory_gb: float = 0.0
+    flops: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
         return {
-            "compute_time_sec": self.compute_time_sec,
-            "communication_time_sec": self.communication_time_sec,
-            "memory_time_sec": self.memory_time_sec,
+            "name": self.name,
+            "component": self.component,
+            "compute_type": self.compute_type.value,
+            "single_time_sec": self.single_time_sec,
+            "single_time_ms": self.single_time_sec * 1000,
+            "repeat_count": self.repeat_count,
             "total_time_sec": self.total_time_sec,
+            "total_time_ms": self.total_time_sec * 1000,
+            "memory_gb": self.memory_gb,
+            "flops": self.flops,
         }
 
 
-class BaseAnalyzer(ABC):
-    """Base analyzer for ShardedModule models."""
+@dataclass
+class UnifiedResult:
+    """Result of unified workload analysis.
 
-    def __init__(
-        self,
-        model: "ShardedModule",
-        device: "Device",
-        cluster: "Cluster",
-        strategy: "StrategyConfig",
-    ):
-        self.model = model
-        self.device = device
-        self.cluster = cluster
-        self.strategy = strategy
+    Attributes:
+        workload_name: Workload configuration name
+        workload_type: Type of workload (training/inference/mixed)
+        phases: List of phase results
+        total_time_sec: Total execution time
+        peak_memory_gb: Peak memory usage
+        throughput: Throughput metrics dictionary
+        params: Resolved parameters used in analysis
+        metadata: Additional metadata
+    """
 
-    def _get_model_info(self) -> Dict[str, Any]:
-        """Get basic model information."""
-        params = self._count_params()
+    workload_name: str
+    workload_type: WorkloadType
+    phases: List[PhaseResult] = field(default_factory=list)
+    total_time_sec: float = 0.0
+    peak_memory_gb: float = 0.0
+    throughput: Dict[str, float] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            "params": params,
-            "params_gb": params * 2 / 1e9,
+            "workload_name": self.workload_name,
+            "workload_type": self.workload_type.value,
+            "phases": [p.to_dict() for p in self.phases],
+            "total_time_sec": self.total_time_sec,
+            "total_time_ms": self.total_time_sec * 1000,
+            "peak_memory_gb": self.peak_memory_gb,
+            "throughput": self.throughput,
+            "params": self.params,
+            "metadata": self.metadata,
         }
 
-    def _count_params(self) -> int:
-        """Count total parameters in model."""
-        total = 0
-        for name, weight in self.model._weights.items():
-            total += weight.numel()
-        for name, submodule in self.model._submodules.items():
-            total += self._count_submodule_params(submodule)
-        return total
+    def get_phase(self, name: str) -> Optional[PhaseResult]:
+        """Get a specific phase result by name."""
+        for phase in self.phases:
+            if phase.name == name:
+                return phase
+        return None
 
-    def _count_submodule_params(self, module: "ShardedModule") -> int:
-        """Count parameters in a submodule."""
-        total = 0
-        for name, weight in module._weights.items():
-            total += weight.numel()
-        for name, submodule in module._submodules.items():
-            total += self._count_submodule_params(submodule)
-        return total
+    def get_component_phases(self, component: str) -> List[PhaseResult]:
+        """Get all phases for a specific component."""
+        return [p for p in self.phases if p.component == component]
 
-    def _get_parallel_degrees(self) -> Dict[str, int]:
-        """Get parallel degrees from strategy."""
+    def get_component_time(self, component: str) -> float:
+        """Get total time for a specific component."""
+        return sum(p.total_time_sec for p in self.get_component_phases(component))
+
+    def get_component_memory(self, component: str) -> float:
+        """Get peak memory for a specific component."""
+        phases = self.get_component_phases(component)
+        return max(p.memory_gb for p in phases) if phases else 0.0
+
+
+@dataclass
+class WorkloadConfig:
+    """Configuration for a workload.
+
+    Attributes:
+        name: Workload name
+        description: Human-readable description
+        workload_type: Type of workload
+        phases: List of compute phases
+        default_params: Default parameter values
+        optimizer_factor: Optimizer time factor relative to forward
+        gradient_accumulation_steps: Gradient accumulation steps
+        throughput_metric: Primary throughput metric type
+        throughput_formula: Custom throughput formula (optional)
+    """
+
+    name: str
+    description: str = ""
+    workload_type: WorkloadType = WorkloadType.INFERENCE
+    phases: List[Phase] = field(default_factory=list)
+    default_params: Dict[str, Any] = field(default_factory=dict)
+    optimizer_factor: float = 1.5
+    gradient_accumulation_steps: int = 1
+    throughput_metric: ThroughputMetric = ThroughputMetric.TOKENS_PER_SEC
+    throughput_formula: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            "tp": self.strategy.tp_degree,
-            "pp": self.strategy.pp_degree,
-            "dp": self.strategy.dp_degree,
-            "ep": self.strategy.ep_degree or 1,
+            "name": self.name,
+            "description": self.description,
+            "workload_type": self.workload_type.value,
+            "phases": [p.to_dict() for p in self.phases],
+            "default_params": self.default_params,
+            "optimizer_factor": self.optimizer_factor,
+            "gradient_accumulation_steps": self.gradient_accumulation_steps,
+            "throughput_metric": self.throughput_metric.value,
+            "throughput_formula": self.throughput_formula,
         }
 
-    @abstractmethod
-    def analyze(self, **kwargs) -> BaseResult:
-        """Run performance analysis."""
-        pass
+    def get_required_params(self) -> List[str]:
+        """Get list of required dynamic parameters."""
+        required = []
+        for phase in self.phases:
+            if isinstance(phase.repeat, str):
+                required.append(phase.repeat)
+            if isinstance(phase.seq_len_factor, str):
+                if "/" in phase.seq_len_factor:
+                    param = phase.seq_len_factor.split("/")[-1].strip()
+                    required.append(param)
+                else:
+                    required.append(phase.seq_len_factor)
+        return list(set(required))

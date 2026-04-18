@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Optional
 
 from llm_perf.modeling import create_model_from_config
+from llm_perf.analyzer import infer_workload
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.topology import NetworkTopology
 from llm_perf.strategy.base import StrategyConfig
-from llm_perf.analyzer import TrainingAnalyzer, InferenceAnalyzer
+from llm_perf.analyzer import UnifiedAnalyzer, get_workload, list_workloads
 from llm_perf.reporter import TableReporter, JSONReporter, HTMLReporter
 
 
@@ -86,50 +87,38 @@ def cmd_evaluate(args):
     print(f"  TP: {strategy.tp_degree}, PP: {strategy.pp_degree}, DP: {strategy.dp_degree}")
     print(f"  World size: {strategy.world_size}")
 
+    workload = args.workload if args.workload else infer_workload(model_name, args.mode)
+
+    analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+
     if args.mode == "training":
-        analyzer = TrainingAnalyzer(model, device, cluster, strategy)
         result = analyzer.analyze(
+            workload,
             batch_size=args.batch_size,
             seq_len=args.seq_len,
         )
-
-        reporter = TableReporter()
-        print("\n" + reporter.report_training(result))
-
-        if args.json:
-            json_reporter = JSONReporter()
-            output_path = Path(args.output) if args.output else Path("training_result.json")
-            json_reporter.save(result, output_path)
-            print(f"\nSaved JSON report to {output_path}")
-
-        if args.html:
-            html_reporter = HTMLReporter()
-            output_path = Path(args.output.replace(".json", ".html")) if args.output else Path("training_result.html")
-            html_reporter.save(result, output_path, "Training Performance Report")
-            print(f"Saved HTML report to {output_path}")
-
     else:
-        analyzer = InferenceAnalyzer(model, device, cluster, strategy)
         result = analyzer.analyze(
+            workload,
             batch_size=args.batch_size,
             prompt_len=args.prompt_len,
             generation_len=args.generation_len,
         )
 
-        reporter = TableReporter()
-        print("\n" + reporter.report_inference(result))
+    reporter = TableReporter()
+    print("\n" + reporter.report(result, generation_len=args.generation_len if args.mode == "inference" else 0))
 
-        if args.json:
-            json_reporter = JSONReporter()
-            output_path = Path(args.output) if args.output else Path("inference_result.json")
-            json_reporter.save(result, output_path)
-            print(f"\nSaved JSON report to {output_path}")
+    if args.json:
+        json_reporter = JSONReporter()
+        output_path = Path(args.output) if args.output else Path(f"{args.mode}_result.json")
+        json_reporter.save(result, output_path)
+        print(f"\nSaved JSON report to {output_path}")
 
-        if args.html:
-            html_reporter = HTMLReporter()
-            output_path = Path(args.output.replace(".json", ".html")) if args.output else Path("inference_result.html")
-            html_reporter.save(result, output_path, "Inference Performance Report")
-            print(f"Saved HTML report to {output_path}")
+    if args.html:
+        html_reporter = HTMLReporter()
+        output_path = Path(args.output.replace(".json", ".html")) if args.output else Path(f"{args.mode}_result.html")
+        html_reporter.save(result, output_path, generation_len=args.generation_len if args.mode == "inference" else 0)
+        print(f"Saved HTML report to {output_path}")
 
 
 def cmd_compare(args):
@@ -142,29 +131,38 @@ def cmd_compare(args):
     model = create_model(model_config)
     device, cluster = create_hardware(hardware_config)
 
+    workload = (
+        args.workload
+        if args.workload
+        else infer_workload(model._name if hasattr(model, "_name") else "llama", args.mode)
+    )
+
     for strategy_path in args.strategy_configs:
         strategy_config = load_config(strategy_path)
         strategy = create_strategy(strategy_config)
 
-        if args.mode == "training":
-            analyzer = TrainingAnalyzer(model, device, cluster, strategy)
-            result = analyzer.analyze(
-                batch_size=args.batch_size,
-                seq_len=args.seq_len,
-            )
-        else:
-            analyzer = InferenceAnalyzer(model, device, cluster, strategy)
-            result = analyzer.analyze(
-                batch_size=args.batch_size,
-                prompt_len=args.prompt_len,
-                generation_len=args.generation_len,
-            )
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze(
+            workload,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len if args.mode == "training" else None,
+            prompt_len=args.prompt_len if args.mode == "inference" else None,
+            generation_len=args.generation_len if args.mode == "inference" else None,
+        )
 
         strategy_name = strategy_path.stem if isinstance(strategy_path, Path) else strategy_path
         results[strategy_name] = result
 
     reporter = TableReporter()
     print(reporter.report_comparison(results, args.metric))
+
+
+def cmd_list_workloads(args):
+    """List available workload presets."""
+    workloads = list_workloads()
+    print("Available workload presets:")
+    for name, info in workloads.items():
+        print(f"  {name}: {info['description']} ({info['type']})")
 
 
 def main(argv: Optional[list] = None):
@@ -180,7 +178,8 @@ def main(argv: Optional[list] = None):
     eval_parser.add_argument("--model-config", required=True, help="Model configuration JSON")
     eval_parser.add_argument("--hardware-config", required=True, help="Hardware configuration JSON")
     eval_parser.add_argument("--strategy-config", required=True, help="Strategy configuration JSON")
-    eval_parser.add_argument("--mode", choices=["training", "inference"], required=True)
+    eval_parser.add_argument("--mode", choices=["training", "inference"], default="inference")
+    eval_parser.add_argument("--workload", help="Workload preset name (auto-inferred if not specified)")
     eval_parser.add_argument("--batch-size", type=int, default=32)
     eval_parser.add_argument("--seq-len", type=int, default=4096)
     eval_parser.add_argument("--prompt-len", type=int, default=1024)
@@ -194,17 +193,17 @@ def main(argv: Optional[list] = None):
     compare_parser.add_argument("--model-config", required=True)
     compare_parser.add_argument("--hardware-config", required=True)
     compare_parser.add_argument("--strategy-configs", nargs="+", required=True)
-    compare_parser.add_argument("--mode", choices=["training", "inference"], required=True)
+    compare_parser.add_argument("--mode", choices=["training", "inference"], default="inference")
+    compare_parser.add_argument("--workload", help="Workload preset name")
     compare_parser.add_argument("--batch-size", type=int, default=32)
     compare_parser.add_argument("--seq-len", type=int, default=4096)
     compare_parser.add_argument("--prompt-len", type=int, default=1024)
     compare_parser.add_argument("--generation-len", type=int, default=128)
-    compare_parser.add_argument(
-        "--metric",
-        default="throughput",
-        help="Metric to compare (throughput, memory, ttft)",
-    )
+    compare_parser.add_argument("--metric", default="throughput", help="Metric to compare")
     compare_parser.set_defaults(func=cmd_compare)
+
+    list_parser = subparsers.add_parser("list-workloads", help="List available workload presets")
+    list_parser.set_defaults(func=cmd_list_workloads)
 
     args = parser.parse_args(argv)
 

@@ -12,22 +12,13 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import registries - this registers all models and pipelines
-from llm_perf.analyzer.inference import InferenceAnalyzer
-from llm_perf.analyzer.training import TrainingAnalyzer
-from llm_perf.core.registry import ModelRegistry, PipelineRegistry
+from llm_perf.analyzer import UnifiedAnalyzer, infer_workload, list_workloads
 from llm_perf.hardware.cluster import Cluster
-
-# Import base classes for type checking
 from llm_perf.hardware.device import Device
-from llm_perf.hardware.topology import (
-    NetworkTopology,
-)
+from llm_perf.hardware.topology import NetworkTopology
 from llm_perf.modeling import create_model_from_config, get_model_presets, get_presets_by_sparse_type
-from llm_perf.pipelines.register import get_pipeline_presets
 from llm_perf.strategy.base import StrategyConfig
 
 app = Flask(
@@ -36,8 +27,6 @@ app = Flask(
     static_folder="static",
 )
 CORS(app)
-
-# ==================== Data Models ====================
 
 DEVICE_PRESETS = {
     "NVIDIA": [
@@ -67,23 +56,9 @@ TOPOLOGY_TYPES = {
     "CloudMatrix Supernode": "create_cloudmatrix_supernode",
 }
 
-# Initialize registries
-model_registry = ModelRegistry()
-pipeline_registry = PipelineRegistry()
-
-
-# ==================== Helper Functions ====================
-
 
 def create_topology(topology_config: dict) -> NetworkTopology:
-    """Create network topology from configuration.
-
-    Args:
-        topology_config: Topology configuration dictionary
-
-    Returns:
-        NetworkTopology instance
-    """
+    """Create network topology from configuration."""
     topology_type = topology_config["type"]
 
     if topology_type == "2-Tier Simple":
@@ -104,7 +79,7 @@ def create_topology(topology_config: dict) -> NetworkTopology:
             topology_config["edge_bw_gbps"],
             topology_config.get("oversubscription", 4.0),
         )
-    else:  # CloudMatrix
+    else:
         return NetworkTopology.create_cloudmatrix_supernode(
             topology_config.get("num_npus", 384),
             ub_bw_gbps=topology_config.get("ub_bw_gbps", 3136),
@@ -112,35 +87,19 @@ def create_topology(topology_config: dict) -> NetworkTopology:
 
 
 def create_model_from_registry(model_type: str, config: dict):
-    """Create a model instance using the ModelRegistry.
-
-    Uses the unified create_model_from_config factory function.
-
-    Args:
-        model_type: Model type identifier
-        config: Model configuration
-
-    Returns:
-        Model instance
-    """
-    # Add type to config if not present
+    """Create a model instance using the registry."""
     full_config = dict(config)
     full_config.setdefault("type", model_type)
     return create_model_from_config(full_config)
 
 
-# ==================== API Routes ====================
-
-
 @app.route("/")
 def index():
-    """Main page."""
     return render_template("index.html")
 
 
 @app.route("/api/devices", methods=["GET"])
 def get_devices():
-    """Get available device presets."""
     return jsonify(
         {
             "devices": DEVICE_PRESETS,
@@ -153,28 +112,6 @@ def get_devices():
 
 @app.route("/api/models", methods=["GET"])
 def get_registered_models():
-    """Get all registered models from ModelRegistry.
-
-    Returns:
-        JSON with all registered models grouped by sparse_type and architecture
-    """
-    return jsonify(
-        {
-            "models": model_registry.to_dict(),
-            "by_sparse_type": model_registry.list_by_sparse_type(),
-            "by_architecture": model_registry.list_by_architecture(),
-            "categories": model_registry.list_by_category(),  # Backward compatibility
-        }
-    )
-
-
-@app.route("/api/model/presets", methods=["GET"])
-def get_model_presets_endpoint():
-    """Get model presets grouped by sparse_type for UI display.
-
-    Returns:
-        JSON with presets grouped by: dense, sparse_standard_moe, sparse_deepseek_moe
-    """
     return jsonify(
         {
             "presets": get_model_presets(),
@@ -183,55 +120,18 @@ def get_model_presets_endpoint():
     )
 
 
-@app.route("/api/models/refresh", methods=["POST"])
-def refresh_models():
-    """Refresh model registry."""
-    try:
-        from llm_perf.modeling import registry as _registry_module  # noqa: F401
-
-        return jsonify(
-            {
-                "success": True,
-                "models": model_registry.to_dict(),
-                "by_sparse_type": model_registry.list_by_sparse_type(),
-                "by_architecture": model_registry.list_by_architecture(),
-            }
-        )
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route("/api/pipelines", methods=["GET"])
-def get_registered_pipelines():
-    """Get all registered pipelines."""
+@app.route("/api/workloads", methods=["GET"])
+def get_workloads():
+    """Get available workload presets."""
     return jsonify(
         {
-            "pipelines": pipeline_registry.to_dict(),
-            "presets": get_pipeline_presets(),
+            "workloads": list_workloads(),
         }
     )
 
 
-@app.route("/api/pipelines/refresh", methods=["POST"])
-def refresh_pipelines():
-    """Refresh pipeline registry."""
-    try:
-        from llm_perf.pipelines import register as _pipeline_register_module  # noqa: F401
-
-        return jsonify(
-            {
-                "success": True,
-                "pipelines": pipeline_registry.to_dict(),
-                "presets": get_pipeline_presets(),
-            }
-        )
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
 @app.route("/api/topology/presets", methods=["GET"])
 def get_topology_presets():
-    """Get topology presets."""
     return jsonify(
         {
             "types": list(TOPOLOGY_TYPES.keys()),
@@ -264,18 +164,16 @@ def get_topology_presets():
     )
 
 
-@app.route("/api/evaluate/training", methods=["POST"])
-def evaluate_training():
-    """Evaluate training performance using ModelRegistry."""
+@app.route("/api/evaluate", methods=["POST"])
+def evaluate():
+    """Unified evaluation endpoint."""
     try:
         data = request.json
 
-        # Create model using registry
-        model_config = data["model"]
+        model_config = data.get("model", {})
         model_type = model_config.get("type", "llama")
         model = create_model_from_registry(model_type, model_config)
 
-        # Create device and cluster
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
 
@@ -286,7 +184,6 @@ def evaluate_training():
             data.get("devices_per_node", 8),
         )
 
-        # Create strategy
         strategy = StrategyConfig(
             tp_degree=data["strategy"]["tp"],
             pp_degree=data["strategy"]["pp"],
@@ -296,12 +193,80 @@ def evaluate_training():
             zero_stage=data["strategy"].get("zero_stage", 0),
         )
 
-        # Analyze
-        analyzer = TrainingAnalyzer(model, device, cluster, strategy)
+        workload = data.get("workload")
+        if not workload:
+            mode = data.get("mode", "inference")
+            workload = infer_workload(model_type, mode)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+
+        params = {}
+        if "batch_size" in data:
+            params["batch_size"] = data["batch_size"]
+        if "seq_len" in data:
+            params["seq_len"] = data["seq_len"]
+        if "prompt_len" in data:
+            params["prompt_len"] = data["prompt_len"]
+        if "generation_len" in data:
+            params["generation_len"] = data["generation_len"]
+        if "num_frames" in data:
+            params["num_frames"] = data["num_frames"]
+        if "height" in data:
+            params["height"] = data["height"]
+        if "width" in data:
+            params["width"] = data["width"]
+        if "num_inference_steps" in data:
+            params["num_inference_steps"] = data["num_inference_steps"]
+
+        result = analyzer.analyze(workload, **params)
+
+        return jsonify(
+            {
+                "success": True,
+                "result": result.to_dict(),
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/evaluate/training", methods=["POST"])
+def evaluate_training():
+    """Evaluate training performance (legacy endpoint)."""
+    try:
+        data = request.json
+
+        model_config = data["model"]
+        model_type = model_config.get("type", "llama")
+        model = create_model_from_registry(model_type, model_config)
+
+        device = Device.from_preset(data["device"])
+        topology = create_topology(data["topology"])
+
+        cluster = Cluster.create_homogeneous(
+            device.config,
+            data["num_devices"],
+            topology,
+            data.get("devices_per_node", 8),
+        )
+
+        strategy = StrategyConfig(
+            tp_degree=data["strategy"]["tp"],
+            pp_degree=data["strategy"]["pp"],
+            dp_degree=data["strategy"]["dp"],
+            ep_degree=data["strategy"].get("ep", 1),
+            activation_checkpointing=data["strategy"].get("activation_checkpointing", False),
+            zero_stage=data["strategy"].get("zero_stage", 0),
+        )
+
+        workload = infer_workload(model_type, "training")
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
         result = analyzer.analyze(
+            workload,
             batch_size=data["training"]["batch_size"],
             seq_len=data["training"]["seq_len"],
-            num_steps=data["training"].get("num_steps", 1000),
         )
 
         return jsonify(
@@ -317,16 +282,14 @@ def evaluate_training():
 
 @app.route("/api/evaluate/inference", methods=["POST"])
 def evaluate_inference():
-    """Evaluate inference performance using ModelRegistry."""
+    """Evaluate inference performance (legacy endpoint)."""
     try:
         data = request.json
 
-        # Create model using registry
         model_config = data["model"]
         model_type = model_config.get("type", "llama")
         model = create_model_from_registry(model_type, model_config)
 
-        # Create device and cluster
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
 
@@ -337,7 +300,6 @@ def evaluate_inference():
             data.get("devices_per_node", 8),
         )
 
-        # Create strategy
         strategy = StrategyConfig(
             tp_degree=data["strategy"]["tp"],
             pp_degree=data["strategy"]["pp"],
@@ -345,9 +307,11 @@ def evaluate_inference():
             ep_degree=data["strategy"].get("ep", 1),
         )
 
-        # Analyze
-        analyzer = InferenceAnalyzer(model, device, cluster, strategy)
+        workload = infer_workload(model_type, "inference")
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
         result = analyzer.analyze(
+            workload,
             batch_size=data["inference"]["batch_size"],
             prompt_len=data["inference"]["prompt_len"],
             generation_len=data["inference"]["generation_len"],
@@ -366,22 +330,10 @@ def evaluate_inference():
 
 @app.route("/api/evaluate/pipeline/<pipeline_name>", methods=["POST"])
 def evaluate_pipeline(pipeline_name: str):
-    """Evaluate a registered pipeline.
-
-    Args:
-        pipeline_name: Name of the registered pipeline
-
-    Returns:
-        Pipeline evaluation results
-    """
+    """Evaluate a registered pipeline."""
     try:
         data = request.json
 
-        # Check if pipeline is registered
-        if not pipeline_registry.is_registered(pipeline_name):
-            return jsonify({"success": False, "error": f"Pipeline '{pipeline_name}' not found"}), 404
-
-        # Create device and cluster
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
 
@@ -392,7 +344,6 @@ def evaluate_pipeline(pipeline_name: str):
             data.get("devices_per_node", 8),
         )
 
-        # Create strategy
         strategy = StrategyConfig(
             tp_degree=data["strategy"]["tp"],
             pp_degree=data["strategy"]["pp"],
@@ -400,28 +351,21 @@ def evaluate_pipeline(pipeline_name: str):
             ep_degree=data["strategy"].get("ep", 1),
         )
 
-        # For video generation pipeline
         if pipeline_name == "diffusion-video":
-            from llm_perf.pipelines.diffusion_video import create_wan_t2v_pipeline
+            models = {
+                "text_encoder": create_model_from_config({"preset": "llama-7b"}),
+                "dit": create_model_from_config({"type": "wan-dit"}),
+                "vae": create_model_from_config({"type": "wan-vae"}),
+            }
 
-            pipeline = create_wan_t2v_pipeline(
-                device=device,
-                cluster=cluster,
-                strategy=strategy,
+            analyzer = UnifiedAnalyzer(models, device, cluster, strategy)
+            result = analyzer.analyze(
+                "diffusion-inference",
                 num_frames=data.get("num_frames", 81),
                 height=data.get("height", 720),
                 width=data.get("width", 1280),
                 num_inference_steps=data.get("num_inference_steps", 50),
-                dtype=data.get("dtype", "bf16"),
-            )
-
-            result = pipeline.run(
-                {
-                    "num_frames": data.get("num_frames", 81),
-                    "height": data.get("height", 720),
-                    "width": data.get("width", 1280),
-                    "use_cfg": data.get("use_cfg", True),
-                }
+                use_cfg=data.get("use_cfg", True),
             )
 
             return jsonify(
@@ -431,37 +375,23 @@ def evaluate_pipeline(pipeline_name: str):
                 }
             )
 
-        # For inference pipeline
         elif pipeline_name == "inference":
-            from llm_perf.pipelines.inference import InferencePipeline
-
-            # Create model
             model_config = data.get("model", {})
             model_type = model_config.get("type", "llama")
             model = create_model_from_registry(model_type, model_config)
 
-            pipeline = InferencePipeline(
-                model=model,
-                device=device,
-                cluster=cluster,
-                strategy=strategy,
+            analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+            result = analyzer.analyze(
+                "llm-inference",
                 batch_size=data.get("batch_size", 1),
                 prompt_len=data.get("prompt_len", 512),
                 generation_len=data.get("generation_len", 128),
             )
 
-            result = pipeline.run()
-
             return jsonify(
                 {
                     "success": True,
-                    "result": {
-                        "total_time_sec": result.total_time_sec,
-                        "step_times": result.step_times,
-                        "step_results": result.step_results,
-                        "memory_peak_gb": result.memory_peak_gb,
-                        "throughput": result.throughput,
-                    },
+                    "result": result.to_dict(),
                 }
             )
 
@@ -469,15 +399,12 @@ def evaluate_pipeline(pipeline_name: str):
             return jsonify(
                 {
                     "success": False,
-                    "error": f"Evaluation not implemented for pipeline '{pipeline_name}'",
+                    "error": f"Pipeline '{pipeline_name}' not implemented",
                 }
             ), 501
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
-
-# ==================== Main Entry ====================
 
 
 def create_ssl_context():
@@ -504,10 +431,8 @@ def generate_self_signed_cert(cert_file: Path, key_file: Path):
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
 
-    # Generate private key
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
-    # Generate certificate
     subject = issuer = x509.Name(
         [
             x509.NameAttribute(NameOID.COUNTRY_NAME, "CN"),
@@ -538,7 +463,6 @@ def generate_self_signed_cert(cert_file: Path, key_file: Path):
         .sign(key, hashes.SHA256())
     )
 
-    # Write files
     cert_file.parent.mkdir(parents=True, exist_ok=True)
     cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     key_file.write_bytes(
@@ -556,8 +480,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="LLM Performance Evaluator Web Service")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8443, help="Port to bind (default: 8443)")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
+    parser.add_argument("--port", type=int, default=8443, help="Port to bind")
     parser.add_argument("--http", action="store_true", help="Use HTTP instead of HTTPS")
     args = parser.parse_args()
 
@@ -567,7 +491,7 @@ def main():
     else:
         ssl_context = create_ssl_context()
         print(f"Starting HTTPS server on https://{args.host}:{args.port}")
-        print("Note: You may need to accept the self-signed certificate in your browser")
+        print("Note: You may need to accept the self-signed certificate")
         app.run(host=args.host, port=args.port, ssl_context=ssl_context, debug=False)
 
 
