@@ -308,7 +308,11 @@ async function evaluate() {
         // Use pipeline endpoint for video generation models
         let endpoint;
         if (state.currentPipeline === 'diffusion-video') {
-            endpoint = '/api/evaluate/pipeline/diffusion-video';
+            if (state.mode === 'training') {
+                endpoint = '/api/evaluate/training';
+            } else {
+                endpoint = '/api/evaluate/pipeline/diffusion-video';
+            }
         } else {
             endpoint = state.mode === 'training' 
                 ? '/api/evaluate/training' 
@@ -365,19 +369,18 @@ function collectConfig() {
             break;
     }
     
+    const presetKey = elements.modelPreset.value;
+    const presets = state.modelPresets.presets || state.modelPresets;
+    const preset = presets[presetKey] || {};
+    
     const config = {
         model: {
+            ...preset,
             sparse_type: elements.modelType.value,
-            vocab_size: 32000,
             hidden_size: parseInt(document.getElementById('hidden-size').value),
             num_layers: parseInt(document.getElementById('num-layers').value),
             num_attention_heads: parseInt(document.getElementById('num-heads').value),
-            max_seq_len: parseInt(document.getElementById('max-seq-len').value),
             dtype: document.getElementById('dtype').value,
-            ...(elements.modelType.value.includes('moe') && {
-                num_experts: parseInt(document.getElementById('num-experts').value),
-                num_experts_per_token: parseInt(document.getElementById('experts-per-token').value)
-            })
         },
         device: elements.deviceModel.value,
         num_devices: parseInt(document.getElementById('num-devices').value),
@@ -406,9 +409,16 @@ function collectConfig() {
     if (state.mode === 'training') {
         config.training = {
             batch_size: parseInt(document.getElementById('batch-size').value),
-            seq_len: parseInt(document.getElementById('seq-len').value),
             num_steps: 1000
         };
+        // 如果是扩散模型，传递视频参数
+        if (state.currentPipeline === 'diffusion-video' && state.videoParams) {
+            config.training.num_frames = state.videoParams.num_frames;
+            config.training.height = state.videoParams.height;
+            config.training.width = state.videoParams.width;
+        } else {
+            config.training.seq_len = parseInt(document.getElementById('seq-len').value);
+        }
     } else {
         config.inference = {
             batch_size: parseInt(document.getElementById('inf-batch-size').value),

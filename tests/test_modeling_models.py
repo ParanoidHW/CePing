@@ -10,6 +10,9 @@ from llm_perf.modeling import (
     ShardedMoE,
     LlamaModel,
     DeepSeekModel,
+    create_model_from_config,
+    get_model_presets,
+    ShardedWanDiT,
 )
 
 
@@ -456,3 +459,75 @@ class TestDeepSeekModel:
 
         for layer in model.layers:
             assert isinstance(layer, ShardedMoEBlock)
+
+
+class TestCreateModelFromConfig:
+    """Test create_model_from_config with parameter filtering."""
+
+    def test_create_with_preset(self):
+        """Test creating model from preset."""
+        model = create_model_from_config({"preset": "llama-7b"})
+        assert isinstance(model, LlamaModel)
+        assert model.hidden_size == 4096
+        assert model.num_layers == 32
+
+    def test_create_with_type(self):
+        """Test creating model from type field."""
+        model = create_model_from_config({"type": "llama-7b"})
+        assert isinstance(model, LlamaModel)
+
+    def test_create_with_extra_params_filtered(self):
+        """Test that extra params not in model signature are filtered."""
+        model = create_model_from_config(
+            {
+                "preset": "llama-7b",
+                "extra_param": "should_be_filtered",
+            }
+        )
+        assert isinstance(model, LlamaModel)
+
+    def test_create_wan_dit_from_preset(self):
+        """Test creating WanDiT from preset."""
+        model = create_model_from_config({"preset": "wan-dit"})
+        assert isinstance(model, ShardedWanDiT)
+        assert model.hidden_size == 5120
+        assert model.num_layers == 40
+
+    def test_create_wan_dit_with_type(self):
+        """Test creating WanDiT from type field."""
+        model = create_model_from_config({"type": "wan-dit"})
+        assert isinstance(model, ShardedWanDiT)
+
+    def test_create_wan_dit_filters_invalid_params(self):
+        """Test that invalid params for WanDiT are filtered."""
+        model = create_model_from_config(
+            {
+                "type": "wan-dit",
+                "max_seq_len": 4096,
+                "vocab_size": 32000,
+            }
+        )
+        assert isinstance(model, ShardedWanDiT)
+
+    def test_preset_contains_required_params(self):
+        """Test that presets contain all required constructor params."""
+        presets = get_model_presets()
+
+        llama_preset = presets["llama-7b"]
+        model = create_model_from_config({"preset": "llama-7b"})
+        assert model.hidden_size == llama_preset["hidden_size"]
+
+        wan_preset = presets["wan-dit"]
+        model = create_model_from_config({"preset": "wan-dit"})
+        assert model.hidden_size == wan_preset["hidden_size"]
+
+    def test_user_override_preset_params(self):
+        """Test that user can override preset params."""
+        model = create_model_from_config(
+            {
+                "preset": "llama-7b",
+                "hidden_size": 2048,
+            }
+        )
+        assert isinstance(model, LlamaModel)
+        assert model.hidden_size == 2048

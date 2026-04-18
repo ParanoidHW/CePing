@@ -14,7 +14,7 @@ from flask_cors import CORS
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm_perf.analyzer import UnifiedAnalyzer, infer_workload, list_workloads
+from llm_perf.analyzer import UnifiedAnalyzer, get_workload, infer_workload, list_workloads
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.topology import NetworkTopology
@@ -112,6 +112,16 @@ def get_devices():
 
 @app.route("/api/models", methods=["GET"])
 def get_registered_models():
+    return jsonify(
+        {
+            "presets": get_model_presets(),
+            "by_sparse_type": get_presets_by_sparse_type(),
+        }
+    )
+
+
+@app.route("/api/model/presets", methods=["GET"])
+def get_model_presets_endpoint():
     return jsonify(
         {
             "presets": get_model_presets(),
@@ -263,10 +273,11 @@ def evaluate_training():
         workload = infer_workload(model_type, "training")
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        training_params = dict(data["training"])
         result = analyzer.analyze(
             workload,
-            batch_size=data["training"]["batch_size"],
-            seq_len=data["training"]["seq_len"],
+            batch_size=training_params.get("batch_size", 1),
+            **{k: v for k, v in training_params.items() if k != "batch_size"},
         )
 
         return jsonify(
@@ -353,18 +364,19 @@ def evaluate_pipeline(pipeline_name: str):
 
         if pipeline_name == "diffusion-video":
             models = {
-                "text_encoder": create_model_from_config({"preset": "llama-7b"}),
-                "dit": create_model_from_config({"type": "wan-dit"}),
-                "vae": create_model_from_config({"type": "wan-vae"}),
+                "encoder": create_model_from_config({"type": "wan-text-encoder"}),
+                "backbone": create_model_from_config({"type": "wan-dit"}),
+                "decoder": create_model_from_config({"type": "wan-vae"}),
             }
 
             analyzer = UnifiedAnalyzer(models, device, cluster, strategy)
+            workload = get_workload("diffusion-pipeline")
             result = analyzer.analyze(
-                "diffusion-inference",
+                workload,
                 num_frames=data.get("num_frames", 81),
                 height=data.get("height", 720),
                 width=data.get("width", 1280),
-                num_inference_steps=data.get("num_inference_steps", 50),
+                num_steps=data.get("num_inference_steps", 50),
                 use_cfg=data.get("use_cfg", True),
             )
 

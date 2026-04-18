@@ -6,6 +6,7 @@ Provides unified interface for model creation via:
 3. Name mode: config contains 'name' field
 """
 
+import inspect
 from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
 
 from llm_perf.modeling.models import LlamaModel, DeepSeekModel
@@ -99,8 +100,9 @@ class ModelingRegistry:
 
         merged_config = dict(info.default_config)
         merged_config.update(kwargs)
+        filtered_config = _filter_params_for_model(info.model_class, merged_config)
 
-        return info.model_class(**merged_config)
+        return info.model_class(**filtered_config)
 
 
 def register_all_models() -> None:
@@ -330,6 +332,25 @@ def get_model_presets() -> dict:
             "dtype": "fp16",
             "description": "Video VAE",
         },
+        "wan-t2v-14b": {
+            "architecture": "wan_pipeline",
+            "sparse_type": "dense",
+            "attention_features": [],
+            "text_encoder": "wan-text-encoder",
+            "dit": "wan-dit",
+            "vae": "wan-vae",
+            "description": "Wan2.1 Text-to-Video 14B pipeline",
+        },
+        "wan-dit": {
+            "architecture": "wan_dit",
+            "sparse_type": "dense",
+            "attention_features": ["standard"],
+            "hidden_size": 5120,
+            "num_layers": 40,
+            "num_heads": 40,
+            "dtype": "bf16",
+            "description": "Wan2.1 DiT 14B",
+        },
     }
 
 
@@ -384,9 +405,13 @@ def create_model_from_config(config: dict) -> Any:
             merged_config.pop(field, None)
         model_name = _find_model_by_architecture(registry, architecture)
         if model_name:
-            return registry.create(model_name, **merged_config)
+            model_class = registry.get_all_infos()[model_name].model_class
+            filtered_config = _filter_params_for_model(model_class, merged_config)
+            return registry.create(model_name, **filtered_config)
         if registry.is_registered(architecture):
-            return registry.create(architecture, **merged_config)
+            model_class = registry.get_all_infos()[architecture].model_class
+            filtered_config = _filter_params_for_model(model_class, merged_config)
+            return registry.create(architecture, **filtered_config)
 
     architecture = config.get("architecture")
     if architecture:
@@ -395,21 +420,40 @@ def create_model_from_config(config: dict) -> Any:
             model_config = dict(config)
             for field in meta_fields:
                 model_config.pop(field, None)
-            return registry.create(model_name, **model_config)
+            model_class = registry.get_all_infos()[model_name].model_class
+            filtered_config = _filter_params_for_model(model_class, model_config)
+            return registry.create(model_name, **filtered_config)
 
     model_type = config.get("type")
-    if model_type and registry.is_registered(model_type):
-        model_config = dict(config)
-        for field in meta_fields:
-            model_config.pop(field, None)
-        return registry.create(model_type, **model_config)
+    if model_type:
+        if registry.is_registered(model_type):
+            model_config = dict(config)
+            for field in meta_fields:
+                model_config.pop(field, None)
+            model_class = registry.get_all_infos()[model_type].model_class
+            filtered_config = _filter_params_for_model(model_class, model_config)
+            return registry.create(model_type, **filtered_config)
+        if model_type in presets:
+            preset_config = presets[model_type]
+            merged_config = dict(preset_config)
+            merged_config.update(config)
+            architecture = merged_config.get("architecture", model_type)
+            for field in meta_fields:
+                merged_config.pop(field, None)
+            model_name = _find_model_by_architecture(registry, architecture)
+            if model_name:
+                model_class = registry.get_all_infos()[model_name].model_class
+                filtered_config = _filter_params_for_model(model_class, merged_config)
+                return registry.create(model_name, **filtered_config)
 
     model_name = config.get("name")
     if model_name and registry.is_registered(model_name):
         model_config = dict(config)
         for field in meta_fields:
             model_config.pop(field, None)
-        return registry.create(model_name, **model_config)
+        model_class = registry.get_all_infos()[model_name].model_class
+        filtered_config = _filter_params_for_model(model_class, model_config)
+        return registry.create(model_name, **filtered_config)
 
     available_models = registry.list_models()
     available_presets = list(presets.keys())
@@ -426,6 +470,24 @@ def _find_model_by_architecture(registry: ModelingRegistry, architecture: str) -
         if info.architecture == architecture:
             return name
     return None
+
+
+def _filter_params_for_model(model_class: Any, config: dict) -> dict:
+    """Filter config params based on model class __init__ signature.
+
+    Args:
+        model_class: Model class to check signature
+        config: Configuration dict
+
+    Returns:
+        Filtered config with only valid parameters
+    """
+    try:
+        sig = inspect.signature(model_class.__init__)
+        valid_params = {k for k in sig.parameters if k != "self"}
+        return {k: v for k, v in config.items() if k in valid_params}
+    except (ValueError, TypeError):
+        return config
 
 
 register_all_models()
