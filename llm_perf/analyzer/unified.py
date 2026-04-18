@@ -11,6 +11,7 @@ from llm_perf.hardware.cluster import Cluster
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.kernels.compute import ComputeKernelRegistry
 from llm_perf.kernels.communication import CommKernelRegistry
+from llm_perf.kernels.functional import linear, flash_attention, KernelResult
 from llm_perf.utils.constants import DTYPE_SIZES
 
 from .base import (
@@ -18,7 +19,6 @@ from .base import (
     PhaseResult,
     UnifiedResult,
     WorkloadConfig,
-    WorkloadType,
     ComputeType,
     ComputePattern,
     ThroughputMetric,
@@ -247,14 +247,10 @@ class UnifiedAnalyzer:
         effective_batch = batch_size // dp
         effective_hidden = hidden_size // tp
 
-        forward_time = (
-            self._estimate_transformer_layer_time(effective_batch, effective_seq_len, effective_hidden, dtype)
-            * num_layers
-        )
-
-        forward_flops = self._estimate_transformer_flops(batch_size, effective_seq_len, hidden_size, num_layers)
-
         if compute_type == ComputeType.FORWARD:
+            forward_time, forward_flops = self._estimate_transformer_block_forward(
+                effective_batch, effective_seq_len, effective_hidden, dtype, num_layers
+            )
             comm_time = self._estimate_comm_time(batch_size, effective_seq_len, hidden_size, tp, num_layers)
             return (
                 forward_time + comm_time,
@@ -265,8 +261,9 @@ class UnifiedAnalyzer:
             )
 
         elif compute_type == ComputeType.BACKWARD:
-            backward_time = forward_time * 2.0
-            backward_flops = forward_flops * 2.0
+            backward_time, backward_flops = self._estimate_transformer_block_backward(
+                effective_batch, effective_seq_len, effective_hidden, dtype, num_layers
+            )
             comm_time = self._estimate_comm_time(batch_size, effective_seq_len, hidden_size, tp, num_layers)
             return (
                 backward_time + comm_time,
@@ -278,46 +275,224 @@ class UnifiedAnalyzer:
 
         elif compute_type == ComputeType.OPTIMIZER:
             optimizer_factor = params.get("optimizer_factor", 1.5)
+            forward_time, forward_flops = self._estimate_transformer_block_forward(
+                effective_batch, effective_seq_len, effective_hidden, dtype, num_layers
+            )
             optimizer_time = forward_time * optimizer_factor
             return optimizer_time, self._estimate_optimizer_memory(dtype_bytes, tp, dp, component), 0.0
 
+        forward_time, forward_flops = self._estimate_transformer_block_forward(
+            effective_batch, effective_seq_len, effective_hidden, dtype, num_layers
+        )
         return forward_time, 0.0, forward_flops
 
-    def _estimate_transformer_layer_time(
+    def _estimate_transformer_block_forward(
         self,
         batch_size: int,
         seq_len: int,
         hidden_size: int,
         dtype: str,
-    ) -> float:
-        """Estimate single transformer layer time."""
-        m = batch_size * seq_len
-        k = hidden_size
+        num_layers: int,
+    ) -> tuple:
+        """Estimate forward pass using kernel definitions."""
+        total_time = 0.0
+        total_flops = 0
 
-        matmul_kernel = self.compute_registry.get_or_create_matmul(m, k * 4, k, dtype)
-        time = matmul_kernel.estimate_time((m, k), (m, k * 4), dtype) * 3
+        for _ in range(num_layers):
+            layer_time, layer_flops = self._estimate_transformer_layer_forward(batch_size, seq_len, hidden_size, dtype)
+            total_time += layer_time
+            total_flops += layer_flops
 
-        attn_kernel = self.compute_registry.get_or_create_matmul(m, k * 3, k, dtype)
-        time += attn_kernel.estimate_time((m, k), (m, k * 3), dtype) * 2
+        return total_time, total_flops
 
-        return time
-
-    def _estimate_transformer_flops(
+    def _estimate_transformer_block_backward(
         self,
         batch_size: int,
         seq_len: int,
         hidden_size: int,
+        dtype: str,
         num_layers: int,
-    ) -> float:
-        """Estimate transformer FLOPs."""
+    ) -> tuple:
+        """Estimate backward pass using kernel definitions."""
+        total_time = 0.0
+        total_flops = 0
+
+        for _ in range(num_layers):
+            layer_time, layer_flops = self._estimate_transformer_layer_backward(batch_size, seq_len, hidden_size, dtype)
+            total_time += layer_time
+            total_flops += layer_flops
+
+        return total_time, total_flops
+
+    def _estimate_transformer_layer_forward(
+        self,
+        batch_size: int,
+        seq_len: int,
+        hidden_size: int,
+        dtype: str,
+    ) -> tuple:
+        """Estimate single transformer layer forward using kernel API."""
         m = batch_size * seq_len
 
-        ffn_flops = m * hidden_size * hidden_size * 4 * 2
-        attn_flops = m * hidden_size * hidden_size * 3 * 2
-        flash_flops = m * hidden_size * hidden_size * 2
+        attention_time, attention_flops = self._estimate_attention_forward(m, hidden_size, dtype)
+        ffn_time, ffn_flops = self._estimate_ffn_forward(m, hidden_size, dtype)
 
-        layer_flops = ffn_flops + attn_flops + flash_flops
-        return layer_flops * num_layers
+        return attention_time + ffn_time, attention_flops + ffn_flops
+
+    def _estimate_transformer_layer_backward(
+        self,
+        batch_size: int,
+        seq_len: int,
+        hidden_size: int,
+        dtype: str,
+    ) -> tuple:
+        """Estimate single transformer layer backward using kernel API."""
+        m = batch_size * seq_len
+
+        attention_time, attention_flops = self._estimate_attention_backward(m, hidden_size, dtype)
+        ffn_time, ffn_flops = self._estimate_ffn_backward(m, hidden_size, dtype)
+
+        return attention_time + ffn_time, attention_flops + ffn_flops
+
+    def _estimate_attention_forward(
+        self,
+        m: int,
+        hidden_size: int,
+        dtype: str,
+    ) -> tuple:
+        """Estimate attention forward: QKV projections + attention + output projection."""
+        total_time = 0.0
+        total_flops = 0
+
+        qkv_result = self._estimate_linear_kernel((m, hidden_size), (hidden_size, hidden_size * 3), dtype)
+        total_time += self._estimate_kernel_time_from_result(qkv_result, is_forward=True)
+        total_flops += qkv_result.flops
+
+        num_heads = 32
+        head_dim = hidden_size // num_heads
+        batch = m // hidden_size
+        seq_len = hidden_size
+
+        attn_result = flash_attention(
+            (batch, num_heads, seq_len, head_dim),
+            (batch, num_heads, seq_len, head_dim),
+            (batch, num_heads, seq_len, head_dim),
+            is_causal=True,
+            dtype=dtype,
+        )
+        total_time += self._estimate_kernel_time_from_result(attn_result, is_forward=True)
+        total_flops += attn_result.flops
+
+        o_result = self._estimate_linear_kernel((m, hidden_size), (hidden_size, hidden_size), dtype)
+        total_time += self._estimate_kernel_time_from_result(o_result, is_forward=True)
+        total_flops += o_result.flops
+
+        return total_time, total_flops
+
+    def _estimate_attention_backward(
+        self,
+        m: int,
+        hidden_size: int,
+        dtype: str,
+    ) -> tuple:
+        """Estimate attention backward using kernel backward metrics."""
+        total_time = 0.0
+        total_flops = 0
+
+        qkv_result = self._estimate_linear_kernel((m, hidden_size), (hidden_size, hidden_size * 3), dtype)
+        total_time += self._estimate_kernel_time_from_result(qkv_result, is_forward=False)
+        total_flops += qkv_result.flops_backward
+
+        num_heads = 32
+        head_dim = hidden_size // num_heads
+        batch = m // hidden_size
+        seq_len = hidden_size
+
+        attn_result = flash_attention(
+            (batch, num_heads, seq_len, head_dim),
+            (batch, num_heads, seq_len, head_dim),
+            (batch, num_heads, seq_len, head_dim),
+            is_causal=True,
+            dtype=dtype,
+        )
+        total_time += self._estimate_kernel_time_from_result(attn_result, is_forward=False)
+        total_flops += attn_result.flops_backward
+
+        o_result = self._estimate_linear_kernel((m, hidden_size), (hidden_size, hidden_size), dtype)
+        total_time += self._estimate_kernel_time_from_result(o_result, is_forward=False)
+        total_flops += o_result.flops_backward
+
+        return total_time, total_flops
+
+    def _estimate_ffn_forward(
+        self,
+        m: int,
+        hidden_size: int,
+        dtype: str,
+    ) -> tuple:
+        """Estimate FFN forward: up projection + activation + down projection."""
+        total_time = 0.0
+        total_flops = 0
+
+        up_result = self._estimate_linear_kernel((m, hidden_size), (hidden_size * 4, hidden_size), dtype)
+        total_time += self._estimate_kernel_time_from_result(up_result, is_forward=True)
+        total_flops += up_result.flops
+
+        down_result = self._estimate_linear_kernel((m, hidden_size * 4), (hidden_size, hidden_size * 4), dtype)
+        total_time += self._estimate_kernel_time_from_result(down_result, is_forward=True)
+        total_flops += down_result.flops
+
+        return total_time, total_flops
+
+    def _estimate_ffn_backward(
+        self,
+        m: int,
+        hidden_size: int,
+        dtype: str,
+    ) -> tuple:
+        """Estimate FFN backward using kernel backward metrics."""
+        total_time = 0.0
+        total_flops = 0
+
+        up_result = self._estimate_linear_kernel((m, hidden_size), (hidden_size * 4, hidden_size), dtype)
+        total_time += self._estimate_kernel_time_from_result(up_result, is_forward=False)
+        total_flops += up_result.flops_backward
+
+        down_result = self._estimate_linear_kernel((m, hidden_size * 4), (hidden_size, hidden_size * 4), dtype)
+        total_time += self._estimate_kernel_time_from_result(down_result, is_forward=False)
+        total_flops += down_result.flops_backward
+
+        return total_time, total_flops
+
+    def _estimate_linear_kernel(
+        self,
+        input_shape: tuple,
+        weight_shape: tuple,
+        dtype: str,
+    ) -> KernelResult:
+        """Get linear kernel result with forward/backward metrics."""
+        return linear(input_shape, weight_shape, dtype=dtype)
+
+    def _estimate_kernel_time_from_result(
+        self,
+        result: KernelResult,
+        is_forward: bool = True,
+    ) -> float:
+        """Estimate kernel execution time from KernelResult."""
+        if is_forward:
+            flops = result.flops
+            bytes_accessed = result.bytes_accessed
+        else:
+            flops = result.flops_backward
+            bytes_accessed = result.bytes_accessed_backward
+
+        tflops = self.device.get_compute_tflops(result.dtype)
+        bandwidth_gbps = self.device.get_memory_bw_gbps()
+
+        compute_time = flops / (tflops * 1e12) if tflops > 0 else 0.0
+        memory_time = bytes_accessed / (bandwidth_gbps * 1e9) if bandwidth_gbps > 0 else 0.0
+
+        return max(compute_time, memory_time)
 
     def _estimate_comm_time(
         self,
