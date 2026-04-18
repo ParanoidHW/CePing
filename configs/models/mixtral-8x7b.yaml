@@ -1,4 +1,5 @@
 description: Mixtral 8x7B
+preset_type: model
 architecture: mixtral
 sparse_type: standard_moe
 attention_features:

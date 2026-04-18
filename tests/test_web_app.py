@@ -213,3 +213,15 @@ class TestWebAppAPI:
         for phase in result_dict["phases"]:
             assert phase["total_time_sec"] > 0, f"Phase {phase['name']} has zero total_time_sec"
             assert phase["single_time_sec"] > 0, f"Phase {phase['name']} has zero single_time_sec"
+
+    def test_component_presets_filtered_for_inference(self):
+        """Verify component presets are filtered for inference mode."""
+        from llm_perf.modeling.registry import get_model_presets
+
+        presets = get_model_presets()
+
+        component_presets = [key for key, preset in presets.items() if preset.get("preset_type") == "component"]
+        assert len(component_presets) > 0, "Should have at least one component preset"
+
+        model_presets = [key for key, preset in presets.items() if preset.get("preset_type") in ("model", "pipeline")]
+        assert len(model_presets) > 0, "Should have at least one model/pipeline preset"

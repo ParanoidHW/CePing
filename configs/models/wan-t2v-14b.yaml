@@ -1,4 +1,5 @@
 description: Wan2.1 Text-to-Video 14B pipeline
+preset_type: pipeline
 architecture: wan_pipeline
 sparse_type: dense
 attention_features: []

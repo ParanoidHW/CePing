@@ -65,11 +65,19 @@ async function loadData() {
 
 function populateModelPresets() {
     const select = elements.modelPreset;
+    select.innerHTML = '';
+    
     const presets = state.modelPresets.presets || state.modelPresets;
     Object.keys(presets).forEach(key => {
+        const preset = presets[key];
+        const presetType = preset.preset_type || 'model';
+        
+        if (state.mode === 'inference' && presetType === 'component') {
+            return;
+        }
+        
         const option = document.createElement('option');
         option.value = key;
-        const preset = presets[key];
         const desc = preset.description || preset.name || key;
         option.textContent = `${key} - ${desc}`;
         select.appendChild(option);

@@ -1,4 +1,5 @@
 description: DeepSeek V3
+preset_type: model
 architecture: deepseek
 sparse_type: deepseek_moe
 attention_features:

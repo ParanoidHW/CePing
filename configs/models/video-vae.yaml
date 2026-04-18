@@ -1,4 +1,5 @@
 description: Video VAE
+preset_type: component
 architecture: vae
 sparse_type: dense
 attention_features: []

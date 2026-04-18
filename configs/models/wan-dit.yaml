@@ -1,4 +1,5 @@
 description: Wan2.1 DiT 14B
+preset_type: component
 architecture: wan_dit
 sparse_type: dense
 attention_features:

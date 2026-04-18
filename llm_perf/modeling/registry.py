@@ -328,6 +328,7 @@ def _load_presets_from_yaml() -> dict:
 
         preset = {
             "description": preset_data.get("description", ""),
+            "preset_type": preset_data.get("preset_type", "model"),
             "architecture": preset_data.get("architecture", preset_name),
             "sparse_type": preset_data.get("sparse_type", "dense"),
             "attention_features": preset_data.get("attention_features", []),

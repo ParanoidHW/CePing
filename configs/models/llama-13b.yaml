@@ -1,4 +1,5 @@
 description: LLaMA 13B
+preset_type: model
 architecture: llama
 sparse_type: dense
 attention_features:
