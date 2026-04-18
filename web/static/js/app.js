@@ -461,87 +461,38 @@ function displayResults(result) {
     
     // Handle pipeline results (e.g., video generation)
     if (state.currentPipeline === 'diffusion-video') {
-        const metadata = result.metadata || {};
-        const breakdown = metadata.component_breakdown || {};
-        const detailed = result.detailed_breakdown;
+        const phases = result.phases || [];
+        const totalTime = result.total_time_sec || 0;
         
-        let detailedHtml = '';
-        if (detailed) {
-            // Memory breakdown by type
-            const memByType = detailed.memory?.by_type || {};
-            const memRows = Object.entries(memByType)
-                .map(([type, gb]) => 
-                    `<tr><td>${type}</td><td>${gb.toFixed(2)} GB</td></tr>`
-                ).join('');
-            
-            // Memory breakdown by submodel
-            const memBySubmodel = detailed.memory?.by_submodel || {};
-            const submodelMemRows = Object.entries(memBySubmodel)
-                .map(([name, mems]) => {
-                    const total = Object.values(mems).reduce((a, b) => a + b, 0);
-                    return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
-                }).join('');
-            
-            // Communication breakdown
-            const commByPara = detailed.communication?.by_parallelism || {};
-            const commRows = Object.entries(commByPara)
-                .map(([type, data]) => 
-                    `<tr><td>${type.toUpperCase()}</td><td>${data.total_volume_gb.toFixed(2)} GB</td><td>${data.total_time_ms.toFixed(2)} ms</td></tr>`
-                ).join('');
-            
-            // Submodel details
-            const submodelDetails = (detailed.submodels || []).map(sm => {
-                const memTypes = Object.entries(sm.memory?.by_type || {})
-                    .map(([t, v]) => `${t}: ${v.toFixed(1)}G`)
-                    .join(', ');
-                return `
-                    <div style="margin: 0.5rem 0; padding: 0.5rem; background: var(--gray-50); border-radius: 4px;">
-                        <strong>${sm.model_name}</strong> (${sm.model_type})<br>
-                        Memory: ${memTypes}
-                    </div>
-                `;
-            }).join('');
-            
-            detailedHtml = `
-                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
-                <table class="breakdown-table">
-                    <tr><th>内存类型</th><th>大小</th></tr>
-                    ${memRows}
-                </table>
-                
-                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>
-                <table class="breakdown-table">
-                    <tr><th>子模型</th><th>总内存</th></tr>
-                    ${submodelMemRows}
-                </table>
-                
-                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">通信分解 (按并行方式)</h3>
-                <table class="breakdown-table">
-                    <tr><th>并行类型</th><th>通信量</th><th>时间</th></tr>
-                    ${commRows || '<tr><td colspan="3">无通信数据</td></tr>'}
-                </table>
-                
-                <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模型详情</h3>
-                ${submodelDetails}
-            `;
-        }
+        // 从phases提取各组件时间
+        const encodePhase = phases.find(p => p.name === 'encode') || {};
+        const denoisePhase = phases.find(p => p.name === 'denoise') || {};
+        const decodePhase = phases.find(p => p.name === 'decode') || {};
+        
+        // 计算占比
+        const encodePct = (encodePhase.total_time_sec || 0) / totalTime * 100;
+        const denoisePct = (denoisePhase.total_time_sec || 0) / totalTime * 100;
+        const decodePct = (decodePhase.total_time_sec || 0) / totalTime * 100;
+        
+        // 从params获取配置信息
+        const params = result.params || {};
         
         elements.resultsContent.innerHTML = `
             <div class="result-grid">
                 <div class="result-card highlight">
-                    <div class="result-value">${((result.total_time_sec || 0) / 60).toFixed(1)}m</div>
+                    <div class="result-value">${(totalTime).toFixed(1)}s</div>
                     <div class="result-label">Total Time</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.memory_peak_gb || 0).toFixed(1)}GB</div>
+                    <div class="result-value">${(result.peak_memory_gb || 0).toFixed(1)}GB</div>
                     <div class="result-label">Peak Memory</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${((result.throughput || 0) / 1000000).toFixed(2)}M</div>
+                    <div class="result-value">${((result.throughput?.pixels_per_sec || 0) / 1000000).toFixed(2)}M</div>
                     <div class="result-label">Pixels/sec</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${metadata.num_inference_steps || 50}</div>
+                    <div class="result-value">${denoisePhase.repeat_count || params.num_inference_steps || 50}</div>
                     <div class="result-label">Inference Steps</div>
                 </div>
             </div>
@@ -553,24 +504,23 @@ function displayResults(result) {
                     <th>占比</th>
                 </tr>
                 <tr>
-                    <td>Text Encoder</td>
-                    <td>${((breakdown.text_encoder_time || 0) * 1000).toFixed(2)} ms</td>
-                    <td>${(breakdown.text_encoder_pct || 0).toFixed(3)}%</td>
+                    <td>Text Encoder (encode)</td>
+                    <td>${((encodePhase.total_time_sec || 0) * 1000).toFixed(2)} ms</td>
+                    <td>${encodePct.toFixed(3)}%</td>
                 </tr>
                 <tr>
-                    <td>DiT Denoising (${metadata.num_inference_steps || 50} steps)</td>
-                    <td>${(breakdown.dit_total_time || 0).toFixed(2)} s</td>
-                    <td>${(breakdown.dit_pct || 0).toFixed(1)}%</td>
+                    <td>DiT Denoising (${denoisePhase.repeat_count || params.num_inference_steps || 50} steps)</td>
+                    <td>${(denoisePhase.total_time_sec || 0).toFixed(2)} s</td>
+                    <td>${denoisePct.toFixed(1)}%</td>
                 </tr>
                 <tr>
-                    <td>VAE Decoder</td>
-                    <td>${(breakdown.vae_decoder_time || 0).toFixed(2)} s</td>
-                    <td>${(breakdown.vae_decoder_pct || 0).toFixed(2)}%</td>
+                    <td>VAE Decoder (decode)</td>
+                    <td>${((decodePhase.total_time_sec || 0) * 1000).toFixed(2)} ms</td>
+                    <td>${decodePct.toFixed(3)}%</td>
                 </tr>
             </table>
-            ${detailedHtml}
             <div style="margin-top: 1rem; padding: 1rem; background: var(--gray-100); border-radius: 8px;">
-                <strong>生成配置:</strong> ${metadata.num_frames || 81}帧 @ ${metadata.height || 720}x${metadata.width || 1280} | CFG: ${metadata.use_cfg ? '启用' : '禁用'}
+                <strong>生成配置:</strong> ${params.num_frames || 81}帧 @ ${params.height || 720}x${params.width || 1280} | CFG: ${params.use_cfg ? '启用' : '禁用'}
             </div>
         `;
         elements.results.scrollIntoView({ behavior: 'smooth' });
