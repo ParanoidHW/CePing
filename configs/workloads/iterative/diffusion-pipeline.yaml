@@ -1,0 +1,37 @@
+name: diffusion-pipeline
+description: 扩散模型完整Pipeline（encoder + backbone去噪 + decoder）
+workload_type: inference
+
+component_mapping:
+  encoder: encoder
+  backbone: backbone
+  decoder: decoder
+
+phases:
+  - name: encode
+    compute_type: forward
+    component: encoder
+    compute_pattern: attention_only
+    repeat: 1
+    
+  - name: denoise
+    compute_type: forward
+    component: backbone
+    compute_pattern: transformer_block
+    repeat: num_steps
+    
+  - name: decode
+    compute_type: forward
+    component: decoder
+    compute_pattern: conv_decoder
+    repeat: 1
+
+default_params:
+  batch_size: 1
+  num_frames: 81
+  height: 720
+  width: 1280
+  num_steps: 50
+  use_cfg: true
+
+throughput_metric: pixels_per_sec

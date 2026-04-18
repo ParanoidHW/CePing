@@ -1,0 +1,16 @@
+name: resnet
+description: ResNet分类（卷积编码）
+workload_type: inference
+
+phases:
+  - name: forward
+    compute_type: forward
+    component: main
+    compute_pattern: conv_encoder
+    repeat: 1
+
+default_params:
+  batch_size: 1
+  image_size: 224
+
+throughput_metric: images_per_sec

@@ -110,7 +110,7 @@ class LLMInferenceScenario(Scenario):
 
         analyzer = self.get_analyzer()
         unified_result = analyzer.analyze(
-            "llm-inference",
+            "autoregressive-inference",
             batch_size=batch_size,
             prompt_len=prompt_len,
             generation_len=generation_len,

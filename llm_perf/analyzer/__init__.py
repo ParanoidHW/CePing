@@ -1,14 +1,18 @@
 """Unified performance analyzer module.
 
 Provides unified workload analysis for:
-- LLM training/inference
-- Diffusion training/inference
-- MoE training/inference
+- Training flow (forward + backward + optimizer)
+- Autoregressive generation (prefill + decode)
+- Iterative denoising (multi-step forward)
+- Pipeline execution (multi-component)
 - Mixed workloads (speculative decoding, RL PPO, etc.)
+
+Workload describes computation characteristics, NOT model types.
 """
 
 from .base import (
     ComputeType,
+    ComputePattern,
     WorkloadType,
     ThroughputMetric,
     Phase,
@@ -17,17 +21,24 @@ from .base import (
     WorkloadConfig,
 )
 from .unified import UnifiedAnalyzer, analyze_workload
-from .presets import (
-    WORKLOAD_PRESETS,
+from .workload_loader import (
     get_workload,
+    load_workload_from_yaml,
     register_workload,
     list_workloads,
-    infer_workload,
+    load_all_builtin_workloads,
+    clear_cache,
+    is_builtin_workload,
+    BACKWARD_COMPAT_MAP,
 )
+from .compat import infer_workload, WORKLOAD_PRESETS
 from .breakdown import KernelBreakdown, LayerBreakdown
+
+load_all_builtin_workloads()
 
 __all__ = [
     "ComputeType",
+    "ComputePattern",
     "WorkloadType",
     "ThroughputMetric",
     "Phase",
@@ -36,11 +47,16 @@ __all__ = [
     "WorkloadConfig",
     "UnifiedAnalyzer",
     "analyze_workload",
-    "WORKLOAD_PRESETS",
     "get_workload",
+    "load_workload_from_yaml",
     "register_workload",
     "list_workloads",
+    "load_all_builtin_workloads",
+    "clear_cache",
+    "is_builtin_workload",
+    "BACKWARD_COMPAT_MAP",
     "infer_workload",
+    "WORKLOAD_PRESETS",
     "KernelBreakdown",
     "LayerBreakdown",
 ]

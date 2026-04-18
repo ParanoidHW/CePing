@@ -1,0 +1,14 @@
+name: inference
+description: 通用单次推理
+workload_type: inference
+
+phases:
+  - name: forward
+    compute_type: forward
+    component: main
+    repeat: 1
+
+default_params:
+  batch_size: 1
+
+throughput_metric: tokens_per_sec

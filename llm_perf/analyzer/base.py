@@ -32,16 +32,36 @@ class ThroughputMetric(str, Enum):
     VIDEOS_PER_SEC = "videos_per_sec"
 
 
+class ComputePattern(str, Enum):
+    """Compute patterns - describes computation characteristics, not model types.
+
+    Each pattern represents a specific computation structure:
+    - TRANSFORMER_BLOCK: Attention + FFN structure (used by LLM, DiT, etc.)
+    - CONV_ENCODER: Convolutional encoding (VAE Encoder, ResNet)
+    - CONV_DECODER: Convolutional decoding (VAE Decoder)
+    - DENSE_FORWARD: Dense/MLP forward pass
+    - ATTENTION_ONLY: Pure attention without FFN (Text Encoder)
+    """
+
+    TRANSFORMER_BLOCK = "transformer_block"
+    CONV_ENCODER = "conv_encoder"
+    CONV_DECODER = "conv_decoder"
+    DENSE_FORWARD = "dense_forward"
+    ATTENTION_ONLY = "attention_only"
+
+
 @dataclass
 class Phase:
     """A compute phase in a workload.
 
     Attributes:
-        name: Phase name (e.g., "prefill", "dit_denoise", "vae_decoder")
+        name: Phase name (e.g., "prefill", "denoise", "encode")
         compute_type: Type of compute operation
-        component: Model component name (e.g., "main", "dit", "vae", "draft", "target")
+        component: Generic component identifier (e.g., "main", "backbone", "encoder", "decoder")
+                   NOT model-specific names like "dit", "vae"
         repeat: Repeat count - can be int or dynamic parameter name like "generation_len"
         seq_len_factor: Sequence length factor - can be float or expression like "1/seq_len"
+        compute_pattern: Optional compute pattern for this phase
         extra_params: Additional phase-specific parameters
     """
 
@@ -50,10 +70,11 @@ class Phase:
     component: str = "main"
     repeat: Union[int, str] = 1
     seq_len_factor: Union[float, str] = 1.0
+    compute_pattern: Optional[ComputePattern] = None
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "name": self.name,
             "compute_type": self.compute_type.value,
             "component": self.component,
@@ -61,6 +82,9 @@ class Phase:
             "seq_len_factor": self.seq_len_factor,
             "extra_params": self.extra_params,
         }
+        if self.compute_pattern:
+            result["compute_pattern"] = self.compute_pattern.value
+        return result
 
 
 @dataclass
@@ -69,7 +93,7 @@ class PhaseResult:
 
     Attributes:
         name: Phase name
-        component: Model component name
+        component: Component name (resolved from component_mapping)
         compute_type: Type of compute operation
         single_time_sec: Time for single execution
         repeat_count: Actual repeat count (resolved from dynamic params)
@@ -164,8 +188,10 @@ class UnifiedResult:
 class WorkloadConfig:
     """Configuration for a workload.
 
+    The workload config describes computation characteristics, NOT model types.
+
     Attributes:
-        name: Workload name
+        name: Workload name (e.g., "training", "autoregressive-inference")
         description: Human-readable description
         workload_type: Type of workload
         phases: List of compute phases
@@ -174,6 +200,9 @@ class WorkloadConfig:
         gradient_accumulation_steps: Gradient accumulation steps
         throughput_metric: Primary throughput metric type
         throughput_formula: Custom throughput formula (optional)
+        component_mapping: Mapping from generic identifiers to user component names
+                          e.g., {"backbone": "dit", "encoder": "text_encoder"}
+        config_file: Path to source YAML file (optional)
     """
 
     name: str
@@ -185,9 +214,11 @@ class WorkloadConfig:
     gradient_accumulation_steps: int = 1
     throughput_metric: ThroughputMetric = ThroughputMetric.TOKENS_PER_SEC
     throughput_formula: Optional[str] = None
+    component_mapping: Dict[str, str] = field(default_factory=dict)
+    config_file: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "workload_type": self.workload_type.value,
@@ -197,7 +228,11 @@ class WorkloadConfig:
             "gradient_accumulation_steps": self.gradient_accumulation_steps,
             "throughput_metric": self.throughput_metric.value,
             "throughput_formula": self.throughput_formula,
+            "component_mapping": self.component_mapping,
         }
+        if self.config_file:
+            result["config_file"] = self.config_file
+        return result
 
     def get_required_params(self) -> List[str]:
         """Get list of required dynamic parameters."""
@@ -212,3 +247,14 @@ class WorkloadConfig:
                 else:
                     required.append(phase.seq_len_factor)
         return list(set(required))
+
+    def resolve_component(self, generic_name: str) -> str:
+        """Resolve generic component name to user component name.
+
+        Args:
+            generic_name: Generic identifier (e.g., "backbone", "encoder")
+
+        Returns:
+            User component name from mapping, or generic_name if not mapped
+        """
+        return self.component_mapping.get(generic_name, generic_name)

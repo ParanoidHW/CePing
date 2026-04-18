@@ -1,0 +1,20 @@
+name: denoise-inference
+description: 扩散多步去噪推理
+workload_type: inference
+
+phases:
+  - name: denoise
+    compute_type: forward
+    component: main
+    compute_pattern: transformer_block
+    repeat: num_steps
+
+default_params:
+  batch_size: 1
+  num_frames: 81
+  height: 720
+  width: 1280
+  num_steps: 50
+  use_cfg: true
+
+throughput_metric: pixels_per_sec

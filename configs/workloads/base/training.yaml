@@ -1,0 +1,26 @@
+name: training
+description: 通用训练流程（forward + backward + optimizer）
+workload_type: training
+
+phases:
+  - name: forward
+    compute_type: forward
+    component: main
+    repeat: 1
+    
+  - name: backward
+    compute_type: backward
+    component: main
+    repeat: 1
+    
+  - name: optimizer
+    compute_type: optimizer
+    component: main
+    repeat: 1
+
+default_params:
+  batch_size: 32
+  seq_len: 2048
+
+optimizer_factor: 1.5
+throughput_metric: tokens_per_sec

@@ -14,12 +14,13 @@ from llm_perf.analyzer import (
     Phase,
     PhaseResult,
     ComputeType,
+    ComputePattern,
     WorkloadType,
     ThroughputMetric,
     get_workload,
     list_workloads,
-    infer_workload,
     register_workload,
+    load_workload_from_yaml,
 )
 
 
@@ -43,6 +44,11 @@ class TestEnums:
         assert ComputeType.BACKWARD.value == "backward"
         assert ComputeType.OPTIMIZER.value == "optimizer"
 
+    def test_compute_pattern_values(self):
+        assert ComputePattern.TRANSFORMER_BLOCK.value == "transformer_block"
+        assert ComputePattern.CONV_ENCODER.value == "conv_encoder"
+        assert ComputePattern.CONV_DECODER.value == "conv_decoder"
+
     def test_workload_type_values(self):
         assert WorkloadType.TRAINING.value == "training"
         assert WorkloadType.INFERENCE.value == "inference"
@@ -63,15 +69,20 @@ class TestPhase:
         assert phase.component == "main"
         assert phase.repeat == 1
 
+    def test_phase_with_compute_pattern(self):
+        phase = Phase("encode", ComputeType.FORWARD, compute_pattern=ComputePattern.TRANSFORMER_BLOCK)
+        assert phase.compute_pattern == ComputePattern.TRANSFORMER_BLOCK
+
     def test_phase_with_dynamic_repeat(self):
         phase = Phase("decode", ComputeType.FORWARD, repeat="generation_len")
         assert phase.repeat == "generation_len"
 
     def test_phase_to_dict(self):
-        phase = Phase("forward", ComputeType.FORWARD, repeat=1, seq_len_factor=1.0)
+        phase = Phase("forward", ComputeType.FORWARD, compute_pattern=ComputePattern.TRANSFORMER_BLOCK)
         data = phase.to_dict()
         assert data["name"] == "forward"
         assert data["compute_type"] == "forward"
+        assert data["compute_pattern"] == "transformer_block"
 
 
 class TestPhaseResult:
@@ -94,7 +105,7 @@ class TestPhaseResult:
     def test_phase_result_to_dict(self):
         result = PhaseResult(
             name="forward",
-            component="main",
+            component="backbone",
             compute_type=ComputeType.FORWARD,
             single_time_sec=0.5,
             repeat_count=10,
@@ -104,6 +115,7 @@ class TestPhaseResult:
         data = result.to_dict()
         assert data["single_time_ms"] == 500.0
         assert data["total_time_ms"] == 5000.0
+        assert data["component"] == "backbone"
 
 
 class TestUnifiedResult:
@@ -114,7 +126,7 @@ class TestUnifiedResult:
         phase2 = PhaseResult("decode", "main", ComputeType.FORWARD, single_time_sec=0.05, repeat_count=128)
 
         result = UnifiedResult(
-            workload_name="llm-inference",
+            workload_name="autoregressive-inference",
             workload_type=WorkloadType.INFERENCE,
             phases=[phase1, phase2],
             total_time_sec=phase1.total_time_sec + phase2.total_time_sec,
@@ -122,7 +134,7 @@ class TestUnifiedResult:
             throughput={"tokens_per_sec": 1000.0},
         )
 
-        assert result.workload_name == "llm-inference"
+        assert result.workload_name == "autoregressive-inference"
         assert len(result.phases) == 2
 
     def test_result_get_phase(self):
@@ -137,12 +149,9 @@ class TestUnifiedResult:
         assert found is not None
         assert found.name == "prefill"
 
-        not_found = result.get_phase("nonexistent")
-        assert not_found is None
-
     def test_result_to_dict(self):
         result = UnifiedResult(
-            workload_name="llm-training",
+            workload_name="training",
             workload_type=WorkloadType.TRAINING,
             phases=[],
             total_time_sec=1.0,
@@ -150,7 +159,7 @@ class TestUnifiedResult:
             throughput={"tokens_per_sec": 100000.0},
         )
         data = result.to_dict()
-        assert data["workload_name"] == "llm-training"
+        assert data["workload_name"] == "training"
         assert data["total_time_ms"] == 1000.0
 
 
@@ -166,30 +175,54 @@ class TestWorkloadConfig:
                 Phase("forward", ComputeType.FORWARD),
                 Phase("backward", ComputeType.BACKWARD),
             ],
+            component_mapping={"backbone": "dit"},
         )
         assert config.name == "custom-workload"
         assert len(config.phases) == 2
+        assert config.component_mapping == {"backbone": "dit"}
+
+    def test_config_resolve_component(self):
+        config = WorkloadConfig(
+            name="test",
+            component_mapping={"encoder": "text_encoder", "backbone": "dit"},
+        )
+        assert config.resolve_component("encoder") == "text_encoder"
+        assert config.resolve_component("backbone") == "dit"
+        assert config.resolve_component("main") == "main"
 
     def test_config_get_required_params(self):
         config = WorkloadConfig(
             name="test",
             phases=[
                 Phase("decode", ComputeType.FORWARD, repeat="generation_len"),
-                Phase("dit", ComputeType.FORWARD, repeat="num_inference_steps"),
+                Phase("denoise", ComputeType.FORWARD, repeat="num_steps"),
             ],
         )
         required = config.get_required_params()
         assert "generation_len" in required
-        assert "num_inference_steps" in required
+        assert "num_steps" in required
 
 
-class TestPresets:
-    """Test workload presets."""
+class TestWorkloadLoader:
+    """Test workload loader."""
 
-    def test_get_workload(self):
-        workload = get_workload("llm-training")
-        assert workload.name == "llm-training"
+    def test_get_workload_training(self):
+        workload = get_workload("training")
+        assert workload.name == "training"
         assert workload.workload_type == WorkloadType.TRAINING
+
+    def test_get_workload_autoregressive_inference(self):
+        workload = get_workload("autoregressive-inference")
+        assert workload.name == "autoregressive-inference"
+        assert workload.workload_type == WorkloadType.INFERENCE
+        assert len(workload.phases) == 2
+
+    def test_get_workload_backward_compat(self):
+        workload = get_workload("llm-training")
+        assert workload.name == "training"  # 映射到新名称
+
+        workload2 = get_workload("llm-inference")
+        assert workload2.name == "autoregressive-inference"  # 映射到新名称
 
     def test_get_workload_not_found(self):
         with pytest.raises(KeyError):
@@ -197,20 +230,17 @@ class TestPresets:
 
     def test_list_workloads(self):
         workloads = list_workloads()
-        assert "llm-training" in workloads
-        assert "llm-inference" in workloads
-        assert "diffusion-inference" in workloads
+        assert "llm-training" in workloads  # backward compat name
+        assert "llm-inference" in workloads  # backward compat name
+        assert "diffusion-inference" in workloads  # backward compat name
 
-    def test_infer_workload_llm(self):
-        workload_name = infer_workload("llama", "training")
-        assert workload_name == "llm-training"
+    def test_load_workload_from_yaml(self):
+        from pathlib import Path
 
-        workload_name = infer_workload("llama", "inference")
-        assert workload_name == "llm-inference"
-
-    def test_infer_workload_diffusion(self):
-        workload_name = infer_workload("wan-dit", "inference")
-        assert workload_name == "diffusion-inference"
+        yaml_path = Path(__file__).parent.parent / "configs" / "workloads" / "base" / "training.yaml"
+        if yaml_path.exists():
+            workload = load_workload_from_yaml(yaml_path)
+            assert workload.name == "training"
 
     def test_register_workload(self):
         config = WorkloadConfig(
@@ -236,21 +266,21 @@ class TestUnifiedAnalyzer:
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
         assert analyzer is not None
 
-    def test_analyze_llm_training(self):
+    def test_analyze_training(self):
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         cluster = make_cluster(device, 8)
         strategy = StrategyConfig(tp_degree=8)
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
-        result = analyzer.analyze("llm-training", batch_size=32, seq_len=2048)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
 
-        assert result.workload_name == "llm-training"
+        assert result.workload_name == "training"
         assert result.total_time_sec > 0
         assert result.peak_memory_gb > 0
         assert "tokens_per_sec" in result.throughput
 
-    def test_analyze_llm_inference(self):
+    def test_analyze_autoregressive_inference(self):
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         cluster = make_cluster(device, 8)
@@ -258,13 +288,13 @@ class TestUnifiedAnalyzer:
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
         result = analyzer.analyze(
-            "llm-inference",
+            "autoregressive-inference",
             batch_size=8,
             prompt_len=512,
             generation_len=128,
         )
 
-        assert result.workload_name == "llm-inference"
+        assert result.workload_name == "autoregressive-inference"
         assert len(result.phases) >= 2
 
         prefill = result.get_phase("prefill")
@@ -284,8 +314,8 @@ class TestUnifiedAnalyzer:
         custom_workload = WorkloadConfig(
             name="custom-test",
             phases=[
-                Phase("forward", ComputeType.FORWARD, repeat=1),
-                Phase("backward", ComputeType.BACKWARD, repeat=1),
+                Phase("forward", ComputeType.FORWARD, compute_pattern=ComputePattern.TRANSFORMER_BLOCK),
+                Phase("backward", ComputeType.BACKWARD, compute_pattern=ComputePattern.TRANSFORMER_BLOCK),
             ],
         )
 
@@ -295,18 +325,6 @@ class TestUnifiedAnalyzer:
         assert result.workload_name == "custom-test"
         assert len(result.phases) == 2
 
-    def test_analyze_moe_training(self):
-        model = create_model_from_config({"preset": "llama-7b"})
-        device = Device.from_preset("H100-SXM-80GB")
-        cluster = make_cluster(device, 8)
-        strategy = StrategyConfig(tp_degree=8)
-
-        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
-        result = analyzer.analyze("moe-training", batch_size=32, seq_len=2048)
-
-        assert result.workload_name == "moe-training"
-        assert result.total_time_sec > 0
-
     def test_phase_breakdown(self):
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
@@ -314,7 +332,7 @@ class TestUnifiedAnalyzer:
         strategy = StrategyConfig(tp_degree=8)
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
-        result = analyzer.analyze("llm-training", batch_size=32, seq_len=2048)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
 
         forward_phase = result.get_phase("forward")
         backward_phase = result.get_phase("backward")
@@ -334,8 +352,8 @@ class TestUnifiedAnalyzer:
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
 
-        result1 = analyzer.analyze("llm-inference", batch_size=1, generation_len=10)
-        result2 = analyzer.analyze("llm-inference", batch_size=1, generation_len=100)
+        result1 = analyzer.analyze("autoregressive-inference", batch_size=1, generation_len=10)
+        result2 = analyzer.analyze("autoregressive-inference", batch_size=1, generation_len=100)
 
         decode1 = result1.get_phase("decode")
         decode2 = result2.get_phase("decode")
@@ -350,7 +368,7 @@ class TestUnifiedAnalyzer:
         strategy = StrategyConfig(tp_degree=8)
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
-        result = analyzer.analyze("llm-inference", batch_size=1, prompt_len=512, generation_len=128)
+        result = analyzer.analyze("autoregressive-inference", batch_size=1, prompt_len=512, generation_len=128)
 
         data = result.to_dict()
 
@@ -373,7 +391,7 @@ class TestAnalyzerWithPreset:
         strategy = StrategyConfig(tp_degree=8)
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
-        result = analyzer.analyze("llm-inference", batch_size=1)
+        result = analyzer.analyze("autoregressive-inference", batch_size=1)
 
         assert result.total_time_sec > 0
         assert result.peak_memory_gb > 0

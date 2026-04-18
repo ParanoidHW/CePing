@@ -1,4 +1,7 @@
-"""Unified Analyzer implementation."""
+"""Unified Analyzer implementation.
+
+Analyzes performance based on compute patterns, NOT model types.
+"""
 
 from typing import Any, Dict, List, Union, Optional
 
@@ -17,20 +20,23 @@ from .base import (
     WorkloadConfig,
     WorkloadType,
     ComputeType,
+    ComputePattern,
     ThroughputMetric,
 )
-from .presets import get_workload, infer_workload
+from .workload_loader import get_workload
 
 
 class UnifiedAnalyzer:
-    """Unified performance analyzer for all workload types.
+    """Unified performance analyzer based on compute patterns.
 
-    Supports:
-    - LLM training/inference
-    - Diffusion training/inference
-    - MoE training/inference
-    - Mixed workloads (speculative decoding, RL PPO, etc.)
-    - Custom workload configurations
+    Analyzes performance based on:
+    - ComputePattern (transformer_block, conv_encoder, etc.)
+    - NOT model type (llm, dit, vae, etc.)
+
+    The workload configuration specifies:
+    - Phases: sequence of compute operations
+    - ComputePattern: how to estimate compute time/memory
+    - Component mapping: generic names -> user component names
     """
 
     def __init__(
@@ -56,7 +62,7 @@ class UnifiedAnalyzer:
         """Analyze performance for a workload.
 
         Args:
-            workload: Workload preset name or custom WorkloadConfig
+            workload: Workload name, YAML path, or WorkloadConfig
             **kwargs: Dynamic parameters (batch_size, seq_len, generation_len, etc.)
 
         Returns:
@@ -67,7 +73,7 @@ class UnifiedAnalyzer:
 
         resolved_params = {**workload.default_params, **kwargs}
 
-        phase_results = self._analyze_phases(workload.phases, resolved_params)
+        phase_results = self._analyze_phases(workload, resolved_params)
 
         total_time = sum(p.total_time_sec for p in phase_results)
         peak_memory = max(p.memory_gb for p in phase_results) if phase_results else 0.0
@@ -91,26 +97,31 @@ class UnifiedAnalyzer:
 
     def _analyze_phases(
         self,
-        phases: List[Phase],
+        workload: WorkloadConfig,
         params: Dict[str, Any],
     ) -> List[PhaseResult]:
         """Analyze all phases in a workload."""
         results = []
 
-        for phase in phases:
-            component = self._get_component(phase.component)
+        for phase in workload.phases:
+            user_component_name = workload.resolve_component(phase.component)
+            component = self._get_component(user_component_name)
 
             repeat_count = self._resolve_param(phase.repeat, params)
             seq_len_factor = self._resolve_param(phase.seq_len_factor, params)
 
-            single_time, memory, flops = self._estimate_phase(component, phase, params, seq_len_factor)
+            compute_pattern = phase.compute_pattern
+            if compute_pattern is None:
+                compute_pattern = self._infer_compute_pattern(component)
+
+            single_time, memory, flops = self._estimate_phase(component, phase, compute_pattern, params, seq_len_factor)
 
             total_time = single_time * repeat_count
 
             results.append(
                 PhaseResult(
                     name=phase.name,
-                    component=phase.component,
+                    component=user_component_name,
                     compute_type=phase.compute_type,
                     single_time_sec=single_time,
                     repeat_count=repeat_count,
@@ -132,13 +143,7 @@ class UnifiedAnalyzer:
             return self.model
 
     def _resolve_param(self, value: Union[int, str, float], params: Dict[str, Any]) -> Any:
-        """Resolve dynamic parameter.
-
-        Supports:
-        - int/float: direct value
-        - str: parameter name from params dict
-        - str expression like "1/seq_len": evaluate expression
-        """
+        """Resolve dynamic parameter."""
         if isinstance(value, (int, float)):
             return value
 
@@ -154,14 +159,22 @@ class UnifiedAnalyzer:
 
         return value
 
+    def _infer_compute_pattern(self, component: ShardedModule) -> ComputePattern:
+        """Infer compute pattern from component attributes.
+
+        Default to transformer_block for most neural network components.
+        """
+        return ComputePattern.TRANSFORMER_BLOCK
+
     def _estimate_phase(
         self,
         component: ShardedModule,
         phase: Phase,
+        compute_pattern: ComputePattern,
         params: Dict[str, Any],
         seq_len_factor: float,
     ) -> tuple:
-        """Estimate single phase execution.
+        """Estimate single phase execution based on compute pattern.
 
         Returns:
             (time_sec, memory_gb, flops)
@@ -169,95 +182,64 @@ class UnifiedAnalyzer:
         dtype = getattr(component, "dtype", "fp16")
         dtype_bytes = DTYPE_SIZES.get(dtype, 2)
 
-        hidden_size = getattr(component, "hidden_size", 4096)
-        num_layers = getattr(component, "num_layers", 32)
-
         batch_size = params.get("batch_size", 1)
 
-        model_type = self._get_model_type(component)
-
-        if model_type == "llm":
-            seq_len = params.get("seq_len", params.get("prompt_len", 2048))
-            effective_seq_len = int(seq_len * seq_len_factor)
-            time, flops = self._estimate_llm_compute(
-                component, batch_size, effective_seq_len, hidden_size, num_layers, dtype, phase.compute_type
-            )
-            memory = self._estimate_llm_memory(
-                batch_size, effective_seq_len, hidden_size, num_layers, dtype_bytes, phase.compute_type
+        if compute_pattern == ComputePattern.TRANSFORMER_BLOCK:
+            return self._estimate_transformer_block(
+                component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
 
-        elif model_type == "dit":
-            num_frames = params.get("num_frames", 81)
-            height = params.get("height", 720)
-            width = params.get("width", 1280)
+        elif compute_pattern == ComputePattern.CONV_ENCODER:
+            return self._estimate_conv_encoder(component, batch_size, params, dtype, dtype_bytes, phase.compute_type)
 
-            time, flops = self._estimate_dit_compute(
-                component, batch_size, num_frames, height, width, dtype, phase.compute_type, params
+        elif compute_pattern == ComputePattern.CONV_DECODER:
+            return self._estimate_conv_decoder(component, batch_size, params, dtype, dtype_bytes, phase.compute_type)
+
+        elif compute_pattern == ComputePattern.ATTENTION_ONLY:
+            return self._estimate_attention_only(
+                component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
-            memory = self._estimate_dit_memory(
-                batch_size, num_frames, height, width, dtype_bytes, phase.compute_type, params
-            )
 
-        elif model_type == "vae":
-            num_frames = params.get("num_frames", 81)
-            height = params.get("height", 720)
-            width = params.get("width", 1280)
-
-            time, flops = self._estimate_vae_compute(
-                component, batch_size, num_frames, height, width, dtype, phase.compute_type
-            )
-            memory = self._estimate_vae_memory(batch_size, num_frames, height, width, dtype_bytes)
-
-        elif model_type == "text_encoder":
-            seq_len = params.get("prompt_len", 512)
-            time, flops = self._estimate_text_encoder_compute(component, batch_size, seq_len, dtype, phase.compute_type)
-            memory = self._estimate_text_encoder_memory(batch_size, seq_len, dtype_bytes)
-
-        elif model_type == "resnet":
-            image_size = params.get("image_size", 224)
-            time, flops = self._estimate_resnet_compute(component, batch_size, image_size, dtype, phase.compute_type)
-            memory = self._estimate_resnet_memory(batch_size, image_size, dtype_bytes, phase.compute_type)
+        elif compute_pattern == ComputePattern.DENSE_FORWARD:
+            return self._estimate_dense_forward(component, batch_size, params, dtype, dtype_bytes, phase.compute_type)
 
         else:
-            seq_len = params.get("seq_len", params.get("prompt_len", 2048))
-            time, flops = self._estimate_llm_compute(
-                component, batch_size, seq_len, hidden_size, num_layers, dtype, phase.compute_type
-            )
-            memory = self._estimate_llm_memory(
-                batch_size, seq_len, hidden_size, num_layers, dtype_bytes, phase.compute_type
+            return self._estimate_transformer_block(
+                component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
 
-        return time, memory, flops
-
-    def _get_model_type(self, component: ShardedModule) -> str:
-        """Get model type from component."""
-        name = getattr(component, "_name", "")
-        class_name = type(component).__name__.lower()
-
-        if "dit" in class_name or "dit" in name:
-            return "dit"
-        elif "vae" in class_name or "vae" in name:
-            return "vae"
-        elif "textencoder" in class_name or "text_encoder" in name or "t5" in name:
-            return "text_encoder"
-        elif "resnet" in class_name or "resnet" in name:
-            return "resnet"
-        elif "llama" in class_name or "deepseek" in class_name or "moe" in class_name:
-            return "llm"
-        else:
-            return "llm"
-
-    def _estimate_llm_compute(
+    def _estimate_transformer_block(
         self,
         component: ShardedModule,
         batch_size: int,
-        seq_len: int,
-        hidden_size: int,
-        num_layers: int,
+        params: Dict[str, Any],
+        seq_len_factor: float,
         dtype: str,
+        dtype_bytes: float,
         compute_type: ComputeType,
     ) -> tuple:
-        """Estimate LLM compute time and FLOPs."""
+        """Estimate transformer block compute (attention + FFN)."""
+        hidden_size = getattr(component, "hidden_size", 4096)
+        num_layers = getattr(component, "num_layers", 32)
+
+        seq_len = params.get("seq_len", params.get("prompt_len", 2048))
+
+        num_frames = params.get("num_frames")
+        height = params.get("height")
+        width = params.get("width")
+
+        if num_frames and height and width:
+            latent_t = (num_frames - 1) // 4 + 1
+            latent_h = height // 8
+            latent_w = width // 8
+            seq_len = latent_t * latent_h * latent_w
+
+        use_cfg = params.get("use_cfg", False)
+        if use_cfg:
+            batch_size = batch_size * 2
+
+        effective_seq_len = int(seq_len * seq_len_factor)
+
         parallel_degrees = self._get_parallel_degrees()
         tp = parallel_degrees["tp"]
         dp = parallel_degrees["dp"]
@@ -265,34 +247,50 @@ class UnifiedAnalyzer:
         effective_batch = batch_size // dp
         effective_hidden = hidden_size // tp
 
-        forward_time = self._estimate_layer_time(effective_batch, seq_len, effective_hidden, dtype) * num_layers
+        forward_time = (
+            self._estimate_transformer_layer_time(effective_batch, effective_seq_len, effective_hidden, dtype)
+            * num_layers
+        )
 
-        forward_flops = self._estimate_llm_flops(batch_size, seq_len, hidden_size, num_layers)
+        forward_flops = self._estimate_transformer_flops(batch_size, effective_seq_len, hidden_size, num_layers)
 
         if compute_type == ComputeType.FORWARD:
-            comm_time = self._estimate_comm_time(batch_size, seq_len, hidden_size, tp, num_layers)
-            return forward_time + comm_time, forward_flops
+            comm_time = self._estimate_comm_time(batch_size, effective_seq_len, hidden_size, tp, num_layers)
+            return (
+                forward_time + comm_time,
+                self._estimate_forward_memory(
+                    batch_size, effective_seq_len, hidden_size, num_layers, dtype_bytes, tp, dp, component
+                ),
+                forward_flops,
+            )
 
         elif compute_type == ComputeType.BACKWARD:
             backward_time = forward_time * 2.0
             backward_flops = forward_flops * 2.0
-            comm_time = self._estimate_comm_time(batch_size, seq_len, hidden_size, tp, num_layers)
-            return backward_time + comm_time, backward_flops
+            comm_time = self._estimate_comm_time(batch_size, effective_seq_len, hidden_size, tp, num_layers)
+            return (
+                backward_time + comm_time,
+                self._estimate_backward_memory(
+                    batch_size, effective_seq_len, hidden_size, num_layers, dtype_bytes, tp, dp, component
+                ),
+                backward_flops,
+            )
 
         elif compute_type == ComputeType.OPTIMIZER:
-            optimizer_time = forward_time * 1.5
-            return optimizer_time, 0.0
+            optimizer_factor = params.get("optimizer_factor", 1.5)
+            optimizer_time = forward_time * optimizer_factor
+            return optimizer_time, self._estimate_optimizer_memory(dtype_bytes, tp, dp, component), 0.0
 
-        return forward_time, forward_flops
+        return forward_time, 0.0, forward_flops
 
-    def _estimate_layer_time(
+    def _estimate_transformer_layer_time(
         self,
         batch_size: int,
         seq_len: int,
         hidden_size: int,
         dtype: str,
     ) -> float:
-        """Estimate single layer time."""
+        """Estimate single transformer layer time."""
         m = batch_size * seq_len
         k = hidden_size
 
@@ -304,14 +302,14 @@ class UnifiedAnalyzer:
 
         return time
 
-    def _estimate_llm_flops(
+    def _estimate_transformer_flops(
         self,
         batch_size: int,
         seq_len: int,
         hidden_size: int,
         num_layers: int,
     ) -> float:
-        """Estimate LLM FLOPs."""
+        """Estimate transformer FLOPs."""
         m = batch_size * seq_len
 
         ffn_flops = m * hidden_size * hidden_size * 4 * 2
@@ -337,241 +335,207 @@ class UnifiedAnalyzer:
         kernel = self.comm_registry.create_allreduce("tp_allreduce", data_size, list(range(tp)))
         return kernel.estimate_time() * num_layers
 
-    def _estimate_llm_memory(
+    def _estimate_forward_memory(
         self,
         batch_size: int,
         seq_len: int,
         hidden_size: int,
         num_layers: int,
         dtype_bytes: float,
-        compute_type: ComputeType,
+        tp: int,
+        dp: int,
+        component: ShardedModule,
     ) -> float:
-        """Estimate LLM memory."""
-        parallel_degrees = self._get_parallel_degrees()
-        tp = parallel_degrees["tp"]
-        dp = parallel_degrees["dp"]
-
-        component = self.model if isinstance(self.model, ShardedModule) else self.model.get("main")
-        params_per_gpu = (
-            self._count_params(component) // tp // dp if component else hidden_size * num_layers * 12 // tp // dp
-        )
+        """Estimate forward pass memory."""
+        params_per_gpu = self._count_params(component) // tp // dp
         params_memory = params_per_gpu * dtype_bytes
 
-        if compute_type == ComputeType.FORWARD:
-            activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 2 // tp
-            return (params_memory + activations) / 1e9
+        activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 2 // tp
 
-        elif compute_type == ComputeType.BACKWARD:
-            activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 4 // tp
-            gradients = params_per_gpu * dtype_bytes
-            return (params_memory + activations + gradients) / 1e9
+        return (params_memory + activations) / 1e9
 
-        elif compute_type == ComputeType.OPTIMIZER:
-            optimizer_states = params_per_gpu * dtype_bytes * 2
-            return (params_memory + optimizer_states) / 1e9
+    def _estimate_backward_memory(
+        self,
+        batch_size: int,
+        seq_len: int,
+        hidden_size: int,
+        num_layers: int,
+        dtype_bytes: float,
+        tp: int,
+        dp: int,
+        component: ShardedModule,
+    ) -> float:
+        """Estimate backward pass memory."""
+        params_per_gpu = self._count_params(component) // tp // dp
+        params_memory = params_per_gpu * dtype_bytes
 
-        return params_memory / 1e9
+        activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 4 // tp
+        gradients = params_per_gpu * dtype_bytes
 
-    def _estimate_dit_compute(
+        return (params_memory + activations + gradients) / 1e9
+
+    def _estimate_optimizer_memory(
+        self,
+        dtype_bytes: float,
+        tp: int,
+        dp: int,
+        component: ShardedModule,
+    ) -> float:
+        """Estimate optimizer memory."""
+        params_per_gpu = self._count_params(component) // tp // dp
+        params_memory = params_per_gpu * dtype_bytes
+
+        optimizer_states = params_per_gpu * dtype_bytes * 2
+
+        return (params_memory + optimizer_states) / 1e9
+
+    def _estimate_conv_encoder(
         self,
         component: ShardedModule,
         batch_size: int,
-        num_frames: int,
-        height: int,
-        width: int,
-        dtype: str,
-        compute_type: ComputeType,
         params: Dict[str, Any],
-    ) -> tuple:
-        """Estimate DiT compute time and FLOPs."""
-        use_cfg = params.get("use_cfg", True)
-        effective_batch = batch_size * 2 if use_cfg else batch_size
-
-        hidden_size = getattr(component, "hidden_size", 4096)
-        num_layers = getattr(component, "num_layers", 32)
-
-        latent_t = (num_frames - 1) // 4 + 1
-        latent_h = height // 8
-        latent_w = width // 8
-
-        seq_len = latent_t * latent_h * latent_w
-
-        forward_time = self._estimate_layer_time(effective_batch, seq_len, hidden_size, dtype) * num_layers
-
-        forward_flops = self._estimate_llm_flops(effective_batch, seq_len, hidden_size, num_layers)
-
-        if compute_type == ComputeType.FORWARD:
-            return forward_time, forward_flops
-
-        elif compute_type == ComputeType.BACKWARD:
-            backward_time = forward_time * 2.0
-            backward_flops = forward_flops * 2.0
-            return backward_time, backward_flops
-
-        elif compute_type == ComputeType.OPTIMIZER:
-            optimizer_time = forward_time * 1.2
-            return optimizer_time, 0.0
-
-        return forward_time, forward_flops
-
-    def _estimate_dit_memory(
-        self,
-        batch_size: int,
-        num_frames: int,
-        height: int,
-        width: int,
+        dtype: str,
         dtype_bytes: float,
         compute_type: ComputeType,
-        params: Dict[str, Any],
-    ) -> float:
-        """Estimate DiT memory."""
-        use_cfg = params.get("use_cfg", True)
-        effective_batch = batch_size * 2 if use_cfg else batch_size
+    ) -> tuple:
+        """Estimate convolutional encoder compute."""
+        image_size = params.get("image_size", 224)
+        num_frames = params.get("num_frames", 1)
+        height = params.get("height", image_size)
+        width = params.get("width", image_size)
 
-        hidden_size = getattr(
-            self._get_component("dit") if isinstance(self.model, dict) else self.model, "hidden_size", 4096
-        )
-        num_layers = getattr(
-            self._get_component("dit") if isinstance(self.model, dict) else self.model, "num_layers", 32
-        )
+        pixels = num_frames * height * width
 
-        latent_t = (num_frames - 1) // 4 + 1
-        latent_h = height // 8
-        latent_w = width // 8
+        flops_per_pixel = 16
+        total_flops = pixels * flops_per_pixel * batch_size
 
-        seq_len = latent_t * latent_h * latent_w
+        tflops = self.device.get_compute_tflops(dtype)
+        time = total_flops / (tflops * 1e12) if tflops > 0 else 0.0
 
-        parallel_degrees = self._get_parallel_degrees()
-        tp = parallel_degrees["tp"]
+        if compute_type == ComputeType.BACKWARD:
+            time *= 2.0
+            total_flops *= 2.0
 
-        dit_component = self.model if isinstance(self.model, ShardedModule) else self.model.get("dit")
-        params_per_gpu = (
-            self._count_params(dit_component) // tp if dit_component else hidden_size * num_layers * 12 // tp
-        )
-        params_memory = params_per_gpu * dtype_bytes
+        params_memory = self._count_params(component) * dtype_bytes
+        activations = pixels * batch_size * dtype_bytes * 4
 
-        if compute_type == ComputeType.FORWARD:
-            activations = effective_batch * seq_len * hidden_size * dtype_bytes * num_layers * 2 // tp
-            return (params_memory + activations) / 1e9
+        memory = (params_memory + activations) / 1e9
+        if compute_type == ComputeType.BACKWARD:
+            memory *= 2.0
 
-        elif compute_type == ComputeType.BACKWARD:
-            activations = effective_batch * seq_len * hidden_size * dtype_bytes * num_layers * 4 // tp
-            gradients = params_per_gpu * dtype_bytes
-            return (params_memory + activations + gradients) / 1e9
+        return time, memory, total_flops
 
-        elif compute_type == ComputeType.OPTIMIZER:
-            optimizer_states = params_per_gpu * dtype_bytes * 2
-            return (params_memory + optimizer_states) / 1e9
-
-        return params_memory / 1e9
-
-    def _estimate_vae_compute(
+    def _estimate_conv_decoder(
         self,
         component: ShardedModule,
         batch_size: int,
-        num_frames: int,
-        height: int,
-        width: int,
+        params: Dict[str, Any],
         dtype: str,
+        dtype_bytes: float,
         compute_type: ComputeType,
     ) -> tuple:
-        """Estimate VAE compute time and FLOPs."""
+        """Estimate convolutional decoder compute."""
+        num_frames = params.get("num_frames", 81)
+        height = params.get("height", 720)
+        width = params.get("width", 1280)
+
         pixels = num_frames * height * width
 
         latent_channels = getattr(component, "latent_channels", 16)
         in_channels = getattr(component, "in_channels", 3)
 
-        encoder_flops = pixels * latent_channels * 16
-        decoder_flops = pixels * in_channels * 16
-
-        total_flops = encoder_flops + decoder_flops
+        decoder_flops = pixels * in_channels * 16 * batch_size
 
         tflops = self.device.get_compute_tflops(dtype)
-        time = total_flops / (tflops * 1e12) if tflops > 0 else 0.0
+        time = decoder_flops / (tflops * 1e12) if tflops > 0 else 0.0
 
         if compute_type == ComputeType.BACKWARD:
             time *= 2.0
-            total_flops *= 2.0
+            decoder_flops *= 2.0
 
-        return time, total_flops
-
-    def _estimate_vae_memory(
-        self,
-        batch_size: int,
-        num_frames: int,
-        height: int,
-        width: int,
-        dtype_bytes: float,
-    ) -> float:
-        """Estimate VAE memory."""
         latent_t = (num_frames - 1) // 4 + 1
         latent_h = height // 8
         latent_w = width // 8
 
-        latent_channels = 16
-        in_channels = 3
-
-        input_memory = num_frames * height * width * in_channels * dtype_bytes
         latent_memory = latent_t * latent_h * latent_w * latent_channels * dtype_bytes
+        output_memory = pixels * in_channels * dtype_bytes
+        params_memory = self._count_params(component) * dtype_bytes
 
-        vae_component = self.model if isinstance(self.model, ShardedModule) else self.model.get("vae")
-        params_memory = self._count_params(vae_component) * dtype_bytes if vae_component else 100e6 * dtype_bytes
+        memory = (params_memory + max(latent_memory, output_memory)) / 1e9
 
-        return (params_memory + max(input_memory, latent_memory)) / 1e9
+        return time, memory, decoder_flops
 
-    def _estimate_text_encoder_compute(
+    def _estimate_attention_only(
         self,
         component: ShardedModule,
         batch_size: int,
-        seq_len: int,
+        params: Dict[str, Any],
+        seq_len_factor: float,
         dtype: str,
+        dtype_bytes: float,
         compute_type: ComputeType,
     ) -> tuple:
-        """Estimate text encoder compute time and FLOPs."""
+        """Estimate pure attention compute (no FFN)."""
         hidden_size = getattr(component, "hidden_size", 4096)
         num_layers = getattr(component, "num_layers", 32)
 
-        forward_time = self._estimate_layer_time(batch_size, seq_len, hidden_size, dtype) * num_layers
-        forward_flops = self._estimate_llm_flops(batch_size, seq_len, hidden_size, num_layers)
+        seq_len = params.get("prompt_len", params.get("seq_len", 512))
+        effective_seq_len = int(seq_len * seq_len_factor)
+
+        parallel_degrees = self._get_parallel_degrees()
+        tp = parallel_degrees["tp"]
+        dp = parallel_degrees["dp"]
+
+        effective_batch = batch_size // dp
+        effective_hidden = hidden_size // tp
+
+        m = effective_batch * effective_seq_len
+        k = effective_hidden
+
+        attn_kernel = self.compute_registry.get_or_create_matmul(m, k * 3, k, dtype)
+        forward_time = attn_kernel.estimate_time((m, k), (m, k * 3), dtype) * 2 * num_layers
+
+        attn_flops = m * hidden_size * hidden_size * 3 * 2 * num_layers
 
         if compute_type == ComputeType.FORWARD:
-            return forward_time, forward_flops
+            return (
+                forward_time,
+                self._estimate_forward_memory(
+                    batch_size, effective_seq_len, hidden_size, num_layers, dtype_bytes, tp, dp, component
+                ),
+                attn_flops,
+            )
 
         elif compute_type == ComputeType.BACKWARD:
-            return forward_time * 2.0, forward_flops * 2.0
+            backward_time = forward_time * 2.0
+            backward_flops = attn_flops * 2.0
+            return (
+                backward_time,
+                self._estimate_backward_memory(
+                    batch_size, effective_seq_len, hidden_size, num_layers, dtype_bytes, tp, dp, component
+                ),
+                backward_flops,
+            )
 
-        return forward_time, forward_flops
+        return forward_time, 0.0, attn_flops
 
-    def _estimate_text_encoder_memory(
-        self,
-        batch_size: int,
-        seq_len: int,
-        dtype_bytes: float,
-    ) -> float:
-        """Estimate text encoder memory."""
-        component = self.model if isinstance(self.model, ShardedModule) else self.model.get("text_encoder")
-        hidden_size = getattr(component, "hidden_size", 4096) if component else 4096
-        num_layers = getattr(component, "num_layers", 32) if component else 32
-
-        params_memory = (
-            self._count_params(component) * dtype_bytes if component else hidden_size * num_layers * 12 * dtype_bytes
-        )
-        activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 2
-
-        return (params_memory + activations) / 1e9
-
-    def _estimate_resnet_compute(
+    def _estimate_dense_forward(
         self,
         component: ShardedModule,
         batch_size: int,
-        image_size: int,
+        params: Dict[str, Any],
         dtype: str,
+        dtype_bytes: float,
         compute_type: ComputeType,
     ) -> tuple:
-        """Estimate ResNet compute time and FLOPs."""
-        flops_per_image = 7e9
+        """Estimate dense/MLP forward compute."""
+        input_size = getattr(component, "input_size", 1024)
+        output_size = getattr(component, "output_size", 1024)
+        hidden_size = getattr(component, "hidden_size", 4096)
+        num_layers = getattr(component, "num_layers", 4)
 
-        total_flops = batch_size * flops_per_image
+        total_flops = batch_size * input_size * hidden_size * 2 * num_layers
+        total_flops += batch_size * hidden_size * output_size * 2
 
         tflops = self.device.get_compute_tflops(dtype)
         time = total_flops / (tflops * 1e12) if tflops > 0 else 0.0
@@ -580,25 +544,12 @@ class UnifiedAnalyzer:
             time *= 2.0
             total_flops *= 2.0
 
-        return time, total_flops
+        params_memory = self._count_params(component) * dtype_bytes
+        activations = batch_size * hidden_size * dtype_bytes * num_layers
 
-    def _estimate_resnet_memory(
-        self,
-        batch_size: int,
-        image_size: int,
-        dtype_bytes: float,
-        compute_type: ComputeType,
-    ) -> float:
-        """Estimate ResNet memory."""
-        params_memory = 25e6 * dtype_bytes
+        memory = (params_memory + activations) / 1e9
 
-        activations = batch_size * image_size * image_size * 3 * dtype_bytes * 50
-
-        if compute_type == ComputeType.BACKWARD:
-            gradients = params_memory
-            return (params_memory + activations * 2 + gradients) / 1e9
-
-        return (params_memory + activations) / 1e9
+        return time, memory, total_flops
 
     def _calculate_throughput(
         self,

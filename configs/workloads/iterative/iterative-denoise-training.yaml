@@ -1,0 +1,30 @@
+name: denoise-training
+description: 扩散去噪单步训练
+workload_type: training
+
+phases:
+  - name: forward
+    compute_type: forward
+    component: main
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: backward
+    compute_type: backward
+    component: main
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: optimizer
+    compute_type: optimizer
+    component: main
+    repeat: 1
+
+default_params:
+  batch_size: 1
+  num_frames: 81
+  height: 720
+  width: 1280
+
+optimizer_factor: 1.2
+throughput_metric: pixels_per_sec

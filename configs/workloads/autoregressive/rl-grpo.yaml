@@ -1,0 +1,46 @@
+name: rl-grpo
+description: GRPO训练（Group Relative Policy Optimization）
+workload_type: mixed
+
+component_mapping:
+  policy: policy
+  reference: reference
+
+phases:
+  - name: rollout_generate
+    compute_type: forward
+    component: policy
+    compute_pattern: transformer_block
+    repeat: num_rollout_steps
+    
+  - name: policy_forward
+    compute_type: forward
+    component: policy
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: policy_backward
+    compute_type: backward
+    component: policy
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: policy_optimizer
+    compute_type: optimizer
+    component: policy
+    repeat: 1
+    
+  - name: reference_forward
+    compute_type: forward
+    component: reference
+    compute_pattern: transformer_block
+    repeat: 1
+
+default_params:
+  batch_size: 16
+  seq_len: 512
+  num_rollout_steps: 100
+  group_size: 4
+
+optimizer_factor: 1.5
+throughput_metric: samples_per_sec

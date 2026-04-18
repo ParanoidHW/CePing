@@ -1,0 +1,18 @@
+name: conv-decoder
+description: 卷积解码（VAE Decoder等）
+workload_type: inference
+
+phases:
+  - name: decode
+    compute_type: forward
+    component: main
+    compute_pattern: conv_decoder
+    repeat: 1
+
+default_params:
+  batch_size: 1
+  num_frames: 81
+  height: 720
+  width: 1280
+
+throughput_metric: pixels_per_sec

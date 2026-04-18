@@ -1,0 +1,23 @@
+name: autoregressive-inference
+description: 自回归生成（prefill + decode）
+workload_type: inference
+
+phases:
+  - name: prefill
+    compute_type: forward
+    component: main
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: decode
+    compute_type: forward
+    component: main
+    compute_pattern: transformer_block
+    repeat: generation_len
+
+default_params:
+  batch_size: 1
+  prompt_len: 512
+  generation_len: 128
+
+throughput_metric: tokens_per_sec
