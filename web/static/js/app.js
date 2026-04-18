@@ -119,6 +119,60 @@ function updateModeUI() {
         elements.runtimeTitle.textContent = '推理参数';
     }
     elements.results.style.display = 'none';
+    renderParamInputs();
+}
+
+function renderParamInputs() {
+    const preset = state.currentPreset;
+    const schema = preset?.param_schema;
+    const defaultLLMSchema = {
+        training: [
+            {name: 'batch_size', label: 'Batch Size', type: 'number', default: 32},
+            {name: 'seq_len', label: 'Sequence Length', type: 'number', default: 4096},
+        ],
+        inference: [
+            {name: 'batch_size', label: 'Batch Size', type: 'number', default: 8},
+            {name: 'prompt_len', label: 'Prompt Length', type: 'number', default: 1024},
+            {name: 'generation_len', label: 'Generation Length', type: 'number', default: 128},
+        ]
+    };
+    
+    const currentSchema = schema || defaultLLMSchema;
+    const modeSchema = currentSchema[state.mode] || [];
+    
+    const container = state.mode === 'training' ? elements.trainingParams : elements.inferenceParams;
+    
+    let html = '';
+    const paramsPerRow = 2;
+    
+    for (let i = 0; i < modeSchema.length; i += paramsPerRow) {
+        html += '<div class="form-row">';
+        for (let j = i; j < Math.min(i + paramsPerRow, modeSchema.length); j++) {
+            const param = modeSchema[j];
+            html += `<div class="form-group">
+                <label>${param.label}</label>
+                ${renderParamInput(param)}
+            </div>`;
+        }
+        html += '</div>';
+    }
+    
+    container.innerHTML = html;
+}
+
+function renderParamInput(param) {
+    const inputId = `param-${param.name}`;
+    
+    if (param.type === 'select') {
+        const options = (param.options || []).map(opt => 
+            `<option value="${opt}" ${opt === param.default ? 'selected' : ''}>${opt}</option>`
+        ).join('');
+        return `<select id="${inputId}">${options}</select>`;
+    }
+    
+    const minAttr = param.min ? ` min="${param.min}"` : '';
+    const maxAttr = param.max ? ` max="${param.max}"` : '';
+    return `<input type="number" id="${inputId}" value="${param.default}"${minAttr}${maxAttr}>`;
 }
 
 function loadModelPreset() {
@@ -128,49 +182,28 @@ function loadModelPreset() {
 
     const preset = presets[presetKey];
 
-    // Handle video generation pipeline presets (e.g., wan-t2v-14b)
-    if (preset.architecture === 'wan_pipeline') {
-        // For video generation, set default values for model params
-        document.getElementById('hidden-size').value = 4096;
-        document.getElementById('num-layers').value = 32;
-        document.getElementById('num-heads').value = 32;
-        document.getElementById('max-seq-len').value = 512;
-        document.getElementById('dtype').value = 'bf16';
+    // Store current preset and pipeline info
+    state.currentPreset = preset;
+    state.currentPipeline = preset.architecture === 'wan_pipeline' ? 'diffusion-video' : null;
 
-        // Store pipeline info for evaluate function
-        state.currentPipeline = 'diffusion-video';
-        state.videoParams = {
-            num_frames: 81,
-            height: 720,
-            width: 1280,
-            num_inference_steps: 50,
-            use_cfg: true
-        };
+    // Set model type based on sparse_type
+    elements.modelType.value = preset.sparse_type || 'dense';
 
-        // Set model type to dense for pipeline
-        elements.modelType.value = 'dense';
-    } else {
-        // Standard LLM/MoE models
-        // Set model type based on sparse_type
-        elements.modelType.value = preset.sparse_type || 'dense';
+    // Set model config params
+    document.getElementById('hidden-size').value = preset.hidden_size || 4096;
+    document.getElementById('num-layers').value = preset.num_layers || 32;
+    document.getElementById('num-heads').value = preset.num_heads || preset.num_attention_heads || 32;
+    document.getElementById('max-seq-len').value = preset.max_seq_len || 4096;
+    document.getElementById('dtype').value = preset.dtype || 'fp16';
 
-        document.getElementById('hidden-size').value = preset.hidden_size;
-        document.getElementById('num-layers').value = preset.num_layers;
-        document.getElementById('num-heads').value = preset.num_attention_heads;
-        document.getElementById('max-seq-len').value = preset.max_seq_len;
-        document.getElementById('dtype').value = preset.dtype || 'fp16';
-
-        // Clear pipeline info
-        state.currentPipeline = null;
-
-        // MoE params
-        if (preset.num_experts) {
-            document.getElementById('num-experts').value = preset.num_experts;
-            document.getElementById('experts-per-token').value = preset.num_experts_per_token;
-        }
+    // MoE params
+    if (preset.num_experts) {
+        document.getElementById('num-experts').value = preset.num_experts;
+        document.getElementById('experts-per-token').value = preset.num_experts_per_token;
     }
 
     updateModelTypeUI();
+    renderParamInputs();
 }
 
 function updateModelTypeUI() {
@@ -396,35 +429,28 @@ function collectConfig() {
         }
     };
     
-    // Add video generation params for diffusion-video pipeline
-    if (state.currentPipeline === 'diffusion-video' && state.videoParams) {
-        config.num_frames = state.videoParams.num_frames;
-        config.height = state.videoParams.height;
-        config.width = state.videoParams.width;
-        config.num_inference_steps = state.videoParams.num_inference_steps;
-        config.use_cfg = state.videoParams.use_cfg;
-    }
+    // Collect mode-specific params from param_schema
+    const schema = preset.param_schema;
+    const modeParams = schema?.[state.mode] || [];
     
-    // Add mode-specific params
     if (state.mode === 'training') {
-        config.training = {
-            batch_size: parseInt(document.getElementById('batch-size').value),
-            num_steps: 1000
-        };
-        // 如果是扩散模型，传递视频参数
-        if (state.currentPipeline === 'diffusion-video' && state.videoParams) {
-            config.training.num_frames = state.videoParams.num_frames;
-            config.training.height = state.videoParams.height;
-            config.training.width = state.videoParams.width;
-        } else {
-            config.training.seq_len = parseInt(document.getElementById('seq-len').value);
-        }
+        config.training = { num_steps: 1000 };
+        modeParams.forEach(param => {
+            const inputEl = document.getElementById(`param-${param.name}`);
+            if (inputEl) {
+                const value = param.type === 'select' ? inputEl.value : parseInt(inputEl.value);
+                config.training[param.name] = value;
+            }
+        });
     } else {
-        config.inference = {
-            batch_size: parseInt(document.getElementById('inf-batch-size').value),
-            prompt_len: parseInt(document.getElementById('prompt-len').value),
-            generation_len: parseInt(document.getElementById('generation-len').value)
-        };
+        config.inference = {};
+        modeParams.forEach(param => {
+            const inputEl = document.getElementById(`param-${param.name}`);
+            if (inputEl) {
+                const value = param.type === 'select' ? inputEl.value === 'true' : parseInt(inputEl.value);
+                config.inference[param.name] = value;
+            }
+        });
     }
     
     return config;

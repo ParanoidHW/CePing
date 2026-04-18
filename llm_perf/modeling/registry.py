@@ -7,7 +7,7 @@ Provides unified interface for model creation via:
 """
 
 import inspect
-from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
+from typing import Optional, Dict, Any, TYPE_CHECKING
 
 from llm_perf.modeling.models import LlamaModel, DeepSeekModel
 from llm_perf.modeling.vision import ShardedVAE, ShardedResNet
@@ -234,8 +234,82 @@ def register_all_models() -> None:
     )
 
 
+def _get_llm_param_schema() -> dict:
+    """Get parameter schema for LLM models (llama, mixtral, deepseek)."""
+    return {
+        "training": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 32},
+            {"name": "seq_len", "label": "Sequence Length", "type": "number", "default": 4096},
+        ],
+        "inference": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 8},
+            {"name": "prompt_len", "label": "Prompt Length", "type": "number", "default": 1024},
+            {"name": "generation_len", "label": "Generation Length", "type": "number", "default": 128},
+        ],
+    }
+
+
+def _get_video_param_schema() -> dict:
+    """Get parameter schema for video generation models (wan-t2v-14b, wan-dit)."""
+    return {
+        "training": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 1},
+            {"name": "num_frames", "label": "Num Frames", "type": "number", "default": 81},
+            {"name": "height", "label": "Height", "type": "number", "default": 720},
+            {"name": "width", "label": "Width", "type": "number", "default": 1280},
+        ],
+        "inference": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 1},
+            {"name": "num_frames", "label": "Num Frames", "type": "number", "default": 81},
+            {"name": "height", "label": "Height", "type": "number", "default": 720},
+            {"name": "width", "label": "Width", "type": "number", "default": 1280},
+            {"name": "num_steps", "label": "Inference Steps", "type": "number", "default": 50},
+            {"name": "use_cfg", "label": "Use CFG", "type": "select", "default": "true", "options": ["true", "false"]},
+        ],
+    }
+
+
+def _get_vae_param_schema() -> dict:
+    """Get parameter schema for VAE models."""
+    return {
+        "training": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 8},
+            {"name": "num_frames", "label": "Num Frames", "type": "number", "default": 17},
+            {"name": "height", "label": "Height", "type": "number", "default": 256},
+            {"name": "width", "label": "Width", "type": "number", "default": 256},
+        ],
+        "inference": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 8},
+            {"name": "num_frames", "label": "Num Frames", "type": "number", "default": 17},
+            {"name": "height", "label": "Height", "type": "number", "default": 256},
+            {"name": "width", "label": "Width", "type": "number", "default": 256},
+        ],
+    }
+
+
+def _get_resnet_param_schema() -> dict:
+    """Get parameter schema for ResNet models."""
+    return {
+        "training": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 32},
+            {"name": "height", "label": "Image Height", "type": "number", "default": 224},
+            {"name": "width", "label": "Image Width", "type": "number", "default": 224},
+        ],
+        "inference": [
+            {"name": "batch_size", "label": "Batch Size", "type": "number", "default": 32},
+            {"name": "height", "label": "Image Height", "type": "number", "default": 224},
+            {"name": "width", "label": "Image Width", "type": "number", "default": 224},
+        ],
+    }
+
+
 def get_model_presets() -> dict:
     """Get preset configurations."""
+    llm_schema = _get_llm_param_schema()
+    video_schema = _get_video_param_schema()
+    vae_schema = _get_vae_param_schema()
+    resnet_schema = _get_resnet_param_schema()
+
     return {
         "llama-7b": {
             "architecture": "llama",
@@ -250,6 +324,7 @@ def get_model_presets() -> dict:
             "max_seq_len": 4096,
             "dtype": "fp16",
             "description": "LLaMA 7B",
+            "param_schema": llm_schema,
         },
         "llama-13b": {
             "architecture": "llama",
@@ -264,6 +339,7 @@ def get_model_presets() -> dict:
             "max_seq_len": 4096,
             "dtype": "fp16",
             "description": "LLaMA 13B",
+            "param_schema": llm_schema,
         },
         "llama-70b": {
             "architecture": "llama",
@@ -278,6 +354,7 @@ def get_model_presets() -> dict:
             "max_seq_len": 4096,
             "dtype": "fp16",
             "description": "LLaMA 70B",
+            "param_schema": llm_schema,
         },
         "mixtral-8x7b": {
             "architecture": "mixtral",
@@ -294,6 +371,7 @@ def get_model_presets() -> dict:
             "num_experts": 8,
             "num_experts_per_token": 2,
             "description": "Mixtral 8x7B",
+            "param_schema": llm_schema,
         },
         "deepseek-v3": {
             "architecture": "deepseek",
@@ -311,6 +389,7 @@ def get_model_presets() -> dict:
             "num_experts": 256,
             "num_experts_per_token": 8,
             "description": "DeepSeek V3",
+            "param_schema": llm_schema,
         },
         "resnet50": {
             "architecture": "resnet",
@@ -320,6 +399,7 @@ def get_model_presets() -> dict:
             "num_classes": 1000,
             "dtype": "fp16",
             "description": "ResNet-50",
+            "param_schema": resnet_schema,
         },
         "video-vae": {
             "architecture": "vae",
@@ -331,6 +411,7 @@ def get_model_presets() -> dict:
             "block_out_channels": (128, 256, 512, 512),
             "dtype": "fp16",
             "description": "Video VAE",
+            "param_schema": vae_schema,
         },
         "wan-t2v-14b": {
             "architecture": "wan_pipeline",
@@ -340,6 +421,7 @@ def get_model_presets() -> dict:
             "dit": "wan-dit",
             "vae": "wan-vae",
             "description": "Wan2.1 Text-to-Video 14B pipeline",
+            "param_schema": video_schema,
         },
         "wan-dit": {
             "architecture": "wan_dit",
@@ -350,6 +432,7 @@ def get_model_presets() -> dict:
             "num_heads": 40,
             "dtype": "bf16",
             "description": "Wan2.1 DiT 14B",
+            "param_schema": video_schema,
         },
     }
 
