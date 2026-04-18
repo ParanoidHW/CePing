@@ -139,6 +139,8 @@ class UnifiedResult:
         throughput: Throughput metrics dictionary
         params: Resolved parameters used in analysis
         metadata: Additional metadata
+        breakdown: Legacy breakdown format for frontend compatibility
+        detailed_breakdown: Legacy detailed_breakdown format for frontend compatibility
     """
 
     workload_name: str
@@ -149,9 +151,11 @@ class UnifiedResult:
     throughput: Dict[str, float] = field(default_factory=dict)
     params: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    breakdown: Optional[Dict[str, Any]] = None
+    detailed_breakdown: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "workload_name": self.workload_name,
             "workload_type": self.workload_type.value,
             "phases": [p.to_dict() for p in self.phases],
@@ -162,6 +166,11 @@ class UnifiedResult:
             "params": self.params,
             "metadata": self.metadata,
         }
+        if self.breakdown:
+            result["breakdown"] = self.breakdown
+        if self.detailed_breakdown:
+            result["detailed_breakdown"] = self.detailed_breakdown
+        return result
 
     def get_phase(self, name: str) -> Optional[PhaseResult]:
         """Get a specific phase result by name."""

@@ -140,3 +140,76 @@ class TestWebAppAPI:
             assert "single_time_sec" in phase
             assert "total_time_sec" in phase
             assert "repeat_count" in phase
+
+    def test_training_result_has_breakdown_fields(self):
+        """Test training result contains breakdown and detailed_breakdown fields."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate(
+            "wan-dit",
+            "H100-SXM-80GB",
+            "llm-training",
+            "tp8",
+            batch_size=1,
+            seq_len=2048,
+        )
+
+        result_dict = result.to_dict()
+
+        assert "breakdown" in result_dict
+        assert result_dict["breakdown"] is not None
+        assert "overview" in result_dict["breakdown"]
+        assert "time_breakdown" in result_dict["breakdown"]
+        assert "layers" in result_dict["breakdown"]
+        assert "total_time_sec" in result_dict["breakdown"]["overview"]
+        assert "compute_sec" in result_dict["breakdown"]["time_breakdown"]
+        assert len(result_dict["breakdown"]["layers"]) > 0
+
+        assert "detailed_breakdown" in result_dict
+        assert result_dict["detailed_breakdown"] is not None
+        assert "submodels" in result_dict["detailed_breakdown"]
+        assert "memory" in result_dict["detailed_breakdown"]
+        assert "by_type" in result_dict["detailed_breakdown"]["memory"]
+
+    def test_pipeline_phases_not_zero(self):
+        """Test diffusion-video pipeline phases have non-zero time values."""
+        from llm_perf.analyzer.unified import UnifiedAnalyzer
+        from llm_perf.analyzer.workload_loader import get_workload
+        from llm_perf.hardware.cluster import Cluster
+        from llm_perf.hardware.device import Device
+        from llm_perf.hardware.topology import NetworkTopology
+        from llm_perf.modeling import create_model_from_config
+        from llm_perf.strategy.base import StrategyConfig
+
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology(
+            name="default",
+            intra_node_bandwidth_gbps=200.0,
+            intra_node_latency_us=1.0,
+            inter_node_bandwidth_gbps=25.0,
+            inter_node_latency_us=10.0,
+        )
+        cluster = Cluster.create_homogeneous(device.config, 8, topology)
+        strategy = StrategyConfig(tp_degree=8)
+
+        models = {
+            "encoder": create_model_from_config({"type": "wan-text-encoder"}),
+            "backbone": create_model_from_config({"type": "wan-dit"}),
+            "decoder": create_model_from_config({"type": "wan-vae"}),
+        }
+
+        analyzer = UnifiedAnalyzer(models, device, cluster, strategy)
+        workload = get_workload("diffusion-pipeline")
+        result = analyzer.analyze(
+            workload,
+            num_frames=81,
+            height=720,
+            width=1280,
+            num_steps=50,
+            use_cfg=True,
+        )
+
+        result_dict = result.to_dict()
+
+        for phase in result_dict["phases"]:
+            assert phase["total_time_sec"] > 0, f"Phase {phase['name']} has zero total_time_sec"
+            assert phase["single_time_sec"] > 0, f"Phase {phase['name']} has zero single_time_sec"

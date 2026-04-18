@@ -80,6 +80,9 @@ class UnifiedAnalyzer:
 
         throughput = self._calculate_throughput(phase_results, workload, resolved_params)
 
+        breakdown = self._generate_breakdown(phase_results, workload, total_time, throughput)
+        detailed_breakdown = self._generate_detailed_breakdown(phase_results, workload)
+
         return UnifiedResult(
             workload_name=workload.name,
             workload_type=workload.workload_type,
@@ -93,6 +96,8 @@ class UnifiedAnalyzer:
                 "num_devices": self.cluster.num_devices,
                 "strategy": self.strategy.to_dict(),
             },
+            breakdown=breakdown,
+            detailed_breakdown=detailed_breakdown,
         )
 
     def _analyze_phases(
@@ -788,6 +793,88 @@ class UnifiedAnalyzer:
         num_layers = getattr(component, "num_layers", 32)
 
         return hidden_size * num_layers * 12
+
+    def _generate_breakdown(
+        self,
+        phases: List[PhaseResult],
+        workload: WorkloadConfig,
+        total_time: float,
+        throughput: Dict[str, float],
+    ) -> Dict[str, Any]:
+        """Generate legacy breakdown format for frontend compatibility."""
+        compute_time = sum(p.total_time_sec for p in phases if p.compute_type == ComputeType.FORWARD)
+        backward_time = sum(p.total_time_sec for p in phases if p.compute_type == ComputeType.BACKWARD)
+        optimizer_time = sum(p.total_time_sec for p in phases if p.compute_type == ComputeType.OPTIMIZER)
+
+        layers = []
+        for phase in phases:
+            kernels = []
+            if phase.flops and phase.flops > 0:
+                kernels.append(
+                    {
+                        "name": f"{phase.name}_compute",
+                        "kernel_type": "compute",
+                        "time_sec": phase.single_time_sec,
+                        "flops": phase.flops,
+                    }
+                )
+            layers.append(
+                {
+                    "name": phase.component,
+                    "kernels": kernels,
+                    "total_time_ms": phase.total_time_sec * 1000,
+                }
+            )
+
+        return {
+            "overview": {
+                "total_time_sec": total_time,
+                "throughput": sum(throughput.values()) if throughput else 0,
+            },
+            "time_breakdown": {
+                "compute_sec": compute_time,
+                "backward_sec": backward_time,
+                "optimizer_sec": optimizer_time,
+                "communication_sec": 0,
+                "memory_sec": 0,
+                "compute_percent": compute_time / total_time * 100 if total_time > 0 else 0,
+            },
+            "layers": layers,
+        }
+
+    def _generate_detailed_breakdown(
+        self,
+        phases: List[PhaseResult],
+        workload: WorkloadConfig,
+    ) -> Dict[str, Any]:
+        """Generate legacy detailed_breakdown format for frontend compatibility."""
+        by_component: Dict[str, Dict[str, float]] = {}
+        for phase in phases:
+            if phase.component not in by_component:
+                by_component[phase.component] = {}
+            by_component[phase.component]["activations"] = phase.memory_gb
+
+        total_memory = sum(p.memory_gb for p in phases)
+
+        return {
+            "submodels": [
+                {
+                    "model_name": phase.component,
+                    "model_type": phase.compute_type.value,
+                    "compute_time_sec": phase.total_time_sec,
+                    "memory": {"by_type": {"activations": phase.memory_gb}},
+                }
+                for phase in phases
+            ],
+            "memory": {
+                "by_type": {"activations": total_memory},
+                "by_submodel": by_component,
+                "by_block_type": {},
+            },
+            "communication": {
+                "by_parallelism": {},
+            },
+        }
 
 
 def analyze_workload(
