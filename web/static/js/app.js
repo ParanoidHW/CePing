@@ -184,7 +184,9 @@ function loadModelPreset() {
 
     // Store current preset and pipeline info
     state.currentPreset = preset;
-    state.currentPipeline = preset.architecture === 'wan_pipeline' ? 'diffusion-video' : null;
+    state.currentPipeline = preset.architecture === 'wan_pipeline' && state.mode === 'inference' 
+        ? 'diffusion-video' 
+        : null;
 
     // Set model type based on sparse_type
     elements.modelType.value = preset.sparse_type || 'dense';

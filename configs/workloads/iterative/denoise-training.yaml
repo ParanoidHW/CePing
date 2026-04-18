@@ -3,6 +3,12 @@ description: 扩散去噪单步训练
 workload_type: training
 
 phases:
+  - name: encode
+    compute_type: forward
+    component: encoder
+    compute_pattern: conv_encoder
+    repeat: 1
+    
   - name: forward
     compute_type: forward
     component: main
