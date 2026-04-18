@@ -1,0 +1,51 @@
+description: Video VAE
+architecture: vae
+sparse_type: dense
+attention_features: []
+
+config:
+  use_3d: true
+  use_attention: false
+  latent_channels: 4
+  block_out_channels:
+    - 128
+    - 256
+    - 512
+    - 512
+  dtype: fp16
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: num_frames
+      label: Num Frames
+      type: number
+      default: 17
+    - name: height
+      label: Height
+      type: number
+      default: 256
+    - name: width
+      label: Width
+      type: number
+      default: 256
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: num_frames
+      label: Num Frames
+      type: number
+      default: 17
+    - name: height
+      label: Height
+      type: number
+      default: 256
+    - name: width
+      label: Width
+      type: number
+      default: 256

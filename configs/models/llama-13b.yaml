@@ -1,0 +1,39 @@
+description: LLaMA 13B
+architecture: llama
+sparse_type: dense
+attention_features:
+  - gqa
+
+config:
+  vocab_size: 32000
+  hidden_size: 5120
+  num_layers: 40
+  num_heads: 40
+  num_kv_heads: 40
+  intermediate_size: 13824
+  max_seq_len: 4096
+  dtype: fp16
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: seq_len
+      label: Sequence Length
+      type: number
+      default: 4096
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: prompt_len
+      label: Prompt Length
+      type: number
+      default: 1024
+    - name: generation_len
+      label: Generation Length
+      type: number
+      default: 128

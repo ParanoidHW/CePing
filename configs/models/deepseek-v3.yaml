@@ -1,0 +1,42 @@
+description: DeepSeek V3
+architecture: deepseek
+sparse_type: deepseek_moe
+attention_features:
+  - mla
+
+config:
+  vocab_size: 129280
+  hidden_size: 7168
+  num_layers: 61
+  num_heads: 128
+  num_kv_heads: 128
+  intermediate_size: 18432
+  max_seq_len: 163840
+  dtype: fp16
+  first_k_dense_layers: 1
+  num_experts: 256
+  num_experts_per_token: 8
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: seq_len
+      label: Sequence Length
+      type: number
+      default: 4096
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: prompt_len
+      label: Prompt Length
+      type: number
+      default: 1024
+    - name: generation_len
+      label: Generation Length
+      type: number
+      default: 128

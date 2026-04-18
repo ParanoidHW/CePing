@@ -1,0 +1,41 @@
+description: Mixtral 8x7B
+architecture: mixtral
+sparse_type: standard_moe
+attention_features:
+  - gqa
+
+config:
+  vocab_size: 32000
+  hidden_size: 4096
+  num_layers: 32
+  num_heads: 32
+  num_kv_heads: 8
+  intermediate_size: 14336
+  max_seq_len: 32768
+  dtype: fp16
+  num_experts: 8
+  num_experts_per_token: 2
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: seq_len
+      label: Sequence Length
+      type: number
+      default: 4096
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: prompt_len
+      label: Prompt Length
+      type: number
+      default: 1024
+    - name: generation_len
+      label: Generation Length
+      type: number
+      default: 128

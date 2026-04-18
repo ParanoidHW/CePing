@@ -1,0 +1,37 @@
+description: ResNet-50
+architecture: resnet
+sparse_type: dense
+attention_features: []
+
+config:
+  variant: resnet50
+  num_classes: 1000
+  dtype: fp16
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: height
+      label: Image Height
+      type: number
+      default: 224
+    - name: width
+      label: Image Width
+      type: number
+      default: 224
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: height
+      label: Image Height
+      type: number
+      default: 224
+    - name: width
+      label: Image Width
+      type: number
+      default: 224

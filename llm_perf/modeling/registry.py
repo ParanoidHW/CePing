@@ -7,7 +7,10 @@ Provides unified interface for model creation via:
 """
 
 import inspect
+from pathlib import Path
 from typing import Optional, Dict, Any, TYPE_CHECKING
+
+import yaml
 
 from llm_perf.modeling.models import LlamaModel, DeepSeekModel
 from llm_perf.modeling.vision import ShardedVAE, ShardedResNet
@@ -15,6 +18,8 @@ from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedW
 
 if TYPE_CHECKING:
     pass
+
+_PRESETS_CACHE: Optional[Dict[str, Any]] = None
 
 
 class ModelInfo:
@@ -303,7 +308,43 @@ def _get_resnet_param_schema() -> dict:
     }
 
 
-def get_model_presets() -> dict:
+def _load_presets_from_yaml() -> dict:
+    """Load preset configurations from YAML files.
+
+    Scans configs/models/*.yaml and returns a dict of presets.
+    Falls back to hardcoded presets if YAML files not found.
+    """
+    config_dir = Path(__file__).parent.parent.parent / "configs" / "models"
+
+    if not config_dir.exists():
+        return _get_hardcoded_presets()
+
+    presets = {}
+    for yaml_file in config_dir.glob("*.yaml"):
+        with open(yaml_file, encoding="utf-8") as f:
+            preset_data = yaml.safe_load(f)
+
+        preset_name = yaml_file.stem
+
+        preset = {
+            "description": preset_data.get("description", ""),
+            "architecture": preset_data.get("architecture", preset_name),
+            "sparse_type": preset_data.get("sparse_type", "dense"),
+            "attention_features": preset_data.get("attention_features", []),
+        }
+
+        if "config" in preset_data:
+            preset.update(preset_data["config"])
+
+        if "param_schema" in preset_data:
+            preset["param_schema"] = preset_data["param_schema"]
+
+        presets[preset_name] = preset
+
+    return presets if presets else _get_hardcoded_presets()
+
+
+def _get_hardcoded_presets() -> dict:
     """Get preset configurations."""
     llm_schema = _get_llm_param_schema()
     video_schema = _get_video_param_schema()
@@ -435,6 +476,14 @@ def get_model_presets() -> dict:
             "param_schema": video_schema,
         },
     }
+
+
+def get_model_presets() -> dict:
+    """Get preset configurations."""
+    global _PRESETS_CACHE
+    if _PRESETS_CACHE is None:
+        _PRESETS_CACHE = _load_presets_from_yaml()
+    return _PRESETS_CACHE
 
 
 def get_presets_by_sparse_type() -> dict:

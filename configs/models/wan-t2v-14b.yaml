@@ -1,0 +1,56 @@
+description: Wan2.1 Text-to-Video 14B pipeline
+architecture: wan_pipeline
+sparse_type: dense
+attention_features: []
+
+config:
+  text_encoder: wan-text-encoder
+  dit: wan-dit
+  vae: wan-vae
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 1
+    - name: num_frames
+      label: Num Frames
+      type: number
+      default: 81
+    - name: height
+      label: Height
+      type: number
+      default: 720
+    - name: width
+      label: Width
+      type: number
+      default: 1280
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 1
+    - name: num_frames
+      label: Num Frames
+      type: number
+      default: 81
+    - name: height
+      label: Height
+      type: number
+      default: 720
+    - name: width
+      label: Width
+      type: number
+      default: 1280
+    - name: num_steps
+      label: Inference Steps
+      type: number
+      default: 50
+    - name: use_cfg
+      label: Use CFG
+      type: select
+      default: "true"
+      options:
+        - "true"
+        - "false"

@@ -531,3 +531,45 @@ class TestCreateModelFromConfig:
         )
         assert isinstance(model, LlamaModel)
         assert model.hidden_size == 2048
+
+    def test_presets_loaded_from_yaml(self):
+        """Test that presets are loaded from YAML files."""
+        presets = get_model_presets()
+
+        assert "llama-7b" in presets
+        assert "llama-13b" in presets
+        assert "llama-70b" in presets
+        assert "mixtral-8x7b" in presets
+        assert "deepseek-v3" in presets
+        assert "resnet50" in presets
+        assert "video-vae" in presets
+        assert "wan-t2v-14b" in presets
+        assert "wan-dit" in presets
+
+        llama_7b = presets["llama-7b"]
+        assert llama_7b["hidden_size"] == 4096
+        assert llama_7b["num_layers"] == 32
+        assert llama_7b["architecture"] == "llama"
+        assert "param_schema" in llama_7b
+
+    def test_create_model_from_yaml_preset(self):
+        """Test create_model_from_config uses YAML presets."""
+        model = create_model_from_config({"preset": "llama-13b"})
+        assert isinstance(model, LlamaModel)
+        assert model.hidden_size == 5120
+        assert model.num_layers == 40
+
+    def test_yaml_preset_deepseek_v3(self):
+        """Test DeepSeek V3 preset from YAML."""
+        model = create_model_from_config({"preset": "deepseek-v3"})
+        assert isinstance(model, DeepSeekModel)
+        assert model.hidden_size == 7168
+        assert model.num_layers == 61
+        assert model.num_experts == 256
+
+    def test_yaml_preset_wan_dit(self):
+        """Test WanDiT preset from YAML."""
+        model = create_model_from_config({"preset": "wan-dit"})
+        assert isinstance(model, ShardedWanDiT)
+        assert model.hidden_size == 5120
+        assert model.num_layers == 40
