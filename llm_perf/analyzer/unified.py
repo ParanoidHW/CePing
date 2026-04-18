@@ -11,7 +11,7 @@ from llm_perf.hardware.cluster import Cluster
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.kernels.compute import ComputeKernelRegistry
 from llm_perf.kernels.communication import CommKernelRegistry
-from llm_perf.kernels.functional import linear, flash_attention, KernelResult
+from llm_perf.kernels.functional import linear, flash_attention, conv3d, KernelResult
 from llm_perf.utils.constants import DTYPE_SIZES
 
 from .base import (
@@ -614,36 +614,85 @@ class UnifiedAnalyzer:
         dtype_bytes: float,
         compute_type: ComputeType,
     ) -> tuple:
-        """Estimate convolutional decoder compute."""
+        """Estimate convolutional decoder compute using kernel API.
+
+        VAE Decoder structure (from llm_perf/modeling/vision.py:254-333):
+        - conv_in: latent_channels → block_out_channels[-1]
+        - mid_block_0, mid_block_1: 2 ResBlocks
+        - up_blocks: 4 layers, each with 3 ResBlocks + upsampling conv
+        - norm_out: GroupNorm
+        - conv_out: block_out_channels[0] → out_channels
+
+        ResBlock structure (ShardedResNetBlock3d):
+        - norm1 → conv1 (in_ch → out_ch) → norm2 → conv2 (out_ch → out_ch)
+        - optional shortcut conv (in_ch → out_ch) if channels differ
+        """
         num_frames = params.get("num_frames", 81)
         height = params.get("height", 720)
         width = params.get("width", 1280)
 
-        pixels = num_frames * height * width
-
         latent_channels = getattr(component, "latent_channels", 16)
-        in_channels = getattr(component, "in_channels", 3)
-
-        decoder_flops = pixels * in_channels * 16 * batch_size
-
-        tflops = self.device.get_compute_tflops(dtype)
-        time = decoder_flops / (tflops * 1e12) if tflops > 0 else 0.0
-
-        if compute_type == ComputeType.BACKWARD:
-            time *= 2.0
-            decoder_flops *= 2.0
+        out_channels = getattr(component, "out_channels", getattr(component, "in_channels", 3))
+        block_out_channels = getattr(component, "block_out_channels", (128, 256, 512, 512))
 
         latent_t = (num_frames - 1) // 4 + 1
         latent_h = height // 8
         latent_w = width // 8
 
+        reverse_channels = list(reversed(block_out_channels))
+
+        total_flops = 0.0
+
+        def calc_conv3d_flops(n, c_in, c_out, d, h, w, kd=3, kh=3, kw=3):
+            result = conv3d((n, c_in, d, h, w), (c_out, c_in, kd, kh, kw), dtype=dtype)
+            return result.flops
+
+        def calc_resblock_flops(n, in_ch, out_ch, d, h, w):
+            flops = 0.0
+            flops += calc_conv3d_flops(n, in_ch, out_ch, d, h, w)
+            flops += calc_conv3d_flops(n, out_ch, out_ch, d, h, w)
+            if in_ch != out_ch:
+                flops += calc_conv3d_flops(n, in_ch, out_ch, d, h, w, kd=1, kh=1, kw=1)
+            return flops
+
+        n = batch_size
+        curr_d = latent_t
+        curr_h = latent_h
+        curr_w = latent_w
+
+        total_flops += calc_conv3d_flops(n, latent_channels, reverse_channels[0], curr_d, curr_h, curr_w)
+
+        ch = reverse_channels[0]
+        total_flops += calc_resblock_flops(n, ch, ch, curr_d, curr_h, curr_w)
+        total_flops += calc_resblock_flops(n, ch, ch, curr_d, curr_h, curr_w)
+
+        for i, out_ch in enumerate(reverse_channels):
+            in_ch = reverse_channels[i - 1] if i > 0 else out_ch
+            for j in range(3):
+                block_in_ch = in_ch if j == 0 else out_ch
+                total_flops += calc_resblock_flops(n, block_in_ch, out_ch, curr_d, curr_h, curr_w)
+
+            if i < len(reverse_channels) - 1:
+                total_flops += calc_conv3d_flops(n, out_ch, out_ch, curr_d, curr_h, curr_w)
+                curr_h *= 2
+                curr_w *= 2
+
+        total_flops += calc_conv3d_flops(n, reverse_channels[-1], out_channels, curr_d, curr_h, curr_w)
+
+        tflops = self.device.get_compute_tflops(dtype)
+        time = total_flops / (tflops * 1e12) if tflops > 0 else 0.0
+
+        if compute_type == ComputeType.BACKWARD:
+            time *= 2.0
+            total_flops *= 2.0
+
         latent_memory = latent_t * latent_h * latent_w * latent_channels * dtype_bytes
-        output_memory = pixels * in_channels * dtype_bytes
+        output_memory = num_frames * height * width * out_channels * dtype_bytes
         params_memory = self._count_params(component) * dtype_bytes
 
         memory = (params_memory + max(latent_memory, output_memory)) / 1e9
 
-        return time, memory, decoder_flops
+        return time, memory, total_flops
 
     def _estimate_attention_only(
         self,

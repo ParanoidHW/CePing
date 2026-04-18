@@ -530,3 +530,107 @@ class TestBackwardKernelEstimation:
 
         assert tb_backward.flops > tb_forward.flops
         assert dense_backward.flops > dense_forward.flops
+
+
+class TestConvDecoderEstimation:
+    """Test VAE decoder estimation uses kernel API."""
+
+    def test_vae_decoder_flops_reasonable(self):
+        """Verify VAE decoder FLOPs are calculated using kernel API, not simplified formula."""
+        from llm_perf.modeling.vision import ShardedVAEDecoder
+
+        decoder = ShardedVAEDecoder(
+            out_channels=3,
+            latent_channels=16,
+            block_out_channels=(128, 256, 512, 512),
+            use_3d=True,
+            dtype="fp16",
+        )
+
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 1)
+        strategy = StrategyConfig(tp_degree=1)
+
+        analyzer = UnifiedAnalyzer(decoder, device, cluster, strategy)
+
+        workload = WorkloadConfig(
+            name="vae-decoder-test",
+            phases=[
+                Phase("decode", ComputeType.FORWARD, compute_pattern=ComputePattern.CONV_DECODER),
+            ],
+        )
+
+        result = analyzer.analyze(workload, batch_size=1, num_frames=81, height=720, width=1280)
+
+        decode_phase = result.get_phase("decode")
+        assert decode_phase is not None
+
+        assert decode_phase.flops > 1e12, "VAE decoder FLOPs should be > 1 TFLOP, not simplified calculation"
+
+        naive_flops = 81 * 720 * 1280 * 3 * 16
+        assert decode_phase.flops > naive_flops * 10, "Kernel-based FLOPs should be much larger than naive calculation"
+
+    def test_vae_decoder_time_reasonable(self):
+        """Verify VAE decoder time is reasonable, not near-zero."""
+        from llm_perf.modeling.vision import ShardedVAEDecoder
+
+        decoder = ShardedVAEDecoder(
+            out_channels=3,
+            latent_channels=16,
+            block_out_channels=(128, 256, 512, 512),
+            use_3d=True,
+            dtype="fp16",
+        )
+
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 1)
+        strategy = StrategyConfig(tp_degree=1)
+
+        analyzer = UnifiedAnalyzer(decoder, device, cluster, strategy)
+
+        workload = WorkloadConfig(
+            name="vae-decoder-test",
+            phases=[
+                Phase("decode", ComputeType.FORWARD, compute_pattern=ComputePattern.CONV_DECODER),
+            ],
+        )
+
+        result = analyzer.analyze(workload, batch_size=1, num_frames=81, height=720, width=1280)
+
+        decode_phase = result.get_phase("decode")
+        assert decode_phase.single_time_sec > 0.01, "VAE decoder time should be > 10ms, not near-zero"
+
+    def test_vae_decoder_backward(self):
+        """Verify VAE decoder backward estimation."""
+        from llm_perf.modeling.vision import ShardedVAEDecoder
+
+        decoder = ShardedVAEDecoder(
+            out_channels=3,
+            latent_channels=16,
+            block_out_channels=(128, 256, 512, 512),
+            use_3d=True,
+            dtype="fp16",
+        )
+
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 1)
+        strategy = StrategyConfig(tp_degree=1)
+
+        analyzer = UnifiedAnalyzer(decoder, device, cluster, strategy)
+
+        workload = WorkloadConfig(
+            name="vae-decoder-test",
+            phases=[
+                Phase("forward", ComputeType.FORWARD, compute_pattern=ComputePattern.CONV_DECODER),
+                Phase("backward", ComputeType.BACKWARD, compute_pattern=ComputePattern.CONV_DECODER),
+            ],
+        )
+
+        result = analyzer.analyze(workload, batch_size=1, num_frames=81, height=720, width=1280)
+
+        forward_phase = result.get_phase("forward")
+        backward_phase = result.get_phase("backward")
+
+        assert forward_phase is not None
+        assert backward_phase is not None
+        assert backward_phase.flops > forward_phase.flops
