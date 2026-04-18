@@ -88,6 +88,39 @@ class Phase:
 
 
 @dataclass
+class SubmoduleResult:
+    """子模块分解结果，从ModuleInstance获取.
+
+    Attributes:
+        name: 子模块名称
+        submodule_type: 子模块类型 (embedding, attention, ffn, moe, lm_head, rms_norm, conv, resblock)
+        time_sec: 执行时间（秒）
+        flops: FLOPs
+        memory_gb: 内存占用（GB）
+        communication_bytes: 通信数据量（字节）
+    """
+
+    name: str
+    submodule_type: str
+    time_sec: float
+    flops: int
+    memory_gb: float
+    communication_bytes: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "submodule_type": self.submodule_type,
+            "time_sec": self.time_sec,
+            "time_ms": self.time_sec * 1000,
+            "flops": self.flops,
+            "flops_gflops": self.flops / 1e9,
+            "memory_gb": self.memory_gb,
+            "communication_gb": self.communication_bytes / 1e9,
+        }
+
+
+@dataclass
 class PhaseResult:
     """Result of a single phase analysis.
 
@@ -100,6 +133,7 @@ class PhaseResult:
         total_time_sec: Total time (single_time × repeat_count)
         memory_gb: Memory usage for this phase
         flops: FLOPs for this phase (optional)
+        submodules: 子模块分解结果列表
     """
 
     name: str
@@ -110,6 +144,7 @@ class PhaseResult:
     total_time_sec: float = 0.0
     memory_gb: float = 0.0
     flops: Optional[float] = None
+    submodules: List["SubmoduleResult"] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -123,6 +158,25 @@ class PhaseResult:
             "total_time_ms": self.total_time_sec * 1000,
             "memory_gb": self.memory_gb,
             "flops": self.flops,
+            "submodules": [sm.to_dict() for sm in self.submodules],
+        }
+
+
+@dataclass
+class CommunicationBreakdown:
+    """通信分解结果."""
+
+    all_reduce: Dict[str, Any] = field(default_factory=dict)
+    all_gather: Dict[str, Any] = field(default_factory=dict)
+    reduce_scatter: Dict[str, Any] = field(default_factory=dict)
+    all_to_all: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "all_reduce": self.all_reduce,
+            "all_gather": self.all_gather,
+            "reduce_scatter": self.reduce_scatter,
+            "all_to_all": self.all_to_all,
         }
 
 
@@ -141,6 +195,9 @@ class UnifiedResult:
         metadata: Additional metadata
         breakdown: Legacy breakdown format for frontend compatibility
         detailed_breakdown: Legacy detailed_breakdown format for frontend compatibility
+        mfu: Model FLOPs Utilization (0-1), None if not applicable
+        qps: Queries Per Second
+        communication_breakdown: Communication breakdown by operation type
     """
 
     workload_name: str
@@ -153,6 +210,9 @@ class UnifiedResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
     breakdown: Optional[Dict[str, Any]] = None
     detailed_breakdown: Optional[Dict[str, Any]] = None
+    mfu: Optional[float] = None
+    qps: Optional[float] = None
+    communication_breakdown: Optional["CommunicationBreakdown"] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -165,11 +225,15 @@ class UnifiedResult:
             "throughput": self.throughput,
             "params": self.params,
             "metadata": self.metadata,
+            "mfu": self.mfu,
+            "qps": self.qps,
         }
         if self.breakdown:
             result["breakdown"] = self.breakdown
         if self.detailed_breakdown:
             result["detailed_breakdown"] = self.detailed_breakdown
+        if self.communication_breakdown:
+            result["communication_breakdown"] = self.communication_breakdown.to_dict()
         return result
 
     def get_phase(self, name: str) -> Optional[PhaseResult]:

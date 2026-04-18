@@ -19,6 +19,7 @@ from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.topology import NetworkTopology
 from llm_perf.modeling import create_model_from_config, get_model_presets, get_presets_by_sparse_type
+from llm_perf.scenarios import ColocateAnalyzer, ModelAllocation
 from llm_perf.strategy.base import StrategyConfig
 
 app = Flask(
@@ -414,6 +415,53 @@ def evaluate_pipeline(pipeline_name: str):
                     "error": f"Pipeline '{pipeline_name}' not implemented",
                 }
             ), 501
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/evaluate/colocate", methods=["POST"])
+def evaluate_colocate():
+    """Evaluate colocate scenario."""
+    try:
+        data = request.json
+
+        device = Device.from_preset(data["device"])
+        topology = create_topology(data["topology"])
+
+        cluster = Cluster.create_homogeneous(
+            device.config,
+            data["num_devices"],
+            topology,
+            data.get("devices_per_node", 8),
+        )
+
+        allocations = []
+        for model_config in data.get("models", []):
+            model = create_model_from_config(model_config.get("model", {}))
+            strategy = StrategyConfig(
+                tp_degree=model_config.get("strategy", {}).get("tp", 1),
+                pp_degree=model_config.get("strategy", {}).get("pp", 1),
+                dp_degree=model_config.get("strategy", {}).get("dp", 1),
+            )
+            allocations.append(
+                ModelAllocation(
+                    name=model_config.get("name", "model"),
+                    model=model,
+                    strategy=strategy,
+                    workload=model_config.get("workload", "training"),
+                )
+            )
+
+        analyzer = ColocateAnalyzer(device, cluster)
+        result = analyzer.analyze(allocations)
+
+        return jsonify(
+            {
+                "success": True,
+                "result": result.to_dict(),
+            }
+        )
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

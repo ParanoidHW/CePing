@@ -3,25 +3,31 @@
 Analyzes performance based on compute patterns, NOT model types.
 """
 
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Union, Optional, Tuple
 
 from llm_perf.modeling import ShardedModule
+from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.modeling.module import ModuleInstance
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.strategy.base import StrategyConfig
+from llm_perf.strategy.parallel_context import ParallelContext, SPType, CommDomain
 from llm_perf.kernels.compute import ComputeKernelRegistry
 from llm_perf.kernels.communication import CommKernelRegistry
 from llm_perf.kernels.functional import linear, flash_attention, conv3d, KernelResult
+from llm_perf.kernels.backend.theory import TheoryBackend, BackendConfig
 from llm_perf.utils.constants import DTYPE_SIZES
 
 from .base import (
     Phase,
     PhaseResult,
+    SubmoduleResult,
     UnifiedResult,
     WorkloadConfig,
     ComputeType,
     ComputePattern,
     ThroughputMetric,
+    CommunicationBreakdown,
 )
 from .workload_loader import get_workload
 
@@ -54,6 +60,72 @@ class UnifiedAnalyzer:
         self.compute_registry = ComputeKernelRegistry(device)
         self.comm_registry = CommKernelRegistry(cluster)
 
+    def _create_parallel_context(self, params: Dict[str, Any]) -> ParallelContext:
+        """从StrategyConfig创建ParallelContext."""
+        sp_type = SPType.NONE
+        if getattr(self.strategy, "sequence_parallel", False):
+            sp_type = SPType.ULYSSES
+
+        ctx = ParallelContext(
+            tp_degree=self.strategy.tp_degree,
+            pp_degree=self.strategy.pp_degree,
+            ep_degree=self.strategy.ep_degree,
+            sp_degree=self.strategy.sp_degree,
+            dp_degree=self.strategy.dp_degree,
+            sp_type=sp_type,
+            dtype=params.get("dtype", "fp16"),
+            device=self.device.config,
+            activation_checkpointing=getattr(self.strategy, "activation_checkpointing", False),
+            zero_stage=getattr(self.strategy, "zero_stage", 0),
+        )
+
+        if hasattr(self.cluster, "topology"):
+            topology = self.cluster.topology
+            ctx.comm_domains = {
+                "tp": CommDomain(
+                    "tp",
+                    ctx.tp_degree,
+                    list(range(ctx.tp_degree)),
+                    getattr(topology, "intra_node_bandwidth_gbps", 400.0),
+                ),
+                "dp": CommDomain(
+                    "dp",
+                    ctx.dp_degree,
+                    list(range(ctx.dp_degree)),
+                    getattr(topology, "inter_node_bandwidth_gbps", 100.0),
+                ),
+            }
+
+        return ctx
+
+    def _infer_submodule_type(self, sub_name: str) -> str:
+        """推断子模块类型."""
+        sub_lower = sub_name.lower()
+        if "embedding" in sub_lower or "emb" in sub_lower:
+            return "embedding"
+        elif "attention" in sub_lower or "attn" in sub_lower:
+            return "attention"
+        elif "ffn" in sub_lower or "mlp" in sub_lower:
+            return "ffn"
+        elif "moe" in sub_lower:
+            return "moe"
+        elif "lm_head" in sub_lower or "output" in sub_lower:
+            return "lm_head"
+        elif "norm" in sub_lower:
+            return "rms_norm"
+        elif "conv" in sub_lower:
+            return "conv"
+        elif "resblock" in sub_lower or "res" in sub_lower:
+            return "resblock"
+        else:
+            return "unknown"
+
+    def _estimate_submodule_time(self, sub_inst: ModuleInstance) -> float:
+        """估算子模块时间."""
+        backend_config = BackendConfig(name="theory", device=self.device)
+        backend = TheoryBackend(backend_config)
+        return sub_inst.estimate_time(backend)
+
     def analyze(
         self,
         workload: Union[str, WorkloadConfig],
@@ -80,8 +152,18 @@ class UnifiedAnalyzer:
 
         throughput = self._calculate_throughput(phase_results, workload, resolved_params)
 
+        forward_flops = sum(
+            p.flops for p in phase_results if p.compute_type == ComputeType.FORWARD and p.flops is not None
+        )
+        mfu = self._calculate_mfu(int(forward_flops), total_time)
+
+        batch_size = resolved_params.get("batch_size", 1)
+        qps = self._calculate_qps(batch_size, total_time)
+
+        comm_breakdown = self._extract_communication_breakdown(phase_results)
+
         breakdown = self._generate_breakdown(phase_results, workload, total_time, throughput)
-        detailed_breakdown = self._generate_detailed_breakdown(phase_results, workload)
+        detailed_breakdown = self._generate_detailed_breakdown(phase_results, workload, comm_breakdown)
 
         return UnifiedResult(
             workload_name=workload.name,
@@ -98,6 +180,9 @@ class UnifiedAnalyzer:
             },
             breakdown=breakdown,
             detailed_breakdown=detailed_breakdown,
+            mfu=mfu,
+            qps=qps,
+            communication_breakdown=comm_breakdown,
         )
 
     def _analyze_phases(
@@ -119,7 +204,9 @@ class UnifiedAnalyzer:
             if compute_pattern is None:
                 compute_pattern = self._infer_compute_pattern(component)
 
-            single_time, memory, flops = self._estimate_phase(component, phase, compute_pattern, params, seq_len_factor)
+            single_time, memory, flops, submodules = self._estimate_phase(
+                component, phase, compute_pattern, params, seq_len_factor
+            )
 
             total_time = single_time * repeat_count
 
@@ -133,6 +220,7 @@ class UnifiedAnalyzer:
                     total_time_sec=total_time,
                     memory_gb=memory,
                     flops=flops,
+                    submodules=submodules,
                 )
             )
 
@@ -171,6 +259,70 @@ class UnifiedAnalyzer:
         """
         return ComputePattern.TRANSFORMER_BLOCK
 
+    def _analyze_phase_with_submodules(
+        self,
+        component: ShardedModule,
+        phase: Phase,
+        params: Dict[str, Any],
+    ) -> Tuple[float, float, int, List[SubmoduleResult]]:
+        """使用ShardedModule.bind()机制分析phase和子模块."""
+        ctx = self._create_parallel_context(params)
+
+        batch_size = params.get("batch_size", 1)
+        seq_len = params.get("seq_len", params.get("prompt_len", 512))
+        hidden_size = getattr(component, "hidden_size", 4096)
+
+        compute_pattern = phase.compute_pattern or self._infer_compute_pattern(component)
+
+        if compute_pattern == ComputePattern.CONV_ENCODER:
+            num_frames = params.get("num_frames", 81)
+            height = params.get("height", 720)
+            width = params.get("width", 1280)
+            channels = getattr(component, "in_channels", 3)
+            input_tensor = ShardedTensor(shape=(batch_size, channels, num_frames, height, width))
+        elif compute_pattern == ComputePattern.CONV_DECODER:
+            latent_t = (params.get("num_frames", 81) - 1) // 4 + 1
+            latent_h = params.get("height", 720) // 8
+            latent_w = params.get("width", 1280) // 8
+            latent_channels = getattr(component, "latent_channels", 16)
+            input_tensor = ShardedTensor(shape=(batch_size, latent_channels, latent_t, latent_h, latent_w))
+        else:
+            input_tensor = ShardedTensor(shape=(batch_size, seq_len, hidden_size))
+
+        try:
+            component(input_tensor)
+        except Exception:
+            pass
+
+        mode = "forward_backward" if phase.compute_type in [ComputeType.BACKWARD, ComputeType.OPTIMIZER] else "forward"
+        module_instance = component.bind(ctx, mode=mode)
+
+        if phase.compute_type == ComputeType.FORWARD:
+            flops = module_instance.flops_forward_physical
+        else:
+            flops = module_instance.flops_total_physical
+
+        memory = module_instance.activation_memory_physical / 1e9
+
+        submodules = []
+        for sub_name, sub_inst in module_instance._submodule_instances.items():
+            submodules.append(
+                SubmoduleResult(
+                    name=sub_name,
+                    submodule_type=self._infer_submodule_type(sub_name),
+                    time_sec=self._estimate_submodule_time(sub_inst),
+                    flops=sub_inst.flops_forward_physical,
+                    memory_gb=sub_inst.activation_memory_physical / 1e9,
+                    communication_bytes=sum(op.data_bytes for op in sub_inst.total_comm_ops),
+                )
+            )
+
+        backend_config = BackendConfig(name="theory", device=self.device)
+        backend = TheoryBackend(backend_config)
+        time_sec = module_instance.estimate_time(backend)
+
+        return time_sec, memory, flops, submodules
+
     def _estimate_phase(
         self,
         component: ShardedModule,
@@ -182,36 +334,49 @@ class UnifiedAnalyzer:
         """Estimate single phase execution based on compute pattern.
 
         Returns:
-            (time_sec, memory_gb, flops)
+            (time_sec, memory_gb, flops, submodules)
         """
         dtype = getattr(component, "dtype", "fp16")
         dtype_bytes = DTYPE_SIZES.get(dtype, 2)
-
         batch_size = params.get("batch_size", 1)
 
         if compute_pattern == ComputePattern.TRANSFORMER_BLOCK:
-            return self._estimate_transformer_block(
+            time_sec, memory_gb, flops = self._estimate_transformer_block(
                 component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
-
         elif compute_pattern == ComputePattern.CONV_ENCODER:
-            return self._estimate_conv_encoder(component, batch_size, params, dtype, dtype_bytes, phase.compute_type)
-
+            time_sec, memory_gb, flops = self._estimate_conv_encoder(
+                component, batch_size, params, dtype, dtype_bytes, phase.compute_type
+            )
         elif compute_pattern == ComputePattern.CONV_DECODER:
-            return self._estimate_conv_decoder(component, batch_size, params, dtype, dtype_bytes, phase.compute_type)
-
+            time_sec, memory_gb, flops = self._estimate_conv_decoder(
+                component, batch_size, params, dtype, dtype_bytes, phase.compute_type
+            )
         elif compute_pattern == ComputePattern.ATTENTION_ONLY:
-            return self._estimate_attention_only(
+            time_sec, memory_gb, flops = self._estimate_attention_only(
                 component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
-
         elif compute_pattern == ComputePattern.DENSE_FORWARD:
-            return self._estimate_dense_forward(component, batch_size, params, dtype, dtype_bytes, phase.compute_type)
-
+            time_sec, memory_gb, flops = self._estimate_dense_forward(
+                component, batch_size, params, dtype, dtype_bytes, phase.compute_type
+            )
         else:
-            return self._estimate_transformer_block(
+            time_sec, memory_gb, flops = self._estimate_transformer_block(
                 component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
+
+        submodules: List[SubmoduleResult] = []
+
+        try:
+            bind_time, bind_memory, bind_flops, bind_submodules = self._analyze_phase_with_submodules(
+                component, phase, params
+            )
+            if bind_time > 0 or bind_flops > 0 or len(bind_submodules) > 0:
+                submodules = bind_submodules
+        except Exception:
+            pass
+
+        return time_sec, memory_gb, flops, submodules
 
     def _estimate_transformer_block(
         self,
@@ -780,6 +945,42 @@ class UnifiedAnalyzer:
 
         return time, memory, total_flops
 
+    def _calculate_qps(self, batch_size: int, total_time_sec: float) -> float:
+        """计算QPS = batch_size * dp_degree / total_time."""
+        dp = self.strategy.dp_degree
+        if total_time_sec <= 0:
+            return 0.0
+        return batch_size * dp / total_time_sec
+
+    def _infer_comm_op_type(self, submodule_type: str) -> str:
+        """根据子模块类型推断通信操作类型."""
+        type_mapping = {
+            "attention": "all_reduce",
+            "ffn": "all_reduce",
+            "moe": "all_to_all",
+            "embedding": "all_gather",
+            "lm_head": "reduce_scatter",
+        }
+        return type_mapping.get(submodule_type, "all_reduce")
+
+    def _extract_communication_breakdown(self, phase_results: List[PhaseResult]) -> CommunicationBreakdown:
+        """从PhaseResult.submodules的communication_bytes提取通信分解."""
+        comm_ops = {
+            "all_reduce": {"total_bytes": 0, "total_time_sec": 0.0},
+            "all_gather": {"total_bytes": 0, "total_time_sec": 0.0},
+            "reduce_scatter": {"total_bytes": 0, "total_time_sec": 0.0},
+            "all_to_all": {"total_bytes": 0, "total_time_sec": 0.0},
+        }
+
+        for phase in phase_results:
+            for sm in phase.submodules:
+                if sm.communication_bytes > 0:
+                    op_type = self._infer_comm_op_type(sm.submodule_type)
+                    comm_ops[op_type]["total_bytes"] += sm.communication_bytes
+                    comm_ops[op_type]["total_time_sec"] += sm.time_sec * 0.1
+
+        return CommunicationBreakdown(**comm_ops)
+
     def _calculate_throughput(
         self,
         phase_results: List[PhaseResult],
@@ -830,6 +1031,27 @@ class UnifiedAnalyzer:
             "ep": self.strategy.ep_degree,
         }
 
+    def _calculate_mfu(self, total_flops: int, total_time_sec: float) -> float:
+        """Calculate Model FLOPs Utilization.
+
+        Args:
+            total_flops: Total FLOPs executed
+            total_time_sec: Total execution time in seconds
+
+        Returns:
+            MFU value between 0 and 1
+        """
+        peak_tflops = self.device.config.fp16_tflops_cube
+        num_devices = self.cluster.num_devices
+
+        if peak_tflops <= 0 or total_time_sec <= 0 or total_flops <= 0:
+            return 0.0
+
+        theoretical_peak_flops = peak_tflops * 1e12 * num_devices * total_time_sec
+        mfu = total_flops / theoretical_peak_flops
+
+        return min(mfu, 1.0)
+
     def _count_params(self, component: Optional[ShardedModule]) -> int:
         """Count parameters in a component."""
         if component is None:
@@ -875,6 +1097,23 @@ class UnifiedAnalyzer:
                 }
             )
 
+        submodule_breakdown = []
+        for phase in phases:
+            for sm in phase.submodules:
+                submodule_breakdown.append(
+                    {
+                        "phase": phase.name,
+                        "name": sm.name,
+                        "type": sm.submodule_type,
+                        "time_sec": sm.time_sec,
+                        "time_ms": sm.time_sec * 1000,
+                        "flops": sm.flops,
+                        "flops_gflops": sm.flops / 1e9,
+                        "memory_gb": sm.memory_gb,
+                        "communication_gb": sm.communication_bytes / 1e9,
+                    }
+                )
+
         return {
             "overview": {
                 "total_time_sec": total_time,
@@ -889,12 +1128,14 @@ class UnifiedAnalyzer:
                 "compute_percent": compute_time / total_time * 100 if total_time > 0 else 0,
             },
             "layers": layers,
+            "submodules": submodule_breakdown,
         }
 
     def _generate_detailed_breakdown(
         self,
         phases: List[PhaseResult],
         workload: WorkloadConfig,
+        comm_breakdown: Optional[CommunicationBreakdown] = None,
     ) -> Dict[str, Any]:
         """Generate legacy detailed_breakdown format for frontend compatibility."""
         by_component: Dict[str, Dict[str, float]] = {}
@@ -904,6 +1145,10 @@ class UnifiedAnalyzer:
             by_component[phase.component]["activations"] = phase.memory_gb
 
         total_memory = sum(p.memory_gb for p in phases)
+
+        comm_breakdown_dict = {}
+        if comm_breakdown:
+            comm_breakdown_dict = comm_breakdown.to_dict()
 
         return {
             "submodels": [
@@ -921,7 +1166,8 @@ class UnifiedAnalyzer:
                 "by_block_type": {},
             },
             "communication": {
-                "by_parallelism": {},
+                "by_parallelism": comm_breakdown_dict,
+                "total_bytes": sum(v["total_bytes"] for v in comm_breakdown_dict.values()),
             },
         }
 

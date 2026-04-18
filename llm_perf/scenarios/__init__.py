@@ -35,6 +35,11 @@ from .llm_inference import (
     LLMInferenceConfig,
     LLMInferenceResult,
 )
+from .colocate import (
+    ColocateAnalyzer,
+    ColocateResult,
+    ModelAllocation,
+)
 
 __all__ = [
     "Scenario",
@@ -51,4 +56,7 @@ __all__ = [
     "LLMInferenceScenario",
     "LLMInferenceConfig",
     "LLMInferenceResult",
+    "ColocateAnalyzer",
+    "ColocateResult",
+    "ModelAllocation",
 ]
