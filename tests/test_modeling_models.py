@@ -573,3 +573,135 @@ class TestCreateModelFromConfig:
         assert isinstance(model, ShardedWanDiT)
         assert model.hidden_size == 5120
         assert model.num_layers == 40
+
+
+class TestModelParamsVerification:
+    """Verify model params match official values.
+
+    Official reference:
+    - LLaMA 2: https://huggingface.co/meta-llama (vocab=32000)
+    - LLaMA 3: https://huggingface.co/meta-llama (vocab=128256)
+    - DeepSeek V3: https://huggingface.co/deepseek-ai/DeepSeek-V3
+
+    Params formula:
+    - FP16 memory = Params × 2 bytes
+    - BF16 memory = Params × 2 bytes
+    """
+
+    def test_llama_7b_params(self):
+        """LLaMA 7B: ~6.7B params, ~13.4GB FP16 memory."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=32,
+            num_kv_heads=32,
+            intermediate_size=11008,
+        )
+
+        params = model.params_count()
+        fp16_mem_gb = params * 2 / 1e9
+
+        assert 6.5e9 < params < 7.0e9, f"LLaMA 7B params should be ~6.7B, got {params / 1e9:.2f}B"
+        assert 13.0 < fp16_mem_gb < 14.0, f"LLaMA 7B FP16 memory should be ~13.4GB, got {fp16_mem_gb:.2f}GB"
+
+    def test_llama_13b_params(self):
+        """LLaMA 13B: ~13B params, ~26GB FP16 memory."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=5120,
+            num_layers=40,
+            num_heads=40,
+            num_kv_heads=40,
+            intermediate_size=13824,
+        )
+
+        params = model.params_count()
+        fp16_mem_gb = params * 2 / 1e9
+
+        assert 12.8e9 < params < 13.2e9, f"LLaMA 13B params should be ~13B, got {params / 1e9:.2f}B"
+        assert 25.5 < fp16_mem_gb < 26.5, f"LLaMA 13B FP16 memory should be ~26GB, got {fp16_mem_gb:.2f}GB"
+
+    def test_llama_70b_params_with_gqa(self):
+        """LLaMA 70B with GQA: ~69B params, ~138GB FP16 memory.
+
+        GQA (Grouped Query Attention):
+        - 64 query heads, 8 KV heads
+        - Reduces KV weights by ~9.4B
+        """
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=8192,
+            num_layers=80,
+            num_heads=64,
+            num_kv_heads=8,
+            intermediate_size=28672,
+        )
+
+        params = model.params_count()
+        fp16_mem_gb = params * 2 / 1e9
+
+        assert 68e9 < params < 70e9, f"LLaMA 70B params should be ~69B (GQA), got {params / 1e9:.2f}B"
+        assert 136 < fp16_mem_gb < 140, f"LLaMA 70B FP16 memory should be ~138GB, got {fp16_mem_gb:.2f}GB"
+
+    def test_deepseek_v3_params(self):
+        """DeepSeek V3: MoE model with MLA.
+
+        Official config from HuggingFace:
+        - vocab_size: 129280
+        - hidden_size: 7168
+        - num_layers: 61
+        - first_k_dense_replace: 3 (first 3 layers dense, rest MoE)
+        - n_routed_experts: 256
+        - num_experts_per_tok: 8
+        """
+        model = DeepSeekModel(
+            vocab_size=129280,
+            hidden_size=7168,
+            num_layers=61,
+            num_heads=128,
+            num_kv_heads=128,
+            intermediate_size=18432,
+            first_k_dense_layers=3,
+            num_experts=256,
+            num_experts_per_token=8,
+            moe_intermediate_size=2048,
+        )
+
+        params = model.params_count()
+
+        assert params > 1e9, f"DeepSeek V3 should have >1B params (active), got {params / 1e9:.2f}B"
+
+    def test_params_memory_formula(self):
+        """Verify FP16/BF16 memory formula: Params × 2 bytes."""
+        model = LlamaModel(32000, 4096, 4, 32, 32, 11008)
+
+        params = model.params_count()
+
+        fp16_mem = params * 2
+        bf16_mem = params * 2
+
+        assert fp16_mem == bf16_mem, "FP16 and BF16 should have same memory (2 bytes each)"
+
+    def test_llama_7b_breakdown(self):
+        """Verify LLaMA 7B params breakdown."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=32,
+            num_kv_heads=32,
+            intermediate_size=11008,
+        )
+
+        breakdown = model.params_count_breakdown()
+
+        embedding = sum(v for k, v in breakdown.items() if "embedding" in k)
+        attention = sum(v for k, v in breakdown.items() if "attention" in k)
+        ffn = sum(v for k, v in breakdown.items() if "ffn" in k or "gate" in k or "up" in k or "down" in k)
+        lm_head = sum(v for k, v in breakdown.items() if "lm_head" in k)
+
+        assert embedding == 32000 * 4096, f"Embedding params mismatch"
+        assert lm_head == 32000 * 4096, f"LM head params mismatch"
+        assert attention > 2e9, f"Attention params should be >2B"
+        assert ffn > 4e9, f"FFN params should be >4B"

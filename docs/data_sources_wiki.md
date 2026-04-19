@@ -6,6 +6,14 @@
 
 ## 更新日志
 
+### 2026-04-19: 模型参数验证与官方配置对齐
+- 添加 LLaMA/DeepSeek V3 官方配置参数验证测试用例
+- DeepSeek V3 配置修正: first_k_dense_layers 从 1 改为 3 (与官方 first_k_dense_replace 一致)
+- 参考来源:
+  - DeepSeek V3: https://huggingface.co/deepseek-ai/DeepSeek-V3 (vocab_size=129280)
+  - LLaMA 2: https://huggingface.co/meta-llama (vocab_size=32000)
+  - LLaMA 3: https://huggingface.co/meta-llama (vocab_size=128256)
+
 ### 2026-04-03: 新增 Wan2.1 视频生成模型支持
 - 新增 Wan2.1-T2V-14B 多模态生成模型评估支持
 - 包含 Text Encoder (umT5-XXL)、DiT Backbone、3D Causal VAE 三个核心组件
