@@ -90,6 +90,9 @@ class CommPatternDeriver:
         weight_dim_0_sharded = 0 in weight_shardable
         weight_dim_1_sharded = 1 in weight_shardable
 
+        need_allreduce = False
+        ptype = None
+
         if weight_dim_1_sharded:
             ptype = weight_shardable[1]
 
@@ -98,9 +101,7 @@ class CommPatternDeriver:
             )
 
             if output_not_sharded:
-                output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
-                comm_bytes = math.prod(output_physical) * dtype_size
-                ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
+                need_allreduce = True
 
         elif weight_dim_0_sharded:
             ptype = weight_shardable[0]
@@ -108,18 +109,21 @@ class CommPatternDeriver:
             output_sharded_on_last_dim = len(op.output.shape) >= 2 and (len(op.output.shape) - 1) in output_shardable
 
             if not output_sharded_on_last_dim:
-                output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
-                comm_bytes = math.prod(output_physical) * dtype_size
-                ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
+                need_allreduce = True
 
         if len(op.input.shape) >= 2:
             last_dim = len(op.input.shape) - 1
             if last_dim in input_shardable:
-                ptype = input_shardable[last_dim]
+                input_ptype = input_shardable[last_dim]
                 if last_dim not in output_shardable:
-                    output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
-                    comm_bytes = math.prod(output_physical) * dtype_size
-                    ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
+                    need_allreduce = True
+                    if ptype is None:
+                        ptype = input_ptype
+
+        if need_allreduce and ptype:
+            output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
+            comm_bytes = math.prod(output_physical) * dtype_size
+            ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
 
         return ops
 

@@ -348,7 +348,27 @@ class UnifiedAnalyzer:
         memory = module_instance.activation_memory_physical / 1e9
 
         submodules = []
+        prev_op_count = 0
         for sub_name, sub_inst in module_instance._submodule_instances.items():
+            current_op_count = 0
+            if sub_inst.module._last_forward_output:
+                current_op_count = len(sub_inst.module._last_forward_output._op_history)
+
+            delta_comm_bytes = 0
+            if sub_inst.module._last_forward_output and current_op_count > prev_op_count:
+                delta_ops = sub_inst.module._last_forward_output._op_history[prev_op_count:current_op_count]
+                if phase.compute_type != ComputeType.OPTIMIZER:
+                    for op in delta_ops:
+                        comm_ops = sub_inst._infer_comm_ops(op)
+                        if phase.compute_type == ComputeType.FORWARD:
+                            delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
+                        elif phase.compute_type == ComputeType.BACKWARD:
+                            delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
+                            backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
+                            delta_comm_bytes += sum(op.data_bytes for op in backward_comm_ops)
+
+            prev_op_count = current_op_count
+
             submodules.append(
                 SubmoduleResult(
                     name=sub_name,
@@ -356,7 +376,7 @@ class UnifiedAnalyzer:
                     time_sec=self._estimate_submodule_time(sub_inst),
                     flops=sub_inst.flops_forward_physical,
                     memory_gb=sub_inst.activation_memory_physical / 1e9,
-                    communication_bytes=sum(op.data_bytes for op in sub_inst.own_comm_ops),
+                    communication_bytes=delta_comm_bytes,
                 )
             )
 
