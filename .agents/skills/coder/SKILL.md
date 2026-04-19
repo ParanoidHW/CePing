@@ -28,6 +28,9 @@ description: 负责实际开发
 - 禁止随意生成解释，think得到的数据，需要有外部信息（paper、code、白皮书等）作为数据和信息支撑；
 - 开发过程中，如果涉及外部检索到的信息数据，需要刷新到``docs/data_sources_wiki.md``文件中作为参考，将变更日志刷新到md最开始；
 - 每次新增特性、进行重构或解决bug，需整理本次prompt&开发过程的摘要，刷新到本地DEVELOP_LOG.md文件（需提交到仓库）和review.log文件（不提交到仓库，仅用于本次开发的临时记录）；
+- **新增特性必须有测试用例覆盖**
+- **存量测试必须全部通过才能提交**
+- **每个特性完成后立即提交一个commit，小步快跑**
 
 ### 1.1 导入规范
 - 标准库导入在前，第三方库其次，本地模块最后
@@ -237,13 +240,98 @@ def _build_modulation_layer(self, layer_idx: int):
 ### 开发后
 - [ ] 通过 ruff 检查（F401, F841, E741）
 - [ ] 通过所有单元测试
+- [ ] 通过全量测试（包括慢测试）
 - [ ] 更新测试期望（如有结构变更）
 - [ ] 更新相关文档
 - [ ] 提交代码并写清楚提交信息
+- [ ] 每个特性单独提交一个commit
+- [ ] 推送到远程仓库
 
 ---
 
-## 8. 工具命令速查
+## 8. 开发流程最佳实践
+
+### 8.1 小步快跑原则
+- **每个特性完成后立即提交一个commit**
+- 优点：方便回退、清晰的历史记录、易于review
+- 避免：一次性提交大量改动
+
+```bash
+# 正确做法：分阶段提交
+git add llm_perf/modeling/module.py
+git commit -m "refactor(modeling): move bind() to base class"
+
+git add tests/test_integration_modeling.py
+git commit -m "test: add bind mechanism tests"
+```
+
+### 8.2 测试先行原则
+- **新增特性必须添加测试用例**
+- **修改代码后必须运行存量测试**
+- **提交前必须全量测试通过**
+
+```bash
+# 开发流程
+1. 编写代码
+2. 编写测试用例
+3. 运行测试: python -m pytest tests/ -v
+4. 提交commit
+```
+
+### 8.3 架构问题分析方法
+当发现架构问题时：
+1. **先分析问题根因** - 不急于修改
+2. **给出设计方案** - 详细说明改动点
+3. **按优先级排序** - P0 > P1 > P2 > P3
+4. **小步实现** - 每个TODO单独提交
+
+### 8.4 TODO管理
+- 使用 `todowrite` 工具跟踪进度
+- 明确标记：pending / in_progress / completed
+- 记录优先级：P0(最高) / P1 / P2 / P3(最低)
+
+### 8.5 Git提交规范
+- **标题行**：`<type>(<scope>): <subject>`
+- **type**: feat / fix / refactor / test / docs
+- **scope**: 模块名（如 modeling, kernels, analyzer）
+- **subject**: 简短描述（不超过50字符）
+- **body**: 详细说明改动内容（可选）
+
+```bash
+# 好的commit message
+feat(modeling): add CommPatternDeriver for communication derivation
+
+- Create llm_perf/modeling/comm_deriver.py
+- Support MatmulOp, AttentionOp, EmbeddingOp, MoEExpertOp
+- Systematic derivation based on sharding changes
+
+Tests: 200 passed (4 new tests added)
+
+# 不好的commit message
+update code
+fix bug
+```
+
+---
+
+## 9. 代码质量约束
+
+### 9.1 禁止随意解释
+- **think得到的数据**，必须有外部信息支撑（paper、code、白皮书等）
+- **架构设计修正**，必须说明参考来源
+- **禁止无根据的假设**
+
+### 9.2 外部信息管理
+- 检索到的外部信息刷新到 `docs/data_sources_wiki.md`
+- 变更日志写在md文件最开始
+
+### 9.3 开发日志管理
+- `DEVELOP_LOG.md` - 提交到仓库，记录开发摘要
+- `review.log` - 不提交，临时记录
+
+---
+
+## 10. 工具命令速查
 
 ```bash
 # 代码检查
@@ -255,10 +343,20 @@ grep -n "activation_bytes=" llm_perf/modeling/*.py | grep -v "kernel_result_to_l
 # 运行测试
 python -m pytest tests/test_models.py -v --tb=short
 
+# 全量测试
+python -m pytest tests/ --tb=no -q
+
 # 验证模型
 python -c "from llm_perf.modeling import LlamaModel; m = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32); print(f'{len(m.layers)} layers')"
 
 # 查看 git 状态
 git status
 git diff --stat
+git log --oneline -5
+
+# 推送到远程
+git push origin main
+
+# 查看远程差异
+git log --oneline origin/main..HEAD
 ```
