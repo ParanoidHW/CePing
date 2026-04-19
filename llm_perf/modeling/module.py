@@ -304,8 +304,8 @@ class ModuleInstance:
     def activation_memory_physical(self) -> int:
         """Activation memory (physical, sharded).
 
-        Rules:
-        - Training (forward_backward): save all activations
+        Uses intermediate tensors tracked during forward pass.
+        - Training (forward_backward): all non-view intermediate tensors
         - Inference (forward): only max single layer
         """
         if self.mode == "forward":
@@ -313,10 +313,27 @@ class ModuleInstance:
                 return 0
             return max(a.physical_bytes for a in self._activation_instances.values())
         else:
-            total = sum(a.physical_bytes for a in self._activation_instances.values())
+            # Use intermediate tensors tracked by _track_intermediate
+            # Filter out view tensors (no new memory allocation)
+            parallel_degrees = self._get_parallel_degrees()
+            total = 0
+
+            for name, activation in self.module._intermediate_tensors.items():
+                # Skip view tensors
+                if hasattr(activation, "_is_view") and activation._is_view:
+                    continue
+                if hasattr(activation, "get_physical_bytes"):
+                    total += activation.get_physical_bytes(parallel_degrees)
+
+            # Add submodule activation memory
+            for sub_inst in self._submodule_instances.values():
+                total += sub_inst.activation_memory_physical
+
+            # Apply activation checkpointing ratio if enabled
             if hasattr(self.ctx, "activation_checkpointing") and self.ctx.activation_checkpointing:
                 ratio = getattr(self.ctx, "activation_checkpointing_ratio", 1)
                 total = total // ratio
+
             return total
 
     @property
