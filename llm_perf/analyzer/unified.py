@@ -1295,11 +1295,20 @@ class UnifiedAnalyzer:
                 by_component[phase.component] = {}
             by_component[phase.component]["activations_gb"] = phase.memory_gb
 
-        # Merge norm submodules first (same as module_breakdown)
+        # Find peak memory phase
+        peak_phase = max(phases, key=lambda p: p.memory_gb) if phases else None
+
+        # For compute/communication: sum across all phases (total work)
+        # For memory: use peak phase only (peak memory)
         all_submodules = []
         for phase in phases:
             all_submodules.extend(phase.submodules)
         merged_submodules = _merge_norm_submodules(all_submodules)
+
+        # Use peak phase submodules for memory display
+        peak_submodules = []
+        if peak_phase:
+            peak_submodules = _merge_norm_submodules(peak_phase.submodules)
 
         by_submodule_type: Dict[str, Dict[str, Any]] = {}
         by_nested_type: Dict[str, Dict[str, Any]] = {}
@@ -1313,7 +1322,15 @@ class UnifiedAnalyzer:
                     "communication": {"bytes": 0, "gb": 0.0},
                     "nested_breakdown": {},
                 }
-            by_submodule_type[block_type]["memory"]["activations_gb"] += sm.memory_gb
+
+            # Memory: sum all peak phase submodules of same type
+            peak_sms = [s for s in peak_submodules if s.submodule_type == block_type]
+            if peak_sms:
+                peak_mem = sum(s.memory_gb for s in peak_sms)
+                if by_submodule_type[block_type]["memory"]["activations_gb"] == 0:
+                    by_submodule_type[block_type]["memory"]["activations_gb"] = peak_mem
+
+            # Compute/communication: sum all phases
             by_submodule_type[block_type]["compute"]["flops"] += sm.flops
             by_submodule_type[block_type]["compute"]["flops_gflops"] += sm.flops / 1e9
             by_submodule_type[block_type]["compute"]["time_sec"] += sm.time_sec
@@ -1322,9 +1339,14 @@ class UnifiedAnalyzer:
 
             # Handle nested submodules (attention, ffn/moe)
             if sm.nested_submodules:
+                # Get all peak nested submodules of this type
+                peak_nested_all = []
+                for peak_s in peak_sms:
+                    if peak_s.nested_submodules:
+                        peak_nested_all.extend(peak_s.nested_submodules)
+
                 for nested in sm.nested_submodules:
                     nested_type = nested.submodule_type
-                    nested_key = f"{block_type}.{nested_type}"
 
                     if nested_type not in by_submodule_type[block_type]["nested_breakdown"]:
                         by_submodule_type[block_type]["nested_breakdown"][nested_type] = {
@@ -1333,9 +1355,19 @@ class UnifiedAnalyzer:
                             "communication": {"bytes": 0, "gb": 0.0},
                         }
 
-                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["activations_gb"] += (
-                        nested.memory_gb
-                    )
+                    # Memory: sum all peak phase nested submodules of same type
+                    peak_nested_sms = [n for n in peak_nested_all if n.submodule_type == nested_type]
+                    if peak_nested_sms:
+                        peak_nested_mem = sum(n.memory_gb for n in peak_nested_sms)
+                        if (
+                            by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["activations_gb"]
+                            == 0
+                        ):
+                            by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"][
+                                "activations_gb"
+                            ] = peak_nested_mem
+
+                    # Compute/communication: sum all phases
                     by_submodule_type[block_type]["nested_breakdown"][nested_type]["compute"]["flops"] += nested.flops
                     by_submodule_type[block_type]["nested_breakdown"][nested_type]["compute"]["time_sec"] += (
                         nested.time_sec
@@ -1355,7 +1387,12 @@ class UnifiedAnalyzer:
                             "communication": {"bytes": 0, "gb": 0.0},
                             "parent_type": block_type,
                         }
-                    by_nested_type[nested_type]["memory"]["activations_gb"] += nested.memory_gb
+
+                    # Memory: sum all peak phase nested submodules
+                    if peak_nested_sms and by_nested_type[nested_type]["memory"]["activations_gb"] == 0:
+                        by_nested_type[nested_type]["memory"]["activations_gb"] = peak_nested_mem
+
+                    # Compute/communication: sum all phases
                     by_nested_type[nested_type]["compute"]["flops"] += nested.flops
                     by_nested_type[nested_type]["compute"]["flops_gflops"] += nested.flops / 1e9
                     by_nested_type[nested_type]["compute"]["time_sec"] += nested.time_sec
@@ -1363,6 +1400,7 @@ class UnifiedAnalyzer:
                     by_nested_type[nested_type]["communication"]["gb"] += nested.communication_bytes / 1e9
 
         total_memory = sum(p.memory_gb for p in phases)
+        peak_memory = max(p.memory_gb for p in phases) if phases else 0.0
 
         comm_breakdown_dict = {}
         if comm_breakdown:
