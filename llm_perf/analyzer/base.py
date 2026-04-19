@@ -96,8 +96,9 @@ class SubmoduleResult:
         submodule_type: 子模块类型 (embedding, attention, ffn, moe, lm_head, rms_norm, conv, resblock)
         time_sec: 执行时间（秒）
         flops: FLOPs
-        memory_gb: 内存占用（GB）
-        communication_bytes: 通信数据量（字节）
+        memory_gb: 内存占用（GB，每卡）
+        communication_bytes: 通信数据量（字节，每卡）
+        nested_submodules: 嵌套子模块（如 transformer_block 内的 attention, ffn）
     """
 
     name: str
@@ -106,9 +107,10 @@ class SubmoduleResult:
     flops: int
     memory_gb: float
     communication_bytes: int = 0
+    nested_submodules: List["SubmoduleResult"] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "name": self.name,
             "submodule_type": self.submodule_type,
             "time_sec": self.time_sec,
@@ -117,7 +119,9 @@ class SubmoduleResult:
             "flops_gflops": self.flops / 1e9,
             "memory_gb": self.memory_gb,
             "communication_gb": self.communication_bytes / 1e9,
+            "nested_submodules": [ns.to_dict() for ns in self.nested_submodules],
         }
+        return result
 
 
 @dataclass

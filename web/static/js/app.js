@@ -626,22 +626,43 @@ function renderDetailedBreakdown(detailed) {
             return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
         }).join('');
 
-    // Unified breakdown by submodule type (memory, compute, communication)
+    // Unified breakdown by submodule type with nested breakdown
     const bySubmoduleType = detailed.by_submodule_type || {};
-    const submoduleBreakdownRows = Object.entries(bySubmoduleType)
-        .map(([submoduleType, data]) => {
-            const memGb = data.memory?.activations_gb || 0;
-            const computeTflops = (data.compute?.flops || 0) / 1e12;
-            const computeSec = data.compute?.time_sec || 0;
-            const commGb = data.communication?.gb || 0;
-            return `<tr>
-                <td>${submoduleType}</td>
-                <td>${memGb.toFixed(2)} GB</td>
-                <td>${computeTflops.toFixed(2)} T</td>
-                <td>${computeSec.toFixed(3)} s</td>
-                <td>${commGb.toFixed(2)} GB</td>
-            </tr>`;
-        }).join('');
+    
+    let submoduleBreakdownRows = '';
+    for (const [submoduleType, data] of Object.entries(bySubmoduleType)) {
+        const memGb = data.memory?.activations_gb || 0;
+        const computeTflops = (data.compute?.flops || 0) / 1e12;
+        const computeSec = data.compute?.time_sec || 0;
+        const commGb = data.communication?.gb || 0;
+        
+        // Main row for submodule type
+        submoduleBreakdownRows += `<tr>
+            <td style="font-weight: bold;">${submoduleType}</td>
+            <td>${memGb.toFixed(2)} GB</td>
+            <td>${computeTflops.toFixed(2)} T</td>
+            <td>${computeSec.toFixed(3)} s</td>
+            <td>${commGb.toFixed(2)} GB</td>
+        </tr>`;
+        
+        // Nested rows (attention, ffn) for transformer_block
+        if (data.nested_breakdown) {
+            for (const [nestedType, nestedData] of Object.entries(data.nested_breakdown)) {
+                const nestedMemGb = nestedData.memory?.activations_gb || 0;
+                const nestedComputeTflops = (nestedData.compute?.flops || 0) / 1e12;
+                const nestedComputeSec = nestedData.compute?.time_sec || 0;
+                const nestedCommGb = nestedData.communication?.gb || 0;
+                
+                submoduleBreakdownRows += `<tr style="background: var(--gray-50);">
+                    <td style="padding-left: 1.5rem;">${nestedType}</td>
+                    <td>${nestedMemGb.toFixed(2)} GB</td>
+                    <td>${nestedComputeTflops.toFixed(2)} T</td>
+                    <td>${nestedComputeSec.toFixed(3)} s</td>
+                    <td>${nestedCommGb.toFixed(2)} GB</td>
+                </tr>`;
+            }
+        }
+    }
 
     // Communication breakdown by parallelism type
     const commByPara = detailed.communication?.by_parallelism || {};

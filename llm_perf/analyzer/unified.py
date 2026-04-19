@@ -305,7 +305,10 @@ class UnifiedAnalyzer:
         phase: Phase,
         params: Dict[str, Any],
     ) -> Tuple[float, float, int, List[SubmoduleResult]]:
-        """使用ShardedModule.bind()机制分析phase和子模块."""
+        """使用ShardedModule.bind()机制分析phase和子模块.
+
+        支持嵌套子模块分析：transformer_block 内部分解为 attention 和 ffn。
+        """
         ctx = self._create_parallel_context(params)
 
         batch_size = params.get("batch_size", 1)
@@ -369,14 +372,22 @@ class UnifiedAnalyzer:
 
             prev_op_count = current_op_count
 
+            submodule_type = self._infer_submodule_type(sub_name, sub_inst)
+
+            # Analyze nested submodules for transformer_block
+            nested_submodules = []
+            if submodule_type == "transformer_block":
+                nested_submodules = self._analyze_nested_submodules(sub_inst, phase)
+
             submodules.append(
                 SubmoduleResult(
                     name=sub_name,
-                    submodule_type=self._infer_submodule_type(sub_name, sub_inst),
+                    submodule_type=submodule_type,
                     time_sec=self._estimate_submodule_time(sub_inst),
                     flops=sub_inst.flops_forward_physical,
                     memory_gb=sub_inst.activation_memory_physical / 1e9,
                     communication_bytes=delta_comm_bytes,
+                    nested_submodules=nested_submodules,
                 )
             )
 
@@ -385,6 +396,65 @@ class UnifiedAnalyzer:
         time_sec = module_instance.estimate_time(backend)
 
         return time_sec, memory, flops, submodules
+
+    def _analyze_nested_submodules(
+        self,
+        parent_inst: ModuleInstance,
+        phase: Phase,
+    ) -> List["SubmoduleResult"]:
+        """分析嵌套子模块（如 transformer_block 内部的 attention, ffn）."""
+        from .base import SubmoduleResult
+
+        nested = []
+        prev_op_count = 0
+
+        for sub_name, sub_inst in parent_inst._submodule_instances.items():
+            sub_type = type(sub_inst.module).__name__
+
+            # Only analyze attention and ffn, skip norms (they belong to parent)
+            if sub_type not in ["ShardedAttention", "ShardedFFN", "ShardedMoE"]:
+                continue
+
+            current_op_count = 0
+            if sub_inst.module._last_forward_output:
+                current_op_count = len(sub_inst.module._last_forward_output._op_history)
+
+            delta_comm_bytes = 0
+            if sub_inst.module._last_forward_output and current_op_count > prev_op_count:
+                delta_ops = sub_inst.module._last_forward_output._op_history[prev_op_count:current_op_count]
+                if phase.compute_type != ComputeType.OPTIMIZER:
+                    for op in delta_ops:
+                        comm_ops = sub_inst._infer_comm_ops(op)
+                        delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
+                        if phase.compute_type == ComputeType.BACKWARD:
+                            backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
+                            delta_comm_bytes += sum(op.data_bytes for op in backward_comm_ops)
+
+            prev_op_count = current_op_count
+
+            # Infer submodule type
+            if sub_type == "ShardedAttention":
+                nested_type = "attention"
+            elif sub_type == "ShardedFFN":
+                nested_type = "ffn"
+            elif sub_type == "ShardedMoE":
+                nested_type = "moe"
+            else:
+                nested_type = sub_name
+
+            nested.append(
+                SubmoduleResult(
+                    name=sub_name,
+                    submodule_type=nested_type,
+                    time_sec=self._estimate_submodule_time(sub_inst),
+                    flops=sub_inst.flops_forward_physical,
+                    memory_gb=sub_inst.activation_memory_physical / 1e9,
+                    communication_bytes=delta_comm_bytes,
+                    nested_submodules=[],
+                )
+            )
+
+        return nested
 
     def _estimate_phase(
         self,
@@ -1232,22 +1302,16 @@ class UnifiedAnalyzer:
         merged_submodules = _merge_norm_submodules(all_submodules)
 
         by_submodule_type: Dict[str, Dict[str, Any]] = {}
+        by_nested_type: Dict[str, Dict[str, Any]] = {}
+
         for sm in merged_submodules:
             block_type = sm.submodule_type
             if block_type not in by_submodule_type:
                 by_submodule_type[block_type] = {
-                    "memory": {
-                        "activations_gb": 0.0,
-                    },
-                    "compute": {
-                        "flops": 0,
-                        "flops_gflops": 0.0,
-                        "time_sec": 0.0,
-                    },
-                    "communication": {
-                        "bytes": 0,
-                        "gb": 0.0,
-                    },
+                    "memory": {"activations_gb": 0.0},
+                    "compute": {"flops": 0, "flops_gflops": 0.0, "time_sec": 0.0},
+                    "communication": {"bytes": 0, "gb": 0.0},
+                    "nested_breakdown": {},
                 }
             by_submodule_type[block_type]["memory"]["activations_gb"] += sm.memory_gb
             by_submodule_type[block_type]["compute"]["flops"] += sm.flops
@@ -1255,6 +1319,48 @@ class UnifiedAnalyzer:
             by_submodule_type[block_type]["compute"]["time_sec"] += sm.time_sec
             by_submodule_type[block_type]["communication"]["bytes"] += sm.communication_bytes
             by_submodule_type[block_type]["communication"]["gb"] += sm.communication_bytes / 1e9
+
+            # Handle nested submodules (attention, ffn/moe)
+            if sm.nested_submodules:
+                for nested in sm.nested_submodules:
+                    nested_type = nested.submodule_type
+                    nested_key = f"{block_type}.{nested_type}"
+
+                    if nested_type not in by_submodule_type[block_type]["nested_breakdown"]:
+                        by_submodule_type[block_type]["nested_breakdown"][nested_type] = {
+                            "memory": {"activations_gb": 0.0},
+                            "compute": {"flops": 0, "time_sec": 0.0},
+                            "communication": {"bytes": 0, "gb": 0.0},
+                        }
+
+                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["activations_gb"] += (
+                        nested.memory_gb
+                    )
+                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["compute"]["flops"] += nested.flops
+                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["compute"]["time_sec"] += (
+                        nested.time_sec
+                    )
+                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["communication"]["bytes"] += (
+                        nested.communication_bytes
+                    )
+                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["communication"]["gb"] += (
+                        nested.communication_bytes / 1e9
+                    )
+
+                    # Also aggregate by_nested_type for frontend
+                    if nested_type not in by_nested_type:
+                        by_nested_type[nested_type] = {
+                            "memory": {"activations_gb": 0.0},
+                            "compute": {"flops": 0, "flops_gflops": 0.0, "time_sec": 0.0},
+                            "communication": {"bytes": 0, "gb": 0.0},
+                            "parent_type": block_type,
+                        }
+                    by_nested_type[nested_type]["memory"]["activations_gb"] += nested.memory_gb
+                    by_nested_type[nested_type]["compute"]["flops"] += nested.flops
+                    by_nested_type[nested_type]["compute"]["flops_gflops"] += nested.flops / 1e9
+                    by_nested_type[nested_type]["compute"]["time_sec"] += nested.time_sec
+                    by_nested_type[nested_type]["communication"]["bytes"] += nested.communication_bytes
+                    by_nested_type[nested_type]["communication"]["gb"] += nested.communication_bytes / 1e9
 
         total_memory = sum(p.memory_gb for p in phases)
 
@@ -1276,9 +1382,7 @@ class UnifiedAnalyzer:
                 "by_type": {"activations_gb": total_memory},
                 "by_submodel": by_component,
                 "by_submodule_type": {
-                    block_type: {
-                        "activations_gb": data["memory"]["activations_gb"],
-                    }
+                    block_type: {"activations_gb": data["memory"]["activations_gb"]}
                     for block_type, data in by_submodule_type.items()
                 },
             },
@@ -1291,6 +1395,15 @@ class UnifiedAnalyzer:
                     }
                     for block_type, data in by_submodule_type.items()
                 },
+                "by_nested_type": {
+                    nested_type: {
+                        "flops": data["compute"]["flops"],
+                        "flops_gflops": data["compute"]["flops_gflops"],
+                        "time_sec": data["compute"]["time_sec"],
+                        "parent_type": data["parent_type"],
+                    }
+                    for nested_type, data in by_nested_type.items()
+                },
             },
             "communication": {
                 "by_submodule_type": {
@@ -1300,10 +1413,19 @@ class UnifiedAnalyzer:
                     }
                     for block_type, data in by_submodule_type.items()
                 },
+                "by_nested_type": {
+                    nested_type: {
+                        "bytes": data["communication"]["bytes"],
+                        "gb": data["communication"]["gb"],
+                        "parent_type": data["parent_type"],
+                    }
+                    for nested_type, data in by_nested_type.items()
+                },
                 "by_parallelism": comm_breakdown_dict,
                 "total_bytes": sum(v.get("total_bytes", 0) for v in comm_breakdown_dict.values()),
             },
             "by_submodule_type": by_submodule_type,
+            "by_nested_type": by_nested_type,
         }
 
 
