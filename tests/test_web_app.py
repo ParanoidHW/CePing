@@ -332,3 +332,126 @@ class TestWebAppAPI:
             for comm_type, data in result_dict["communication_breakdown"].items():
                 if data and "total_bytes" in data:
                     assert data["total_bytes"] >= 0
+
+
+class TestFrontendCompatibility:
+    """Test frontend JavaScript compatibility - ensure fields match what frontend expects."""
+
+    def test_detailed_breakdown_all_fields_types(self):
+        """Test detailed_breakdown fields have correct types for frontend toFixed."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown")
+
+        if not detailed:
+            return
+
+        # Test memory.by_type - all values should be numbers
+        mem_by_type = detailed.get("memory", {}).get("by_type", {})
+        for key, value in mem_by_type.items():
+            assert isinstance(value, (int, float)), f"memory.by_type[{key}] should be number, got {type(value)}"
+
+        # Test memory.by_submodel - all nested values should be numbers
+        mem_by_submodel = detailed.get("memory", {}).get("by_submodel", {})
+        for name, mems in mem_by_submodel.items():
+            for key, value in mems.items():
+                assert isinstance(value, (int, float)), f"memory.by_submodel[{name}][{key}] should be number"
+
+        # Test memory.by_block_type - activations_gb should be number
+        mem_by_block_type = detailed.get("memory", {}).get("by_block_type", {})
+        for block_type, data in mem_by_block_type.items():
+            assert "activations_gb" in data, f"memory.by_block_type[{block_type}] missing activations_gb"
+            assert isinstance(data["activations_gb"], (int, float)), f"activations_gb should be number"
+
+            # compute nested fields should be numbers
+            if "compute" in data:
+                for key, value in data["compute"].items():
+                    assert isinstance(value, (int, float)), f"compute[{key}] should be number"
+
+            # communication nested fields should be numbers
+            if "communication" in data:
+                for key, value in data["communication"].items():
+                    assert isinstance(value, (int, float)), f"communication[{key}] should be number"
+
+    def test_communication_breakdown_fields_types(self):
+        """Test communication breakdown fields for frontend."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
+
+        result_dict = result.to_dict()
+
+        # Test detailed_breakdown.communication.by_parallelism
+        detailed = result_dict.get("detailed_breakdown")
+        if detailed:
+            comm_by_para = detailed.get("communication", {}).get("by_parallelism", {})
+            for comm_type, data in comm_by_para.items():
+                if data:
+                    # Frontend uses total_bytes and total_time_sec
+                    if "total_bytes" in data:
+                        assert isinstance(data["total_bytes"], (int, float)), f"total_bytes should be number"
+                    if "total_time_sec" in data:
+                        assert isinstance(data["total_time_sec"], (int, float)), f"total_time_sec should be number"
+
+        # Test top-level communication_breakdown
+        comm_breakdown = result_dict.get("communication_breakdown")
+        if comm_breakdown:
+            for comm_type, data in comm_breakdown.items():
+                if data and "total_bytes" in data:
+                    assert isinstance(data["total_bytes"], (int, float))
+
+    def test_no_flops_at_top_level_of_memory(self):
+        """Ensure flops is NOT at top level of memory.by_block_type (prevent frontend misreading)."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown")
+
+        if not detailed:
+            return
+
+        mem_by_block_type = detailed.get("memory", {}).get("by_block_type", {})
+        for block_type, data in mem_by_block_type.items():
+            # flops should be in compute sub-object, NOT at top level
+            assert "flops" not in data or isinstance(data.get("flops"), dict), (
+                f"flops should not be at top level of memory.by_block_type[{block_type}]"
+            )
+            assert "time_sec" not in data or isinstance(data.get("time_sec"), dict), (
+                f"time_sec should not be at top level of memory.by_block_type[{block_type}]"
+            )
+
+    def test_submodels_memory_fields(self):
+        """Test submodels memory fields for frontend."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown")
+
+        if not detailed:
+            return
+
+        submodels = detailed.get("submodels", [])
+        for sm in submodels:
+            mem_by_type = sm.get("memory", {}).get("by_type", {})
+            for key, value in mem_by_type.items():
+                assert isinstance(value, (int, float)), f"submodel.memory.by_type[{key}] should be number"
+
+    def test_inference_detailed_breakdown_fields(self):
+        """Test inference detailed_breakdown fields."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "inference", "tp8", batch_size=1)
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown")
+
+        if not detailed:
+            return
+
+        # Same checks as training
+        mem_by_block_type = detailed.get("memory", {}).get("by_block_type", {})
+        for block_type, data in mem_by_block_type.items():
+            assert "activations_gb" in data
+            assert isinstance(data["activations_gb"], (int, float))

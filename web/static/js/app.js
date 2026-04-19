@@ -630,16 +630,18 @@ function renderDetailedBreakdown(detailed) {
     const memByBlockType = detailed.memory?.by_block_type || {};
     const blockMemRows = Object.entries(memByBlockType)
         .map(([blockType, mems]) => {
-            const total = Object.values(mems).reduce((a, b) => a + b, 0);
+            const total = mems.activations_gb || 0;
             return `<tr><td>${blockType}</td><td>${total.toFixed(2)} GB</td></tr>`;
         }).join('');
 
     // Communication breakdown
     const commByPara = detailed.communication?.by_parallelism || {};
     const commRows = Object.entries(commByPara)
-        .map(([type, data]) =>
-            `<tr><td>${type.toUpperCase()}</td><td>${data.total_volume_gb?.toFixed(2) || 0} GB</td><td>${data.total_time_ms?.toFixed(2) || 0} ms</td></tr>`
-        ).join('');
+        .map(([type, data]) => {
+            const totalGb = (data.total_bytes || 0) / 1e9;
+            const totalMs = (data.total_time_sec || 0) * 1000;
+            return `<tr><td>${type.toUpperCase()}</td><td>${totalGb.toFixed(2)} GB</td><td>${totalMs.toFixed(2)} ms</td></tr>`;
+        }).join('');
 
     // Submodel details
     const submodelDetails = (detailed.submodels || []).map(sm => {
