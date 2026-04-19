@@ -23,6 +23,7 @@ class ShardedTensor:
         dtype: Data type (fp16, bf16, fp32, etc.)
         name: Optional tensor name
         _op_history: Operation history (for FLOPs derivation)
+        _is_view: Whether this tensor is a view (no new memory allocation)
     """
 
     shape: Tuple[int, ...]
@@ -30,6 +31,7 @@ class ShardedTensor:
     dtype: str = "fp16"
     name: Optional[str] = None
     _op_history: List[Any] = field(default_factory=list)
+    _is_view: bool = False
 
     @property
     def ndim(self) -> int:
@@ -130,6 +132,7 @@ class ShardedTensor:
         )
 
         output._op_history = self._op_history + [ViewOp(dtype=self.dtype, input=self, shape=shape, output=output)]
+        output._is_view = True
 
         return output
 
@@ -202,6 +205,7 @@ class ShardedTensor:
         output._op_history = self._op_history + [
             TransposeOp(dtype=self.dtype, input=self, dim0=dim0, dim1=dim1, output=output)
         ]
+        output._is_view = True
 
         return output
 
@@ -267,6 +271,39 @@ class ShardedTensor:
     def get_physical_numel(self, parallel_degrees: Dict[str, int]) -> int:
         """Get physical number of elements after sharding."""
         return math.prod(self.get_physical_shape(parallel_degrees))
+
+    def get_physical_bytes(self, parallel_degrees: Dict[str, int]) -> int:
+        """Get physical memory bytes after sharding.
+
+        Args:
+            parallel_degrees: {parallel_type: degree}
+
+        Returns:
+            Physical memory bytes (numel * dtype_size)
+        """
+        from llm_perf.utils.constants import DTYPE_SIZES
+
+        dtype_size = DTYPE_SIZES.get(self.dtype, 2)
+        return self.get_physical_numel(parallel_degrees) * dtype_size
+
+    def contiguous(self) -> "ShardedTensor":
+        """Return a contiguous (non-view) copy of the tensor.
+
+        In PyTorch, contiguous() ensures the tensor has a contiguous memory layout.
+        Here, we mark the output as non-view (allocates new memory).
+
+        Returns:
+            A new ShardedTensor with _is_view=False
+        """
+        output = ShardedTensor(
+            shape=self.shape,
+            shardable=self.shardable,
+            dtype=self.dtype,
+            name=f"{self.name or 'tensor'}_contiguous",
+        )
+        output._op_history = self._op_history
+        output._is_view = False
+        return output
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for output."""
