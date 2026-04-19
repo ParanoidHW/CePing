@@ -21,6 +21,7 @@ from llm_perf.analyzer import (
     list_workloads,
     register_workload,
     load_workload_from_yaml,
+    CommunicationBreakdown,
 )
 
 
@@ -634,3 +635,135 @@ class TestConvDecoderEstimation:
         assert forward_phase is not None
         assert backward_phase is not None
         assert backward_phase.flops > forward_phase.flops
+
+
+class TestQPSAndCommunicationBreakdown:
+    """Phase 2: QPS + CommunicationBreakdown tests."""
+
+    def test_qps_calculation(self):
+        """Verify QPS is calculated correctly."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8, dp_degree=1)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        workload = get_workload("training")
+
+        result = analyzer.analyze(workload, batch_size=32, seq_len=2048)
+
+        assert result.qps is not None
+        assert result.qps > 0
+
+        expected_qps = 32 * strategy.dp_degree / result.total_time_sec
+        assert abs(result.qps - expected_qps) < 0.01
+
+    def test_qps_with_different_dp(self):
+        """Verify QPS scales with DP degree."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 16)
+
+        strategy_dp1 = StrategyConfig(tp_degree=8, dp_degree=1)
+        strategy_dp4 = StrategyConfig(tp_degree=8, dp_degree=4)
+
+        analyzer1 = UnifiedAnalyzer(model, device, cluster, strategy_dp1)
+        analyzer4 = UnifiedAnalyzer(model, device, cluster, strategy_dp4)
+
+        workload = get_workload("training")
+
+        result1 = analyzer1.analyze(workload, batch_size=32, seq_len=2048)
+        result4 = analyzer4.analyze(workload, batch_size=32, seq_len=2048)
+
+        assert result4.qps > result1.qps
+
+    def test_communication_breakdown_structure(self):
+        """Verify CommunicationBreakdown has correct structure."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8, dp_degree=1)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        workload = get_workload("training")
+
+        result = analyzer.analyze(workload, batch_size=32, seq_len=2048)
+
+        if result.communication_breakdown:
+            comm_dict = result.communication_breakdown.to_dict()
+
+            assert "all_reduce" in comm_dict
+            assert "all_gather" in comm_dict
+            assert "all_to_all" in comm_dict
+
+    def test_communication_breakdown_in_detailed_breakdown(self):
+        """Verify communication breakdown is in detailed_breakdown."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8, dp_degree=2)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        workload = get_workload("training")
+
+        result = analyzer.analyze(workload, batch_size=32, seq_len=2048)
+
+        if result.detailed_breakdown:
+            assert "communication" in result.detailed_breakdown
+
+            comm = result.detailed_breakdown["communication"]
+            assert "by_parallelism" in comm
+
+
+class TestMFU:
+    """Phase 1: MFU (Model FLOPs Utilization) tests."""
+
+    def test_mfu_calculation(self):
+        """Verify MFU is calculated correctly."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8, dp_degree=1)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        workload = get_workload("training")
+
+        result = analyzer.analyze(workload, batch_size=32, seq_len=2048)
+
+        assert result.mfu is not None
+        assert 0 < result.mfu <= 1.0
+
+    def test_mfu_with_different_tp(self):
+        """Verify MFU changes with different TP degrees."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+
+        strategy_tp4 = StrategyConfig(tp_degree=4, dp_degree=2)
+        strategy_tp8 = StrategyConfig(tp_degree=8, dp_degree=1)
+
+        analyzer4 = UnifiedAnalyzer(model, device, cluster, strategy_tp4)
+        analyzer8 = UnifiedAnalyzer(model, device, cluster, strategy_tp8)
+
+        workload = get_workload("training")
+
+        result4 = analyzer4.analyze(workload, batch_size=32, seq_len=2048)
+        result8 = analyzer8.analyze(workload, batch_size=32, seq_len=2048)
+
+        assert result4.mfu is not None
+        assert result8.mfu is not None
+
+    def test_mfu_in_result_dict(self):
+        """Verify MFU is in to_dict output."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        workload = get_workload("training")
+
+        result = analyzer.analyze(workload, batch_size=32, seq_len=2048)
+
+        result_dict = result.to_dict()
+        assert "mfu" in result_dict

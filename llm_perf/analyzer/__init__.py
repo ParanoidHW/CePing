@@ -19,6 +19,8 @@ from .base import (
     PhaseResult,
     UnifiedResult,
     WorkloadConfig,
+    SubmoduleResult,
+    CommunicationBreakdown,
 )
 from .unified import UnifiedAnalyzer, analyze_workload
 from .workload_loader import (
@@ -45,6 +47,8 @@ __all__ = [
     "PhaseResult",
     "UnifiedResult",
     "WorkloadConfig",
+    "SubmoduleResult",
+    "CommunicationBreakdown",
     "UnifiedAnalyzer",
     "analyze_workload",
     "get_workload",
