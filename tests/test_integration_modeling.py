@@ -931,6 +931,124 @@ class TestCommPatternDeriver:
         assert comm_tp8 >= comm_tp1
 
 
+class TestKVCacheModel:
+    """Tests for KV Cache memory model."""
+
+    def test_kv_cache_config_creation(self):
+        """Test KVCacheConfig creation and calculation."""
+        from llm_perf.kernels.op import KVCacheConfig
+
+        config = KVCacheConfig(
+            max_seq_len=4096,
+            num_layers=32,
+            num_heads=32,
+            num_kv_heads=8,
+            head_dim=128,
+            batch_size=1,
+        )
+
+        per_token = config.cache_size_per_token()
+        total = config.total_cache_size()
+
+        assert per_token > 0
+        assert total > 0
+        assert total == per_token * config.batch_size * config.max_seq_len * config.num_layers
+
+    def test_kv_cache_memory_property(self):
+        """Test ModuleInstance.kv_cache_memory property."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=2,
+            num_heads=32,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        model(input_ids)
+
+        ctx = ParallelContext(tp_degree=8)
+
+        instance_train = model.bind(ctx, mode="forward_backward")
+        instance_infer = model.bind(ctx, mode="forward")
+
+        kv_train = instance_train.kv_cache_memory
+        kv_infer = instance_infer.kv_cache_memory
+
+        assert kv_train == 0
+        assert kv_infer >= 0
+
+    def test_attention_op_with_kv_cache(self):
+        """Test AttentionOp with KV cache configuration."""
+        from llm_perf.kernels.op import AttentionOp, KVCacheConfig
+
+        config = KVCacheConfig(
+            max_seq_len=2048,
+            num_layers=1,
+            num_heads=32,
+            head_dim=128,
+        )
+
+        query = ShardedTensor(shape=(1, 32, 512, 128))
+        key = ShardedTensor(shape=(1, 8, 512, 128))
+        value = ShardedTensor(shape=(1, 8, 512, 128))
+        output = ShardedTensor(shape=(1, 32, 512, 128))
+
+        op = AttentionOp(
+            query=query,
+            key=key,
+            value=value,
+            output=output,
+            kv_cache_config=config,
+            phase="prefill",
+        )
+
+        kv_memory = op.kv_cache_memory()
+
+        assert kv_memory > 0
+
+    def test_kv_cache_size_calculation(self):
+        """Test KV cache size calculation accuracy."""
+        from llm_perf.kernels.op import KVCacheConfig
+
+        config = KVCacheConfig(
+            max_seq_len=1024,
+            num_layers=1,
+            num_heads=32,
+            num_kv_heads=32,
+            head_dim=128,
+            cache_dtype="fp16",
+            batch_size=4,
+        )
+
+        expected_per_token = 2 * 32 * 128 * 2  # 2 (K+V) * heads * head_dim * dtype_size
+        actual_per_token = config.cache_size_per_token()
+
+        assert actual_per_token == expected_per_token
+
+        expected_total = 4 * 1024 * expected_per_token * 1  # batch * seq * per_token * layers
+        actual_total = config.total_cache_size()
+
+        assert actual_total == expected_total
+
+    def test_kv_cache_for_different_seq_len(self):
+        """Test KV cache size for different sequence lengths."""
+        from llm_perf.kernels.op import KVCacheConfig
+
+        config = KVCacheConfig(
+            max_seq_len=4096,
+            num_layers=32,
+            num_kv_heads=8,
+            head_dim=128,
+            batch_size=1,
+        )
+
+        short_cache = config.cache_size_for_seq_len(128)
+        long_cache = config.cache_size_for_seq_len(1024)
+
+        assert long_cache > short_cache
+        assert long_cache == short_cache * (1024 // 128)
+
+
 class TestKernelBackendIntegration:
     """Tests for KernelBackend integration."""
 

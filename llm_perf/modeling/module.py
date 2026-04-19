@@ -337,6 +337,26 @@ class ModuleInstance:
 
         return ops
 
+    @property
+    def kv_cache_memory(self) -> int:
+        """KV cache memory for inference (bytes).
+
+        Only relevant for forward mode inference with KV cache.
+        Returns 0 for training (forward_backward mode).
+        """
+        if self.mode != "forward":
+            return 0
+
+        total = 0
+        if self.module._last_forward_output:
+            from llm_perf.kernels.op import AttentionOp
+
+            for op in self.module._last_forward_output._op_history:
+                if isinstance(op, AttentionOp):
+                    total += op.kv_cache_memory()
+
+        return total
+
     def _infer_physical_flops(self, op: Any) -> int:
         """Derive physical FLOPs from operation."""
         from llm_perf.kernels.op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
