@@ -1,6 +1,132 @@
 """Tests for web application API endpoints."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from llm_perf.app import Evaluator
+from web.app import app
+
+
+class TestWebHTTPAPI:
+    """Test web app HTTP API responses using Flask test client."""
+
+    def test_http_api_memory_by_type_exists(self):
+        """Test that /api/evaluate returns memory.by_type for frontend table."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+        assert detailed is not None
+
+        mem = detailed.get("memory", {})
+        by_type = mem.get("by_type", {})
+
+        # Verify by_type has all required fields
+        assert len(by_type) > 0, "memory.by_type should not be empty"
+        assert "weight" in by_type
+        assert "gradient" in by_type
+        assert "optimizer" in by_type
+        assert "activation" in by_type
+        assert "total" in by_type
+
+        # Verify values are numbers
+        for key, value in by_type.items():
+            assert isinstance(value, (int, float)), f"by_type[{key}] should be number"
+            assert value >= 0, f"by_type[{key}] should be non-negative"
+
+        # Verify training has gradient and optimizer
+        assert by_type["weight"] > 0, "weight should be > 0"
+        assert by_type["gradient"] > 0, "gradient should be > 0 for training"
+        assert by_type["optimizer"] > 0, "optimizer should be > 0 for training"
+
+    def test_http_api_memory_by_submodel_exists(self):
+        """Test that /api/evaluate returns memory.by_submodel."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        mem = detailed.get("memory", {})
+        by_submodel = mem.get("by_submodel", {})
+
+        assert len(by_submodel) > 0, "memory.by_submodel should not be empty"
+
+        for name, data in by_submodel.items():
+            assert "activations_gb" in data, f"by_submodel[{name}] missing activations_gb"
+            assert isinstance(data["activations_gb"], (int, float))
+            assert data["activations_gb"] > 0
+
+    def test_http_api_memory_by_submodule_type_has_data(self):
+        """Test that memory.by_submodule_type has actual data, not empty."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        mem = detailed.get("memory", {})
+        by_submodule_type = mem.get("by_submodule_type", {})
+
+        # Should have at least embedding, transformer_block, lm_head
+        assert len(by_submodule_type) >= 3, "by_submodule_type should have at least 3 module types"
+
+        for submodule_type, data in by_submodule_type.items():
+            assert "weight_gb" in data
+            assert isinstance(data["weight_gb"], (int, float))
+            assert data["weight_gb"] >= 0
 
 
 class TestWebAppAPI:
