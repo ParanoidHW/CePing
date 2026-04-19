@@ -69,6 +69,14 @@ class Op:
     output: Any
     dtype: str
 
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors that need to be saved for backward pass.
+
+        Returns:
+            List of tensors to save (default: empty list)
+        """
+        return []
+
 
 @dataclass
 class MatmulOp(Op):
@@ -84,6 +92,18 @@ class MatmulOp(Op):
     def __post_init__(self):
         if self.inputs is None:
             self.inputs = [self.input, self.weight]
+
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        linear backward:
+        - dx = dy @ W (needs W, not saved)
+        - dW = x^T @ dy (needs x, saved)
+
+        Returns:
+            [self.input] - save input for dW computation
+        """
+        return [self.input] if self.input else []
 
 
 @dataclass
@@ -115,6 +135,19 @@ class AttentionOp(Op):
         if not self.inputs:
             self.inputs = [self.query, self.key, self.value]
 
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        Flash Attention backward:
+        - Q, K, V can be re-computed from Q_proj, K_proj, V_proj (they are views)
+        - Flash Attention saves logsumexp and max values (small O(N) storage)
+        - So we don't save Q, K, V tensors themselves
+
+        Returns:
+            [] - Q, K, V are views, save projections at module level instead
+        """
+        return []
+
     def kv_cache_memory(self) -> int:
         """KV cache memory for this attention operation."""
         if self.kv_cache_config is None:
@@ -139,6 +172,17 @@ class RMSNormOp(Op):
         if self.inputs is None:
             self.inputs = [self.input, self.weight]
 
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        RMS Norm backward:
+        - needs input for gradient computation
+
+        Returns:
+            [self.input] - save input for gradient
+        """
+        return [self.input] if self.input else []
+
 
 @dataclass
 class EmbeddingOp(Op):
@@ -154,6 +198,17 @@ class EmbeddingOp(Op):
     def __post_init__(self):
         if self.inputs is None:
             self.inputs = [self.input_ids, self.weight]
+
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        Embedding backward:
+        - needs input_ids to know which rows to update
+
+        Returns:
+            [self.input_ids] - save indices for backward
+        """
+        return [self.input_ids] if self.input_ids else []
 
 
 @dataclass
@@ -171,6 +226,22 @@ class ActivationOp(Op):
         self.kernel_name = self.activation_type
         if self.inputs is None:
             self.inputs = [self.input]
+
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        Activation backward:
+        - silu/gelu: need input for gradient computation
+        - relu: use mask from forward (output), not input
+
+        Returns:
+            [self.input] for silu/gelu, [self.output] for relu, [] otherwise
+        """
+        if self.activation_type == "relu":
+            return [self.output] if self.output else []
+        elif self.activation_type in ["silu", "gelu"]:
+            return [self.input] if self.input else []
+        return []
 
 
 @dataclass
