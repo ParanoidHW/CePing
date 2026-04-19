@@ -1,53 +1,117 @@
 # LLM Performance Evaluator 文档
 
-本文档详细介绍了 LLM Performance Evaluator 框架的设计原理、架构和使用方法。
+本文档介绍 LLM Performance Evaluator 的架构设计、理论基础和自定义扩展方法。
 
 ## 文档目录
 
-| 文档 | 内容概述 |
-|------|----------|
-| [architecture.md](./architecture.md) | 系统整体架构设计 |
-| [kernel_modeling.md](./kernel_modeling.md) | Kernel 评估与建模方法 |
-| [roofline_model.md](./roofline_model.md) | Roofline 性能模型详解 |
-| [communication.md](./communication.md) | 通信建模与并行策略 |
-| [topology.md](./topology.md) | 网络拓扑与分层带宽模型 (Clos/Fat-Tree) |
-| [workflow.md](./workflow.md) | 工作流程与数据流 |
+### 整体架构
+
+| 文档 | 内容 |
+|------|------|
+| [architecture.md](./architecture.md) | 系统整体架构 v5.0（分层设计、核心模块、数据流、扩展点） |
+
+### 理论基础
+
+| 文档 | 内容 |
+|------|------|
+| [roofline_model.md](./roofline_model.md) | Roofline 性能模型（运算强度、脊点、瓶颈判断） |
+| [kernel_modeling.md](./kernel_modeling.md) | Kernel 建模方法（GEMM、FlashAttention、通信Kernel） |
+| [communication.md](./communication.md) | 通信建模与并行策略（TP/PP/DP/EP/SP） |
+| [topology.md](./topology.md) | 网络拓扑模型（Clos、Fat-Tree、CloudMatrix） |
+| [data_sources_wiki.md](./data_sources_wiki.md) | 数据来源汇总（硬件参数、公式来源、模型架构） |
+
+### 自定义扩展
+
+| 文档 | 内容 |
+|------|------|
+| [kernel_api.md](./kernel_api.md) | Kernel Functional API 使用指南 |
 | [examples.md](./examples.md) | 典型使用场景示例 |
-| [data_sources_wiki.md](./data_sources_wiki.md) | 数据来源汇总与参考 |
 
-## 快速导航
+## 核心概念
 
-### 核心概念
-
-```mermaid
-graph TD
-    A[模型定义] --> B[层配置]
-    B --> C[算子 Kernel]
-    B --> D[通信 Kernel]
-    C --> E[性能评估]
-    D --> E
-    E --> F[报告输出]
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Application Layer                                │
+│  Evaluator · Optimizer · ColocateAnalyzer                           │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Workload Layer (YAML配置)                        │
+│  training.yaml · autoregressive-inference.yaml · diffusion-pipeline │
+├─────────────────────────────────────────────────────────────────────┤
+│                   Unified Modeling Layer                             │
+│  ShardedTensor · ShardedModule · ParallelContext · ModuleInstance   │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Analyzer Layer                                   │
+│  UnifiedAnalyzer · PhaseResult · MFU/QPS                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Kernel Layer                                     │
+│  TheoryBackend · ProfilingBackend · Functional API                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Hardware Layer                                   │
+│  Device · Cluster · NetworkTopology                                  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 性能评估维度
+## 性能评估指标
 
-| 维度 | 训练 | 推理 |
+| 指标 | 训练 | 推理 |
 |------|------|------|
 | **吞吐量** | tokens/sec | TTFT / TPOT / TPS |
-| **延迟** | 每步时间 | 首token / 每token |
-| **内存** | 参数+梯度+优化器 | 参数+KV Cache |
-| **通信** | AllReduce 开销 | P2P / AllToAll |
+| **利用率** | MFU (Model FLOPs Utilization) | QPS (Queries Per Second) |
+| **内存** | 参数 + 梯度 + 优化器 + 激活 | 参数 + KV Cache |
+| **通信** | AllReduce / AllToAll | P2P / AllGather |
 
-## 设计目标
+## 快速开始
 
-1. **准确性**: 基于 Roofline 模型和实际硬件特性建模
-2. **灵活性**: 支持自定义模型、硬件和并行策略
-3. **可扩展性**: 模块化设计，易于添加新的 Kernel 和策略
-4. **实用性**: 提供详细的性能分解和优化建议
+```python
+from llm_perf import create_model_from_config, Device, Cluster, StrategyConfig
+from llm_perf.analyzer import UnifiedAnalyzer, get_workload
 
-## 贡献指南
+# 1. 创建模型
+model = create_model_from_config({"preset": "llama-7b"})
 
-欢迎提交 Issue 和 PR 来改进文档和代码。请确保：
-- 代码遵循现有风格
-- 添加必要的测试和文档
-- 更新相关的设计文档
+# 2. 配置硬件
+device = Device.from_preset("H100-SXM-80GB")
+cluster = Cluster(device, num_devices=8)
+
+# 3. 设置策略
+strategy = StrategyConfig(tp_degree=8)
+
+# 4. 分析性能
+analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+result = analyzer.analyze("training", batch_size=32, seq_len=4096)
+
+# 5. 查看结果
+print(f"MFU: {result.mfu * 100:.1f}%")
+print(f"吞吐量: {result.throughput['tokens_per_sec']:.0f} tokens/s")
+print(f"显存: {result.peak_memory_gb:.2f} GB")
+```
+
+## 扩展指南
+
+### 添加新模型
+
+1. **YAML preset方式**：创建 `configs/models/my-model.yaml`
+2. **代码方式**：继承 `ShardedModule`，定义 `forward()` 方法
+
+详见 [architecture.md](./architecture.md) 扩展点章节。
+
+### 添加新Workload
+
+创建 `configs/workloads/custom/my-workload.yaml`：
+
+```yaml
+name: my-workload
+workload_type: training
+
+phases:
+  - name: forward
+    compute_type: forward
+    compute_pattern: transformer_block
+    repeat: 1
+```
+
+### 添加新Kernel
+
+继承 `KernelBackend`，注册到 `KernelBackendRegistry`。
+
+详见 [kernel_api.md](./kernel_api.md)。
