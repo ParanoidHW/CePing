@@ -255,7 +255,153 @@ class TestWorkloadLoader:
         assert workload.name == "test-custom"
 
 
-class TestUnifiedAnalyzer:
+class TestResultDimensions:
+    """Tests for result dimension correctness."""
+
+    def test_memory_dimension_per_gpu(self):
+        """Test memory metrics are per-GPU."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology(
+            name="test",
+            intra_node_bandwidth_gbps=200.0,
+            intra_node_latency_us=1.0,
+            inter_node_bandwidth_gbps=25.0,
+            inter_node_latency_us=10.0,
+        )
+        cluster = Cluster.create_homogeneous(device.config, 8, topology)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        result_dict = result.to_dict()
+
+        assert result_dict["peak_memory_gb"] > 0
+        assert result_dict["memory"]["memory_per_gpu_gb"] == result_dict["peak_memory_gb"]
+
+    def test_throughput_dimension_global(self):
+        """Test throughput metrics are global."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology(
+            name="test",
+            intra_node_bandwidth_gbps=200.0,
+            intra_node_latency_us=1.0,
+            inter_node_bandwidth_gbps=25.0,
+            inter_node_latency_us=10.0,
+        )
+        cluster = Cluster.create_homogeneous(device.config, 16, topology)
+        strategy = StrategyConfig(tp_degree=4, dp_degree=4)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=128, seq_len=2048)
+
+        result_dict = result.to_dict()
+
+        assert "tokens_per_sec" in result_dict["throughput"]
+        assert result_dict["throughput"]["tokens_per_sec"] > 0
+
+        if result_dict["decode"]:
+            assert result_dict["decode"]["tps"] == result_dict["throughput"]["tokens_per_sec"]
+
+    def test_inference_prefill_decode_fields(self):
+        """Test inference result has prefill and decode with correct dimensions."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology(
+            name="test",
+            intra_node_bandwidth_gbps=200.0,
+            intra_node_latency_us=1.0,
+            inter_node_bandwidth_gbps=25.0,
+            inter_node_latency_us=10.0,
+        )
+        cluster = Cluster.create_homogeneous(device.config, 8, topology)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze(
+            "llm-inference",
+            batch_size=8,
+            prompt_len=512,
+            generation_len=128,
+        )
+
+        result_dict = result.to_dict()
+
+        assert result_dict["prefill"] is not None
+        assert result_dict["decode"] is not None
+
+        assert result_dict["prefill"]["ttft_sec"] > 0
+        assert result_dict["prefill"]["total_time_sec"] == result_dict["prefill"]["ttft_sec"]
+
+        assert result_dict["decode"]["tps"] > 0
+        assert result_dict["decode"]["tpot_sec"] > 0
+
+        assert result_dict["end_to_end"]["overall_tps"] > 0
+        assert result_dict["end_to_end"]["total_time_sec"] > 0
+
+    def test_metadata_parallel_degrees(self):
+        """Test metadata contains parallel degrees."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology(
+            name="test",
+            intra_node_bandwidth_gbps=200.0,
+            intra_node_latency_us=1.0,
+            inter_node_bandwidth_gbps=25.0,
+            inter_node_latency_us=10.0,
+        )
+        cluster = Cluster.create_homogeneous(device.config, 8, topology)
+        strategy = StrategyConfig(tp_degree=4, dp_degree=2, pp_degree=1)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=64, seq_len=2048)
+
+        result_dict = result.to_dict()
+
+        assert "tp_degree" in result_dict["metadata"]
+        assert "dp_degree" in result_dict["metadata"]
+        assert "pp_degree" in result_dict["metadata"]
+        assert "ep_degree" in result_dict["metadata"]
+
+        assert result_dict["metadata"]["tp_degree"] == 4
+        assert result_dict["metadata"]["dp_degree"] == 2
+        assert result_dict["metadata"]["pp_degree"] == 1
+        assert result_dict["metadata"]["ep_degree"] == 1
+
+    def test_detailed_breakdown_memory_dimensions(self):
+        """Test detailed_breakdown memory metrics are per-GPU."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology(
+            name="test",
+            intra_node_bandwidth_gbps=200.0,
+            intra_node_latency_us=1.0,
+            inter_node_bandwidth_gbps=25.0,
+            inter_node_latency_us=10.0,
+        )
+        cluster = Cluster.create_homogeneous(device.config, 8, topology)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        result_dict = result.to_dict()
+
+        if result_dict["detailed_breakdown"]:
+            memory = result_dict["detailed_breakdown"]["memory"]
+
+            assert "by_type" in memory
+            assert "activations_gb" in memory["by_type"]
+            assert memory["by_type"]["activations_gb"] >= 0
+
+            assert "by_block_type" in memory
+            for block_type, metrics in memory.get("by_block_type", {}).items():
+                assert "activations_gb" in metrics
+                assert "flops" in metrics
+                assert metrics["activations_gb"] >= 0
+
     """Test UnifiedAnalyzer."""
 
     def test_analyzer_creation(self):
