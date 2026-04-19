@@ -268,13 +268,18 @@ class ModuleInstance:
 
     @property
     def flops_forward_physical(self) -> int:
-        """Forward FLOPs (physical, sharded)."""
-        if self.module._last_forward_output is None:
-            return 0
+        """Forward FLOPs (physical, sharded).
 
+        Includes both current module's ops and all submodule FLOPs.
+        """
         total_flops = 0
-        for op in self.module._last_forward_output._op_history:
-            total_flops += self._infer_physical_flops(op)
+
+        if self.module._last_forward_output is not None:
+            for op in self.module._last_forward_output._op_history:
+                total_flops += self._infer_physical_flops(op)
+
+        for sub_inst in self._submodule_instances.values():
+            total_flops += sub_inst.flops_forward_physical
 
         return total_flops
 
@@ -493,8 +498,16 @@ class ModuleInstance:
 
         return total
 
-    def estimate_time(self, backend: Any) -> float:
-        """Estimate time (compute + comm)."""
+    def estimate_time(self, backend: Any, include_submodules: bool = True) -> float:
+        """Estimate time (compute + comm).
+
+        Args:
+            backend: Kernel backend
+            include_submodules: Whether to include submodule time (default True)
+
+        Returns:
+            Total time in seconds
+        """
         compute_time = 0.0
 
         if self.module._last_forward_output:
@@ -512,6 +525,10 @@ class ModuleInstance:
                     )
                 except Exception:
                     pass
+
+        if include_submodules:
+            for sub_inst in self._submodule_instances.values():
+                compute_time += sub_inst.estimate_time(backend, include_submodules=False)
 
         if self.mode == "forward_backward":
             compute_time *= 2

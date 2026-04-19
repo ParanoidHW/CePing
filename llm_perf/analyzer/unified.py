@@ -286,6 +286,9 @@ class UnifiedAnalyzer:
             latent_w = params.get("width", 1280) // 8
             latent_channels = getattr(component, "latent_channels", 16)
             input_tensor = ShardedTensor(shape=(batch_size, latent_channels, latent_t, latent_h, latent_w))
+        elif hasattr(component, "vocab_size"):
+            vocab_size = getattr(component, "vocab_size", 32000)
+            input_tensor = ShardedTensor(shape=(batch_size, seq_len))
         else:
             input_tensor = ShardedTensor(shape=(batch_size, seq_len, hidden_size))
 
@@ -331,11 +334,30 @@ class UnifiedAnalyzer:
         params: Dict[str, Any],
         seq_len_factor: float,
     ) -> tuple:
-        """Estimate single phase execution based on compute pattern.
+        """Estimate single phase execution.
+
+        Primary: use bind() mechanism for accurate estimation
+        Fallback: use formula-based estimation if bind fails
 
         Returns:
             (time_sec, memory_gb, flops, submodules)
         """
+        submodules: List[SubmoduleResult] = []
+
+        try:
+            bind_time, bind_memory, bind_flops, bind_submodules = self._analyze_phase_with_submodules(
+                component, phase, params
+            )
+
+            if bind_time > 0 or bind_flops > 0 or len(bind_submodules) > 0:
+                submodules = bind_submodules
+
+            if bind_time > 0 and bind_flops > 0:
+                return bind_time, bind_memory, bind_flops, submodules
+
+        except Exception:
+            pass
+
         dtype = getattr(component, "dtype", "fp16")
         dtype_bytes = DTYPE_SIZES.get(dtype, 2)
         batch_size = params.get("batch_size", 1)
@@ -364,17 +386,6 @@ class UnifiedAnalyzer:
             time_sec, memory_gb, flops = self._estimate_transformer_block(
                 component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
-
-        submodules: List[SubmoduleResult] = []
-
-        try:
-            bind_time, bind_memory, bind_flops, bind_submodules = self._analyze_phase_with_submodules(
-                component, phase, params
-            )
-            if bind_time > 0 or bind_flops > 0 or len(bind_submodules) > 0:
-                submodules = bind_submodules
-        except Exception:
-            pass
 
         return time_sec, memory_gb, flops, submodules
 
