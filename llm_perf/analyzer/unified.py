@@ -1211,63 +1211,50 @@ class UnifiedAnalyzer:
         """Generate detailed breakdown format for frontend compatibility.
 
         All memory metrics are per-GPU.
+
+        Structure:
+        - by_submodule_type: aggregated by module type (embedding, transformer_block, lm_head, etc.)
+          each entry contains: memory, compute, communication
+          Note: rms_norm is merged into subsequent module (e.g., final_norm -> lm_head)
         """
+        from .breakdown import _merge_norm_submodules
+
         by_component: Dict[str, Dict[str, float]] = {}
         for phase in phases:
             if phase.component not in by_component:
                 by_component[phase.component] = {}
             by_component[phase.component]["activations_gb"] = phase.memory_gb
 
-        by_block_type: Dict[str, Dict[str, Any]] = {}
+        # Merge norm submodules first (same as module_breakdown)
+        all_submodules = []
         for phase in phases:
-            for sm in phase.submodules:
-                block_type = sm.submodule_type
-                if block_type not in by_block_type:
-                    by_block_type[block_type] = {
-                        "activations_gb": 0.0,
-                        "compute": {
-                            "flops": 0,
-                            "flops_gflops": 0.0,
-                            "flops_tflops": 0.0,
-                            "time_sec": 0.0,
-                        },
-                        "communication": {
-                            "bytes": 0,
-                            "gb": 0.0,
-                        },
-                    }
-                by_block_type[block_type]["activations_gb"] += sm.memory_gb
-                by_block_type[block_type]["compute"]["flops"] += sm.flops
-                by_block_type[block_type]["compute"]["flops_gflops"] += sm.flops / 1e9
-                by_block_type[block_type]["compute"]["flops_tflops"] += sm.flops / 1e12
-                by_block_type[block_type]["compute"]["time_sec"] += sm.time_sec
-                by_block_type[block_type]["communication"]["bytes"] += sm.communication_bytes
-                by_block_type[block_type]["communication"]["gb"] += sm.communication_bytes / 1e9
+            all_submodules.extend(phase.submodules)
+        merged_submodules = _merge_norm_submodules(all_submodules)
 
-        by_module: Dict[str, Dict[str, Any]] = {}
-        for phase in phases:
-            for sm in phase.submodules:
-                module_name = sm.name
-                if module_name not in by_module:
-                    by_module[module_name] = {
-                        "module_type": sm.submodule_type,
+        by_submodule_type: Dict[str, Dict[str, Any]] = {}
+        for sm in merged_submodules:
+            block_type = sm.submodule_type
+            if block_type not in by_submodule_type:
+                by_submodule_type[block_type] = {
+                    "memory": {
                         "activations_gb": 0.0,
-                        "compute": {
-                            "flops": 0,
-                            "flops_gflops": 0.0,
-                            "time_sec": 0.0,
-                        },
-                        "communication": {
-                            "bytes": 0,
-                            "gb": 0.0,
-                        },
-                    }
-                by_module[module_name]["activations_gb"] += sm.memory_gb
-                by_module[module_name]["compute"]["flops"] += sm.flops
-                by_module[module_name]["compute"]["flops_gflops"] += sm.flops / 1e9
-                by_module[module_name]["compute"]["time_sec"] += sm.time_sec
-                by_module[module_name]["communication"]["bytes"] += sm.communication_bytes
-                by_module[module_name]["communication"]["gb"] += sm.communication_bytes / 1e9
+                    },
+                    "compute": {
+                        "flops": 0,
+                        "flops_gflops": 0.0,
+                        "time_sec": 0.0,
+                    },
+                    "communication": {
+                        "bytes": 0,
+                        "gb": 0.0,
+                    },
+                }
+            by_submodule_type[block_type]["memory"]["activations_gb"] += sm.memory_gb
+            by_submodule_type[block_type]["compute"]["flops"] += sm.flops
+            by_submodule_type[block_type]["compute"]["flops_gflops"] += sm.flops / 1e9
+            by_submodule_type[block_type]["compute"]["time_sec"] += sm.time_sec
+            by_submodule_type[block_type]["communication"]["bytes"] += sm.communication_bytes
+            by_submodule_type[block_type]["communication"]["gb"] += sm.communication_bytes / 1e9
 
         total_memory = sum(p.memory_gb for p in phases)
 
@@ -1288,31 +1275,35 @@ class UnifiedAnalyzer:
             "memory": {
                 "by_type": {"activations_gb": total_memory},
                 "by_submodel": by_component,
-                "by_module": by_module,
-                "by_block_type": by_block_type,
+                "by_submodule_type": {
+                    block_type: {
+                        "activations_gb": data["memory"]["activations_gb"],
+                    }
+                    for block_type, data in by_submodule_type.items()
+                },
             },
             "compute": {
-                "by_module": {
-                    name: {
+                "by_submodule_type": {
+                    block_type: {
                         "flops": data["compute"]["flops"],
                         "flops_gflops": data["compute"]["flops_gflops"],
                         "time_sec": data["compute"]["time_sec"],
                     }
-                    for name, data in by_module.items()
-                },
-                "by_block_type": {
-                    name: {
-                        "flops": data["compute"]["flops"],
-                        "flops_gflops": data["compute"]["flops_gflops"],
-                        "time_sec": data["compute"]["time_sec"],
-                    }
-                    for name, data in by_block_type.items()
+                    for block_type, data in by_submodule_type.items()
                 },
             },
             "communication": {
+                "by_submodule_type": {
+                    block_type: {
+                        "bytes": data["communication"]["bytes"],
+                        "gb": data["communication"]["gb"],
+                    }
+                    for block_type, data in by_submodule_type.items()
+                },
                 "by_parallelism": comm_breakdown_dict,
                 "total_bytes": sum(v.get("total_bytes", 0) for v in comm_breakdown_dict.values()),
             },
+            "by_submodule_type": by_submodule_type,
         }
 
 

@@ -396,11 +396,9 @@ class TestResultDimensions:
             assert "activations_gb" in memory["by_type"]
             assert memory["by_type"]["activations_gb"] >= 0
 
-            assert "by_block_type" in memory
-            for block_type, metrics in memory.get("by_block_type", {}).items():
+            assert "by_submodule_type" in memory
+            for block_type, metrics in memory.get("by_submodule_type", {}).items():
                 assert "activations_gb" in metrics
-                assert "compute" in metrics
-                assert "flops" in metrics["compute"]
                 assert metrics["activations_gb"] >= 0
 
     """Test UnifiedAnalyzer."""

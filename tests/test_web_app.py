@@ -311,15 +311,26 @@ class TestWebAppAPI:
         result_dict = result.to_dict()
 
         if result_dict["detailed_breakdown"]:
-            memory = result_dict["detailed_breakdown"]["memory"]
-            assert "by_block_type" in memory
+            detailed = result_dict["detailed_breakdown"]
+            memory = detailed.get("memory", {})
 
-            if memory["by_block_type"]:
-                for block_type, metrics in memory["by_block_type"].items():
+            # Check by_submodule_type
+            assert "by_submodule_type" in memory
+
+            if memory["by_submodule_type"]:
+                for block_type, metrics in memory["by_submodule_type"].items():
                     assert "activations_gb" in metrics
-                    assert "compute" in metrics
-                    assert "flops" in metrics["compute"]
                     assert metrics["activations_gb"] >= 0
+
+            # Check unified by_submodule_type structure
+            assert "by_submodule_type" in detailed
+            for submodule_type, data in detailed["by_submodule_type"].items():
+                assert "memory" in data
+                assert "compute" in data
+                assert "communication" in data
+                assert "activations_gb" in data["memory"]
+                assert "flops" in data["compute"]
+                assert "gb" in data["communication"]
 
     def test_communication_breakdown_per_gpu(self):
         """Test that communication breakdown is per-GPU."""
@@ -359,11 +370,19 @@ class TestFrontendCompatibility:
             for key, value in mems.items():
                 assert isinstance(value, (int, float)), f"memory.by_submodel[{name}][{key}] should be number"
 
-        # Test memory.by_block_type - activations_gb should be number
-        mem_by_block_type = detailed.get("memory", {}).get("by_block_type", {})
-        for block_type, data in mem_by_block_type.items():
-            assert "activations_gb" in data, f"memory.by_block_type[{block_type}] missing activations_gb"
+        # Test memory.by_submodule_type - activations_gb should be number
+        mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
+        for submodule_type, data in mem_by_submodule_type.items():
+            assert "activations_gb" in data, f"memory.by_submodule_type[{submodule_type}] missing activations_gb"
             assert isinstance(data["activations_gb"], (int, float)), f"activations_gb should be number"
+
+        # Test unified by_submodule_type structure
+        by_submodule_type = detailed.get("by_submodule_type", {})
+        for submodule_type, data in by_submodule_type.items():
+            # memory nested fields should be numbers
+            if "memory" in data:
+                for key, value in data["memory"].items():
+                    assert isinstance(value, (int, float)), f"memory[{key}] should be number"
 
             # compute nested fields should be numbers
             if "compute" in data:
@@ -402,7 +421,7 @@ class TestFrontendCompatibility:
                     assert isinstance(data["total_bytes"], (int, float))
 
     def test_no_flops_at_top_level_of_memory(self):
-        """Ensure flops is NOT at top level of memory.by_block_type (prevent frontend misreading)."""
+        """Ensure flops is NOT at top level of memory.by_submodule_type (prevent frontend misreading)."""
         evaluator = Evaluator()
         result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
 
@@ -412,14 +431,14 @@ class TestFrontendCompatibility:
         if not detailed:
             return
 
-        mem_by_block_type = detailed.get("memory", {}).get("by_block_type", {})
-        for block_type, data in mem_by_block_type.items():
-            # flops should be in compute sub-object, NOT at top level
-            assert "flops" not in data or isinstance(data.get("flops"), dict), (
-                f"flops should not be at top level of memory.by_block_type[{block_type}]"
+        mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
+        for submodule_type, data in mem_by_submodule_type.items():
+            # flops should NOT be at top level of memory
+            assert "flops" not in data, (
+                f"flops should not be at top level of memory.by_submodule_type[{submodule_type}]"
             )
-            assert "time_sec" not in data or isinstance(data.get("time_sec"), dict), (
-                f"time_sec should not be at top level of memory.by_block_type[{block_type}]"
+            assert "time_sec" not in data, (
+                f"time_sec should not be at top level of memory.by_submodule_type[{submodule_type}]"
             )
 
     def test_submodels_memory_fields(self):
@@ -451,7 +470,14 @@ class TestFrontendCompatibility:
             return
 
         # Same checks as training
-        mem_by_block_type = detailed.get("memory", {}).get("by_block_type", {})
-        for block_type, data in mem_by_block_type.items():
+        mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
+        for submodule_type, data in mem_by_submodule_type.items():
             assert "activations_gb" in data
             assert isinstance(data["activations_gb"], (int, float))
+
+        # Check by_submodule_type has complete structure
+        by_submodule_type = detailed.get("by_submodule_type", {})
+        for submodule_type, data in by_submodule_type.items():
+            assert "memory" in data
+            assert "compute" in data
+            assert "communication" in data

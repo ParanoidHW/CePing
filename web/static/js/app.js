@@ -622,19 +622,28 @@ function renderDetailedBreakdown(detailed) {
     const memBySubmodel = detailed.memory?.by_submodel || {};
     const submodelMemRows = Object.entries(memBySubmodel)
         .map(([name, mems]) => {
-            const total = Object.values(mems).reduce((a, b) => a + b, 0);
+            const total = mems.activations_gb || 0;
             return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
         }).join('');
 
-    // Memory breakdown by block type (submodule)
-    const memByBlockType = detailed.memory?.by_block_type || {};
-    const blockMemRows = Object.entries(memByBlockType)
-        .map(([blockType, mems]) => {
-            const total = mems.activations_gb || 0;
-            return `<tr><td>${blockType}</td><td>${total.toFixed(2)} GB</td></tr>`;
+    // Unified breakdown by submodule type (memory, compute, communication)
+    const bySubmoduleType = detailed.by_submodule_type || {};
+    const submoduleBreakdownRows = Object.entries(bySubmoduleType)
+        .map(([submoduleType, data]) => {
+            const memGb = data.memory?.activations_gb || 0;
+            const computeTflops = (data.compute?.flops || 0) / 1e12;
+            const computeSec = data.compute?.time_sec || 0;
+            const commGb = data.communication?.gb || 0;
+            return `<tr>
+                <td>${submoduleType}</td>
+                <td>${memGb.toFixed(2)} GB</td>
+                <td>${computeTflops.toFixed(2)} T</td>
+                <td>${computeSec.toFixed(3)} s</td>
+                <td>${commGb.toFixed(2)} GB</td>
+            </tr>`;
         }).join('');
 
-    // Communication breakdown
+    // Communication breakdown by parallelism type
     const commByPara = detailed.communication?.by_parallelism || {};
     const commRows = Object.entries(commByPara)
         .map(([type, data]) => {
@@ -663,10 +672,10 @@ function renderDetailedBreakdown(detailed) {
             ${memRows || '<tr><td colspan="2">无数据</td></tr>'}
         </table>
 
-        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模块)</h3>
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模块分解 (按类型)</h3>
         <table class="breakdown-table">
-            <tr><th>子模块类型</th><th>总内存</th></tr>
-            ${blockMemRows || '<tr><td colspan="2">无数据</td></tr>'}
+            <tr><th>子模块类型</th><th>内存</th><th>计算量</th><th>计算时间</th><th>通信量</th></tr>
+            ${submoduleBreakdownRows || '<tr><td colspan="5">无数据</td></tr>'}
         </table>
 
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>
