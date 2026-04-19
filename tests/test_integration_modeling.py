@@ -218,6 +218,62 @@ class TestUnifiedAnalyzerIntegration:
         assert len(all_activations) >= len(attention._activations)
         assert len(all_activations) >= len(attention._intermediate_tensors)
 
+    def test_op_history_includes_all_operations(self):
+        """Test that op_history includes all layer operations after residual connections."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=1,
+            num_heads=32,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        output = model(input_ids)
+
+        op_types = [op.__class__.__name__ for op in output._op_history]
+
+        assert len(op_types) > 3
+        assert "EmbeddingOp" in op_types
+        assert "MatmulOp" in op_types
+        assert "AttentionOp" in op_types
+        assert "RMSNormOp" in op_types
+        assert "ActivationOp" in op_types
+
+    def test_physical_flops_less_than_logical_flops(self):
+        """Test physical FLOPs are reduced with TP sharding."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=1,
+            num_heads=32,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        model(input_ids)
+
+        ctx = ParallelContext(tp_degree=8)
+        instance = model.bind(ctx)
+
+        assert instance.flops_forward_physical < model.flops_forward()
+        assert instance.flops_forward_physical > 0
+
+    def test_residual_connection_preserves_op_history(self):
+        """Test residual connection preserves attention ops."""
+        from llm_perf.modeling.models import ShardedTransformerBlock
+
+        block = ShardedTransformerBlock(
+            hidden_size=4096,
+            num_heads=32,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        output = block(hidden)
+
+        op_types = [op.__class__.__name__ for op in output._op_history]
+
+        assert "AttentionOp" in op_types
+        assert "MatmulOp" in op_types
+
     def test_analyze_workload_convenience_function(self, setup_llama):
         """Test convenience function analyze_workload."""
         model, device, cluster, strategy = setup_llama

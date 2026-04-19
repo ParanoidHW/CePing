@@ -209,6 +209,8 @@ class ShardedTensor:
         """Element-wise addition.
 
         Sharding constraints must match.
+
+        Op history: merge both tensor's op histories (take the longer one).
         """
         assert self.shape == other.shape, f"Shape mismatch: {self.shape} vs {other.shape}"
 
@@ -218,7 +220,8 @@ class ShardedTensor:
             dtype=self.dtype,
             name=f"{self.name or 'tensor'}_add",
         )
-        output._op_history = self._op_history
+
+        output._op_history = other._op_history if len(other._op_history) > len(self._op_history) else self._op_history
 
         return output
 
@@ -226,6 +229,8 @@ class ShardedTensor:
         """Element-wise multiplication.
 
         Sharding constraints must match.
+
+        Op history: merge both tensor's op histories (take the longer one).
         """
         assert self.shape == other.shape, f"Shape mismatch: {self.shape} vs {other.shape}"
 
@@ -235,7 +240,8 @@ class ShardedTensor:
             dtype=self.dtype,
             name=f"{self.name or 'tensor'}_mul",
         )
-        output._op_history = self._op_history
+
+        output._op_history = other._op_history if len(other._op_history) > len(self._op_history) else self._op_history
 
         return output
 
