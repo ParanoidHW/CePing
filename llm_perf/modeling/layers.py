@@ -132,6 +132,9 @@ class ShardedRMSNorm(ShardedModule):
             )
         ]
 
+        self._track_intermediate("output", output)
+        self._activations["rmsnorm_output"] = output
+
         return output
 
 
@@ -448,6 +451,9 @@ class ShardedLMHead(ShardedModule):
             logits: (batch, seq, vocab_size)
         """
         logits = hidden @ self.weight
+
+        self._track_intermediate("logits", logits)
+        self._activations["lm_head_logits"] = logits
 
         return logits
 

@@ -76,6 +76,8 @@ class CommPatternDeriver:
         Cases:
         1. Row sharding (weight dim 0): allreduce on output
         2. Column sharding (weight dim 1): no comm on forward, allgather on backward
+
+        Supports both 2D and 3D input tensors.
         """
         ops = []
 
@@ -85,16 +87,36 @@ class CommPatternDeriver:
 
         dtype_size = DTYPE_SIZES.get(op.dtype, 2)
 
-        if len(op.input.shape) == 2:
-            if 0 in input_shardable and 0 not in output_shardable:
-                ptype = input_shardable[0]
+        weight_dim_0_sharded = 0 in weight_shardable
+        weight_dim_1_sharded = 1 in weight_shardable
+
+        if weight_dim_1_sharded:
+            ptype = weight_shardable[1]
+
+            output_not_sharded = not output_shardable or (
+                0 not in output_shardable and 1 not in output_shardable and 2 not in output_shardable
+            )
+
+            if output_not_sharded:
                 output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
                 comm_bytes = math.prod(output_physical) * dtype_size
                 ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
 
-            elif 1 in weight_shardable:
-                if 0 not in output_shardable and 1 not in output_shardable:
-                    ptype = weight_shardable[1]
+        elif weight_dim_0_sharded:
+            ptype = weight_shardable[0]
+
+            output_sharded_on_last_dim = len(op.output.shape) >= 2 and (len(op.output.shape) - 1) in output_shardable
+
+            if not output_sharded_on_last_dim:
+                output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
+                comm_bytes = math.prod(output_physical) * dtype_size
+                ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
+
+        if len(op.input.shape) >= 2:
+            last_dim = len(op.input.shape) - 1
+            if last_dim in input_shardable:
+                ptype = input_shardable[last_dim]
+                if last_dim not in output_shardable:
                     output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
                     comm_bytes = math.prod(output_physical) * dtype_size
                     ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))

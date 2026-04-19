@@ -98,8 +98,33 @@ class UnifiedAnalyzer:
 
         return ctx
 
-    def _infer_submodule_type(self, sub_name: str) -> str:
-        """推断子模块类型."""
+    def _infer_submodule_type(self, sub_name: str, sub_inst: Any = None) -> str:
+        """推断子模块类型，优先检查实际类型."""
+        if sub_inst and hasattr(sub_inst, "module") and sub_inst.module:
+            module = sub_inst.module
+            module_class = type(module).__name__.lower()
+
+            if "attention" in module_class:
+                return "attention"
+            elif "ffn" in module_class or "mlp" in module_class:
+                return "ffn"
+            elif "embedding" in module_class:
+                return "embedding"
+            elif "transformerblock" in module_class or "block" in module_class:
+                return "transformer_block"
+            elif "rmsnorm" in module_class or "norm" in module_class:
+                return "rms_norm"
+            elif "lmhead" in module_class:
+                return "lm_head"
+            elif "moe" in module_class:
+                return "moe"
+            elif "vae" in module_class:
+                return "vae"
+            elif "conv" in module_class:
+                return "conv"
+            elif "dit" in module_class:
+                return "dit"
+
         sub_lower = sub_name.lower()
         if "embedding" in sub_lower or "emb" in sub_lower:
             return "embedding"
@@ -117,6 +142,8 @@ class UnifiedAnalyzer:
             return "conv"
         elif "resblock" in sub_lower or "res" in sub_lower:
             return "resblock"
+        elif "layer" in sub_lower:
+            return "transformer_block"
         else:
             return "unknown"
 
@@ -317,7 +344,7 @@ class UnifiedAnalyzer:
             submodules.append(
                 SubmoduleResult(
                     name=sub_name,
-                    submodule_type=self._infer_submodule_type(sub_name),
+                    submodule_type=self._infer_submodule_type(sub_name, sub_inst),
                     time_sec=self._estimate_submodule_time(sub_inst),
                     flops=sub_inst.flops_forward_physical,
                     memory_gb=sub_inst.activation_memory_physical / 1e9,
