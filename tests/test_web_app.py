@@ -487,3 +487,44 @@ class TestFrontendCompatibility:
             assert "memory" in data
             assert "compute" in data
             assert "communication" in data
+
+    def test_memory_by_type_fields_exist(self):
+        """Test memory.by_type and by_submodel fields exist for frontend table display."""
+        evaluator = Evaluator()
+        result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown")
+
+        if not detailed:
+            return
+
+        mem = detailed.get("memory", {})
+
+        # Check by_type exists with correct fields
+        by_type = mem.get("by_type", {})
+        assert len(by_type) > 0, "memory.by_type should not be empty"
+        assert "weight" in by_type, "memory.by_type should have 'weight'"
+        assert "gradient" in by_type, "memory.by_type should have 'gradient'"
+        assert "optimizer" in by_type, "memory.by_type should have 'optimizer'"
+        assert "activation" in by_type, "memory.by_type should have 'activation'"
+        assert "total" in by_type, "memory.by_type should have 'total'"
+
+        # Check values are numbers and non-negative
+        for key, value in by_type.items():
+            assert isinstance(value, (int, float)), f"by_type[{key}] should be number"
+            assert value >= 0, f"by_type[{key}] should be non-negative"
+
+        # Check weight > 0 for training
+        assert by_type["weight"] > 0, "weight should be > 0 for training"
+        assert by_type["gradient"] > 0, "gradient should be > 0 for training"
+        assert by_type["optimizer"] > 0, "optimizer should be > 0 for training"
+
+        # Check by_submodel exists
+        by_submodel = mem.get("by_submodel", {})
+        assert len(by_submodel) > 0, "memory.by_submodel should not be empty"
+
+        for name, data in by_submodel.items():
+            assert "activations_gb" in data, f"by_submodel[{name}] should have activations_gb"
+            assert isinstance(data["activations_gb"], (int, float)), "activations_gb should be number"
+            assert data["activations_gb"] > 0, f"by_submodel[{name}] activations_gb should be > 0"

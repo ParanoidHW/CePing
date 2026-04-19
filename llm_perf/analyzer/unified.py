@@ -34,6 +34,33 @@ from .breakdown import generate_module_breakdown
 from .workload_loader import get_workload
 
 
+def _aggregate_submodel_memory(phases: List[PhaseResult]) -> Dict[str, Dict[str, float]]:
+    """Aggregate memory by submodel across all phases.
+
+    Returns the peak memory for each submodel.
+    """
+    submodel_memory = {}
+    for phase in phases:
+        component = phase.component
+        if component not in submodel_memory:
+            submodel_memory[component] = {
+                "activations_gb": 0.0,
+                "weight_gb": 0.0,
+                "gradient_gb": 0.0,
+                "optimizer_gb": 0.0,
+                "activation_gb": 0.0,
+                "peak_memory_gb": 0.0,
+            }
+        if phase.memory_gb > submodel_memory[component]["peak_memory_gb"]:
+            submodel_memory[component]["peak_memory_gb"] = phase.memory_gb
+            submodel_memory[component]["weight_gb"] = phase.memory_breakdown.get("weight_gb", 0)
+            submodel_memory[component]["gradient_gb"] = phase.memory_breakdown.get("gradient_gb", 0)
+            submodel_memory[component]["optimizer_gb"] = phase.memory_breakdown.get("optimizer_gb", 0)
+            submodel_memory[component]["activation_gb"] = phase.memory_breakdown.get("activation_gb", 0)
+            submodel_memory[component]["activations_gb"] = phase.memory_gb
+    return submodel_memory
+
+
 class UnifiedAnalyzer:
     """Unified performance analyzer based on compute patterns.
 
@@ -1545,6 +1572,14 @@ class UnifiedAnalyzer:
             "memory": {
                 "summary": total_memory_breakdown,
                 "total_gb": total_memory_gb,
+                "by_type": {
+                    "weight": total_memory_breakdown["weight_gb"],
+                    "gradient": total_memory_breakdown["gradient_gb"],
+                    "optimizer": total_memory_breakdown["optimizer_gb"],
+                    "activation": total_memory_breakdown["activation_gb"],
+                    "total": total_memory_breakdown["total_gb"],
+                },
+                "by_submodel": _aggregate_submodel_memory(phases),
                 "by_submodule_type": {
                     block_type: {
                         **data["memory"],
