@@ -28,6 +28,7 @@ from .base import (
     ComputePattern,
     ThroughputMetric,
     CommunicationBreakdown,
+    WorkloadType,
 )
 from .breakdown import generate_module_breakdown
 from .workload_loader import get_workload
@@ -245,7 +246,7 @@ class UnifiedAnalyzer:
                 compute_pattern = self._infer_compute_pattern(component)
 
             single_time, memory, flops, submodules = self._estimate_phase(
-                component, phase, compute_pattern, params, seq_len_factor
+                component, phase, compute_pattern, params, seq_len_factor, workload
             )
 
             total_time = single_time * repeat_count
@@ -304,6 +305,7 @@ class UnifiedAnalyzer:
         component: ShardedModule,
         phase: Phase,
         params: Dict[str, Any],
+        workload: WorkloadConfig,
     ) -> Tuple[float, float, int, List[SubmoduleResult]]:
         """使用ShardedModule.bind()机制分析phase和子模块.
 
@@ -340,13 +342,40 @@ class UnifiedAnalyzer:
         except Exception:
             pass
 
-        mode = "forward_backward" if phase.compute_type in [ComputeType.BACKWARD, ComputeType.OPTIMIZER] else "forward"
-        module_instance = component.bind(ctx, mode=mode)
+        backend_config = BackendConfig(name="theory", device=self.device)
+        backend = TheoryBackend(backend_config)
+
+        is_training = workload.workload_type == WorkloadType.TRAINING
+
+        # For time estimation:
+        # - forward phase: use forward mode (time = forward_time)
+        # - backward phase: use forward_backward mode (time = forward + backward = 3x forward_time)
+        time_mode = (
+            "forward_backward" if phase.compute_type in [ComputeType.BACKWARD, ComputeType.OPTIMIZER] else "forward"
+        )
+
+        # For memory estimation (training workload):
+        # - forward phase: use forward_backward mode to accumulate all activations for backward pass
+        # - backward/optimizer phase: same as time_mode
+        memory_mode = (
+            "forward_backward"
+            if is_training or phase.compute_type in [ComputeType.BACKWARD, ComputeType.OPTIMIZER]
+            else "forward"
+        )
+
+        # Bind for time estimation
+        time_instance = component.bind(ctx, mode=time_mode)
+        time_sec = time_instance.estimate_time(backend)
+
+        # Bind for memory/flops estimation (may use different mode)
+        module_instance = component.bind(ctx, mode=memory_mode)
 
         if phase.compute_type == ComputeType.FORWARD:
             flops = module_instance.flops_forward_physical
+        elif phase.compute_type == ComputeType.BACKWARD:
+            flops = module_instance.flops_backward_physical
         else:
-            flops = module_instance.flops_total_physical
+            flops = 0
 
         memory = module_instance.activation_memory_physical / 1e9
 
@@ -390,10 +419,6 @@ class UnifiedAnalyzer:
                     nested_submodules=nested_submodules,
                 )
             )
-
-        backend_config = BackendConfig(name="theory", device=self.device)
-        backend = TheoryBackend(backend_config)
-        time_sec = module_instance.estimate_time(backend)
 
         return time_sec, memory, flops, submodules
 
@@ -463,6 +488,7 @@ class UnifiedAnalyzer:
         compute_pattern: ComputePattern,
         params: Dict[str, Any],
         seq_len_factor: float,
+        workload: WorkloadConfig,
     ) -> tuple:
         """Estimate single phase execution.
 
@@ -476,7 +502,7 @@ class UnifiedAnalyzer:
 
         try:
             bind_time, bind_memory, bind_flops, bind_submodules = self._analyze_phase_with_submodules(
-                component, phase, params
+                component, phase, params, workload
             )
 
             if bind_time > 0 or bind_flops > 0 or len(bind_submodules) > 0:
