@@ -1225,12 +1225,49 @@ class UnifiedAnalyzer:
                 if block_type not in by_block_type:
                     by_block_type[block_type] = {
                         "activations_gb": 0.0,
-                        "flops": 0,
-                        "time_sec": 0.0,
+                        "compute": {
+                            "flops": 0,
+                            "flops_gflops": 0.0,
+                            "flops_tflops": 0.0,
+                            "time_sec": 0.0,
+                        },
+                        "communication": {
+                            "bytes": 0,
+                            "gb": 0.0,
+                        },
                     }
                 by_block_type[block_type]["activations_gb"] += sm.memory_gb
-                by_block_type[block_type]["flops"] += sm.flops
-                by_block_type[block_type]["time_sec"] += sm.time_sec
+                by_block_type[block_type]["compute"]["flops"] += sm.flops
+                by_block_type[block_type]["compute"]["flops_gflops"] += sm.flops / 1e9
+                by_block_type[block_type]["compute"]["flops_tflops"] += sm.flops / 1e12
+                by_block_type[block_type]["compute"]["time_sec"] += sm.time_sec
+                by_block_type[block_type]["communication"]["bytes"] += sm.communication_bytes
+                by_block_type[block_type]["communication"]["gb"] += sm.communication_bytes / 1e9
+
+        by_module: Dict[str, Dict[str, Any]] = {}
+        for phase in phases:
+            for sm in phase.submodules:
+                module_name = sm.name
+                if module_name not in by_module:
+                    by_module[module_name] = {
+                        "module_type": sm.submodule_type,
+                        "activations_gb": 0.0,
+                        "compute": {
+                            "flops": 0,
+                            "flops_gflops": 0.0,
+                            "time_sec": 0.0,
+                        },
+                        "communication": {
+                            "bytes": 0,
+                            "gb": 0.0,
+                        },
+                    }
+                by_module[module_name]["activations_gb"] += sm.memory_gb
+                by_module[module_name]["compute"]["flops"] += sm.flops
+                by_module[module_name]["compute"]["flops_gflops"] += sm.flops / 1e9
+                by_module[module_name]["compute"]["time_sec"] += sm.time_sec
+                by_module[module_name]["communication"]["bytes"] += sm.communication_bytes
+                by_module[module_name]["communication"]["gb"] += sm.communication_bytes / 1e9
 
         total_memory = sum(p.memory_gb for p in phases)
 
@@ -1251,7 +1288,26 @@ class UnifiedAnalyzer:
             "memory": {
                 "by_type": {"activations_gb": total_memory},
                 "by_submodel": by_component,
+                "by_module": by_module,
                 "by_block_type": by_block_type,
+            },
+            "compute": {
+                "by_module": {
+                    name: {
+                        "flops": data["compute"]["flops"],
+                        "flops_gflops": data["compute"]["flops_gflops"],
+                        "time_sec": data["compute"]["time_sec"],
+                    }
+                    for name, data in by_module.items()
+                },
+                "by_block_type": {
+                    name: {
+                        "flops": data["compute"]["flops"],
+                        "flops_gflops": data["compute"]["flops_gflops"],
+                        "time_sec": data["compute"]["time_sec"],
+                    }
+                    for name, data in by_block_type.items()
+                },
             },
             "communication": {
                 "by_parallelism": comm_breakdown_dict,

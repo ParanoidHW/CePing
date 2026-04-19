@@ -317,7 +317,8 @@ class TestWebAppAPI:
             if memory["by_block_type"]:
                 for block_type, metrics in memory["by_block_type"].items():
                     assert "activations_gb" in metrics
-                    assert "flops" in metrics
+                    assert "compute" in metrics
+                    assert "flops" in metrics["compute"]
                     assert metrics["activations_gb"] >= 0
 
     def test_communication_breakdown_per_gpu(self):
