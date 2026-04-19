@@ -36,6 +36,7 @@ class ShardedModule:
         self._submodules: Dict[str, ShardedModule] = {}
         self._weights: Dict[str, ShardedTensor] = {}
         self._activations: Dict[str, ShardedTensor] = {}
+        self._intermediate_tensors: Dict[str, ShardedTensor] = {}
         self._name: str = ""
         self._last_forward_input: Optional[ShardedTensor] = None
         self._last_forward_output: Optional[ShardedTensor] = None
@@ -64,6 +65,23 @@ class ShardedModule:
         output = self.forward(*args, **kwargs)
         self._last_forward_output = output
         return output
+
+    def _track_intermediate(self, name: str, tensor: ShardedTensor) -> ShardedTensor:
+        """Track intermediate tensor during forward pass.
+
+        Args:
+            name: Tensor name (relative to this module)
+            tensor: ShardedTensor to track
+
+        Returns:
+            The same tensor (for chaining)
+
+        Usage:
+            q_proj = self._track_intermediate("q_proj", hidden @ self.q_weight)
+        """
+        full_name = f"{self._name}.{name}" if self._name else name
+        self._intermediate_tensors[full_name] = tensor
+        return tensor
 
     def bind(
         self,
@@ -100,8 +118,9 @@ class ShardedModule:
         return weights
 
     def get_activations(self) -> Dict[str, ShardedTensor]:
-        """Get all activations (including submodules)."""
+        """Get all activations (including submodules and intermediate tensors)."""
         activations = self._activations.copy()
+        activations.update(self._intermediate_tensors)
         for name, submodule in self._submodules.items():
             for a_name, a_tensor in submodule.get_activations().items():
                 activations[f"{name}.{a_name}"] = a_tensor

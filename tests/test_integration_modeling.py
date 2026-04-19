@@ -157,6 +157,67 @@ class TestUnifiedAnalyzerIntegration:
         for sub_name, sub_inst in instance._submodule_instances.items():
             assert sub_inst.params_count_physical >= 0
 
+    def test_intermediate_tensor_tracking_attention(self):
+        """Test intermediate tensors are tracked in ShardedAttention."""
+        from llm_perf.modeling.layers import ShardedAttention
+
+        attention = ShardedAttention(
+            hidden_size=4096,
+            num_heads=32,
+            num_kv_heads=8,
+            head_dim=128,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        attention(hidden)
+
+        assert len(attention._intermediate_tensors) > 0
+        assert "q_proj" in attention._intermediate_tensors
+        assert "k_proj" in attention._intermediate_tensors
+        assert "v_proj" in attention._intermediate_tensors
+        assert "q" in attention._intermediate_tensors
+        assert "k" in attention._intermediate_tensors
+        assert "v" in attention._intermediate_tensors
+        assert "attn_out" in attention._intermediate_tensors
+        assert "attn_flat" in attention._intermediate_tensors
+        assert "output" in attention._intermediate_tensors
+
+    def test_intermediate_tensor_tracking_ffn(self):
+        """Test intermediate tensors are tracked in ShardedFFN."""
+        from llm_perf.modeling.layers import ShardedFFN
+
+        ffn = ShardedFFN(
+            hidden_size=4096,
+            intermediate_size=8192,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        ffn(hidden)
+
+        assert len(ffn._intermediate_tensors) > 0
+        assert "gate_proj" in ffn._intermediate_tensors
+        assert "gate_silu" in ffn._intermediate_tensors
+        assert "up_proj" in ffn._intermediate_tensors
+        assert "intermediate" in ffn._intermediate_tensors
+        assert "output" in ffn._intermediate_tensors
+
+    def test_get_activations_includes_intermediate(self):
+        """Test get_activations() includes intermediate tensors."""
+        from llm_perf.modeling.layers import ShardedAttention
+
+        attention = ShardedAttention(
+            hidden_size=4096,
+            num_heads=32,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        attention(hidden)
+
+        all_activations = attention.get_activations()
+
+        assert len(all_activations) >= len(attention._activations)
+        assert len(all_activations) >= len(attention._intermediate_tensors)
+
     def test_analyze_workload_convenience_function(self, setup_llama):
         """Test convenience function analyze_workload."""
         model, device, cluster, strategy = setup_llama

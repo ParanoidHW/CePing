@@ -316,19 +316,21 @@ class ShardedAttention(ShardedModule):
         batch = hidden.shape[0] if len(hidden.shape) >= 1 else 1
         seq = hidden.shape[1] if len(hidden.shape) >= 2 else 1
 
-        q_proj = hidden @ self.q_weight
-        k_proj = hidden @ self.k_weight
-        v_proj = hidden @ self.v_weight
+        q_proj = self._track_intermediate("q_proj", hidden @ self.q_weight)
+        k_proj = self._track_intermediate("k_proj", hidden @ self.k_weight)
+        v_proj = self._track_intermediate("v_proj", hidden @ self.v_weight)
 
-        q = q_proj.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = v_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        q = self._track_intermediate("q", q_proj.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2))
+        k = self._track_intermediate("k", k_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2))
+        v = self._track_intermediate("v", v_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2))
 
-        attn_out = flash_attention(q, k, v, is_causal=is_causal)
+        attn_out = self._track_intermediate("attn_out", flash_attention(q, k, v, is_causal=is_causal))
 
-        attn_flat = attn_out.transpose(1, 2).view(batch, seq, self.num_heads * self.head_dim)
+        attn_flat = self._track_intermediate(
+            "attn_flat", attn_out.transpose(1, 2).view(batch, seq, self.num_heads * self.head_dim)
+        )
 
-        output = attn_flat @ self.o_weight
+        output = self._track_intermediate("output", attn_flat @ self.o_weight)
 
         self._activations["q_proj"] = q_proj
         self._activations["attn_out"] = attn_out
@@ -390,14 +392,14 @@ class ShardedFFN(ShardedModule):
         Returns:
             output: (batch, seq, hidden_size)
         """
-        gate_proj = hidden @ self.gate_weight
-        gate_proj = silu(gate_proj)
+        gate_proj = self._track_intermediate("gate_proj", hidden @ self.gate_weight)
+        gate_proj = self._track_intermediate("gate_silu", silu(gate_proj))
 
-        up_proj = hidden @ self.up_weight
+        up_proj = self._track_intermediate("up_proj", hidden @ self.up_weight)
 
-        intermediate = gate_proj * up_proj
+        intermediate = self._track_intermediate("intermediate", gate_proj * up_proj)
 
-        output = intermediate @ self.down_weight
+        output = self._track_intermediate("output", intermediate @ self.down_weight)
 
         self._activations["gate_proj"] = gate_proj
         self._activations["up_proj"] = up_proj
