@@ -5,16 +5,16 @@ returning detailed performance metrics (FLOPs, memory bandwidth, etc.).
 
 Example:
     >>> from llm_perf.kernels.functional import linear, attention, layer_norm
-    >>> 
+    >>>
     >>> # Linear operation
     >>> result = linear(input, weight, bias)
     >>> print(f"FLOPs: {result.flops}, Memory: {result.bytes_accessed}")
-    >>> 
+    >>>
     >>> # Access output tensor
     >>> output = result.output
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Tuple, List
 import math
 
@@ -38,7 +38,9 @@ class KernelResult:
         dtype: Data type string (e.g., "fp16", "bf16", "fp32")
         flops_backward: Backward pass FLOPs (default: 0)
         bytes_accessed_backward: Backward pass memory bytes (default: 0)
+        saved_inputs: List of input names that need to be saved for backward pass (default: [])
     """
+
     output: Tuple[int, ...]  # Output shape
     flops: int
     bytes_accessed: int
@@ -53,42 +55,43 @@ class KernelResult:
     # Backward metrics
     flops_backward: int = 0  # Backward FLOPs
     bytes_accessed_backward: int = 0  # Backward memory bytes
-    
+    saved_inputs: List[str] = field(default_factory=list)  # Input names to save for backward (e.g., ["input"])
+
     def __post_init__(self):
         """Validate and compute derived metrics."""
         if self.bytes_accessed > 0:
             self.arithmetic_intensity = self.flops / self.bytes_accessed
         else:
-            self.arithmetic_intensity = float('inf')
+            self.arithmetic_intensity = float("inf")
         # Compute memory_bound based on arithmetic intensity
         self.memory_bound = self._compute_memory_bound()
-    
+
     def get_dtype_size(self) -> int:
         """Get bytes per element for the data type."""
         return DTYPE_SIZES.get(self.dtype, 2)
-    
+
     def _compute_memory_bound(self) -> bool:
         """Determine if kernel is memory bound based on arithmetic intensity.
-        
+
         A kernel is memory bound when its arithmetic intensity is below the
         machine's compute-to-memory bandwidth ratio (machine balance).
-        
+
         Typical machine balance (peak_FLOPs / memory_BW):
         - H100 SXM: ~1000 TFLOPS / 3 TB/s = ~333 FLOPs/byte
         - A100 SXM: ~312 TFLOPS / 2 TB/s = ~156 FLOPs/byte
         - MI300X: ~1300 TFLOPS / 5.3 TB/s = ~245 FLOPs/byte
         - Ascend 910B: ~376 TFLOPS / 1.6 TB/s = ~235 FLOPs/byte
-        
+
         We use conservative thresholds:
         - CUBE/Tensor Core ops: 200 FLOPs/byte
         - VECTOR/CUDA Core ops: 50 FLOPs/byte
-        
+
         Returns:
             True if kernel is memory bound, False if compute bound
         """
         if self.bytes_accessed == 0:
             return False  # No memory access means compute bound
-        
+
         # Machine balance thresholds (FLOPs per byte)
         # These are conservative estimates for typical AI accelerators
         if self.unit_type == "cube":
@@ -99,7 +102,7 @@ class KernelResult:
             # VECTOR/CUDA Core: lower compute capability
             # Threshold ~50 FLOPs/byte
             threshold = 50.0
-        
+
         return self.arithmetic_intensity < threshold
 
 
@@ -112,7 +115,7 @@ def linear(
     input: Tuple[int, ...],  # (..., in_features)
     weight: Tuple[int, ...],  # (out_features, in_features)
     bias: Optional[Tuple[int, ...]] = None,  # (out_features,)
-    dtype: str = "fp16"
+    dtype: str = "fp16",
 ) -> KernelResult:
     """Linear transformation: y = x @ W^T + b
 
@@ -149,9 +152,9 @@ def linear(
     # Read: input + weight + bias
     # Write: output
     bytes_accessed = (
-        batch_size * in_features * dtype_size +  # input
-        in_features * out_features * dtype_size +  # weight
-        batch_size * out_features * dtype_size  # output
+        batch_size * in_features * dtype_size  # input
+        + in_features * out_features * dtype_size  # weight
+        + batch_size * out_features * dtype_size  # output
     )
     if bias is not None:
         bytes_accessed += out_features * dtype_size  # bias
@@ -182,12 +185,12 @@ def linear(
     # - dW = x^T @ dy: read x (m×k), read dy (m×n), write dW (n×k)
     # Total backward bytes ≈ 2x forward bytes
     bytes_accessed_backward = (
-        batch_size * out_features * dtype_size +  # dy (gradient output)
-        in_features * out_features * dtype_size +  # W (weight)
-        batch_size * in_features * dtype_size +  # dx (gradient input, written)
-        batch_size * in_features * dtype_size +  # x (input, read for dW)
-        batch_size * out_features * dtype_size +  # dy (gradient output, read for dW)
-        in_features * out_features * dtype_size  # dW (gradient weight, written)
+        batch_size * out_features * dtype_size  # dy (gradient output)
+        + in_features * out_features * dtype_size  # W (weight)
+        + batch_size * in_features * dtype_size  # dx (gradient input, written)
+        + batch_size * in_features * dtype_size  # x (input, read for dW)
+        + batch_size * out_features * dtype_size  # dy (gradient output, read for dW)
+        + in_features * out_features * dtype_size  # dW (gradient weight, written)
     )
     # Note: W is read twice (for dx and dW), dy is read twice (for dx and dW)
     # Simplified: bytes_backward ≈ 2 * forward_bytes + weight_bytes (read twice)
@@ -197,7 +200,7 @@ def linear(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=bytes_accessed > flops / 100,  # Heuristic
         input_shapes=[input, weight] + ([bias] if bias else []),
         params=params,
@@ -206,13 +209,14 @@ def linear(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["input", "mat2"],  # backward: dA = dC @ B^T, dB = A^T @ dC
     )
 
 
 def bmm(
     input: Tuple[int, ...],  # (batch, m, k)
-    mat2: Tuple[int, ...],   # (batch, k, n)
-    dtype: str = "fp16"
+    mat2: Tuple[int, ...],  # (batch, k, n)
+    dtype: str = "fp16",
 ) -> KernelResult:
     """Batch matrix multiplication: out = input @ mat2
 
@@ -239,9 +243,9 @@ def bmm(
 
     # Forward memory accessed
     bytes_accessed = (
-        batch * m * k * dtype_size +  # input
-        batch * k * n * dtype_size +  # mat2
-        batch * m * n * dtype_size    # output
+        batch * m * k * dtype_size  # input
+        + batch * k * n * dtype_size  # mat2
+        + batch * m * n * dtype_size  # output
     )
 
     # BMM has no learnable parameters
@@ -266,7 +270,7 @@ def bmm(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=bytes_accessed > flops / 100,
         input_shapes=[input, mat2],
         params=params,
@@ -275,16 +279,17 @@ def bmm(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["input", "mat2"],  # backward: dA = dC @ B^T, dB = A^T @ dC
     )
 
 
 def scaled_dot_product_attention(
-    query: Tuple[int, ...],    # (batch, num_heads, seq_len, head_dim)
-    key: Tuple[int, ...],      # (batch, kv_num_heads, kv_seq_len, head_dim)
-    value: Tuple[int, ...],    # (batch, kv_num_heads, kv_seq_len, head_dim)
+    query: Tuple[int, ...],  # (batch, num_heads, seq_len, head_dim)
+    key: Tuple[int, ...],  # (batch, kv_num_heads, kv_seq_len, head_dim)
+    value: Tuple[int, ...],  # (batch, kv_num_heads, kv_seq_len, head_dim)
     is_causal: bool = False,
     dtype: str = "fp16",
-    use_gqa: bool = False,     # Whether to use GQA (Group Query Attention)
+    use_gqa: bool = False,  # Whether to use GQA (Group Query Attention)
 ) -> KernelResult:
     """Scaled dot-product attention: softmax(Q @ K^T / sqrt(d)) @ V
 
@@ -333,10 +338,10 @@ def scaled_dot_product_attention(
     # Forward memory accessed
     # For GQA: K/V memory access is reduced by gqa_factor
     bytes_accessed = (
-        batch * num_heads * seq_len * head_dim * dtype_size +  # query
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size +  # key (GQA reduced)
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size +  # value (GQA reduced)
-        batch * num_heads * seq_len * head_dim * dtype_size  # output
+        batch * num_heads * seq_len * head_dim * dtype_size  # query
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size  # key (GQA reduced)
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size  # value (GQA reduced)
+        + batch * num_heads * seq_len * head_dim * dtype_size  # output
     )
 
     # Attention has no learnable parameters
@@ -372,11 +377,11 @@ def scaled_dot_product_attention(
     # Write: dQ, dK, dV (all gradients)
     # Total: ≈ 2-3x forward bytes (need to re-read inputs and save intermediate results)
     bytes_accessed_backward = (
-        batch * num_heads * seq_len * head_dim * dtype_size * 2 +  # Q read + dQ write
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * 2 +  # K read + dK write
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * 2 +  # V read + dV write
-        batch * num_heads * seq_len * head_dim * dtype_size +  # dOutput (gradient)
-        batch * num_heads * seq_len * kv_seq_len * dtype_size  # saved attention scores
+        batch * num_heads * seq_len * head_dim * dtype_size * 2  # Q read + dQ write
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * 2  # K read + dK write
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * 2  # V read + dV write
+        + batch * num_heads * seq_len * head_dim * dtype_size  # dOutput (gradient)
+        + batch * num_heads * seq_len * kv_seq_len * dtype_size  # saved attention scores
     )
     # Simplified: bytes_backward ≈ 2-3x forward (with saved activations)
     bytes_accessed_backward = bytes_accessed * 2.5
@@ -385,7 +390,7 @@ def scaled_dot_product_attention(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,  # Attention is typically memory bound
         input_shapes=[query, key, value],
         params=params,
@@ -394,17 +399,18 @@ def scaled_dot_product_attention(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=int(bytes_accessed_backward),
+        saved_inputs=["query", "key", "value"],  # backward needs Q, K, V for gradient computation
     )
 
 
 def flash_attention(
-    query: Tuple[int, ...],    # (batch, num_heads, seq_len, head_dim)
-    key: Tuple[int, ...],      # (batch, kv_num_heads, kv_seq_len, head_dim)
-    value: Tuple[int, ...],    # (batch, kv_num_heads, kv_seq_len, head_dim)
+    query: Tuple[int, ...],  # (batch, num_heads, seq_len, head_dim)
+    key: Tuple[int, ...],  # (batch, kv_num_heads, kv_seq_len, head_dim)
+    value: Tuple[int, ...],  # (batch, kv_num_heads, kv_seq_len, head_dim)
     is_causal: bool = False,
     dtype: str = "fp16",
     use_gqa: bool = False,
-    block_size: int = 128,     # Tile size for Flash Attention
+    block_size: int = 128,  # Tile size for Flash Attention
 ) -> KernelResult:
     """Flash Attention kernel with tiling optimization.
 
@@ -474,10 +480,10 @@ def flash_attention(
     # O: written once
     # Plus some overhead for softmax normalization stats (negligible)
     bytes_accessed = (
-        batch * num_heads * seq_len * head_dim * dtype_size * q_loads +  # Q loads
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * kv_loads +  # K loads
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * kv_loads +  # V loads
-        batch * num_heads * seq_len * head_dim * dtype_size  # O write
+        batch * num_heads * seq_len * head_dim * dtype_size * q_loads  # Q loads
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * kv_loads  # K loads
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * kv_loads  # V loads
+        + batch * num_heads * seq_len * head_dim * dtype_size  # O write
     )
 
     # Add small overhead for softmax statistics (online softmax algorithm)
@@ -497,10 +503,10 @@ def flash_attention(
     # This avoids storing O(N^2) attention scores
     # Memory access: similar to forward, but with additional reads for gradient
     bytes_accessed_backward = (
-        batch * num_heads * seq_len * head_dim * dtype_size * (q_loads + 1) +  # Q + dQ
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * (kv_loads + 1) +  # K + dK
-        batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * (kv_loads + 1) +  # V + dV
-        batch * num_heads * seq_len * head_dim * dtype_size * 2  # O + dO
+        batch * num_heads * seq_len * head_dim * dtype_size * (q_loads + 1)  # Q + dQ
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * (kv_loads + 1)  # K + dK
+        + batch * kv_num_heads * kv_seq_len * head_dim * dtype_size * (kv_loads + 1)  # V + dV
+        + batch * num_heads * seq_len * head_dim * dtype_size * 2  # O + dO
     )
     # Flash Attention backward is memory-efficient
     # ≈ 2x forward bytes (no O(N^2) storage)
@@ -510,7 +516,7 @@ def flash_attention(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[query, key, value],
         params=params,
@@ -519,11 +525,12 @@ def flash_attention(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=[],  # Flash Attention: Q, K, V are views, save Q_proj, K_proj, V_proj instead
     )
 
 
 def mla_attention(
-    query: Tuple[int, ...],    # (batch, num_heads, seq_len, qk_head_dim)
+    query: Tuple[int, ...],  # (batch, num_heads, seq_len, qk_head_dim)
     compressed_kv: Tuple[int, ...],  # (batch, seq_len, kv_lora_rank)
     key: Optional[Tuple[int, ...]],  # (batch, kv_num_heads, seq_len, head_dim) - for non-absorb
     value: Optional[Tuple[int, ...]],  # (batch, kv_num_heads, seq_len, v_head_dim) - for non-absorb
@@ -535,24 +542,24 @@ def mla_attention(
     kv_lora_rank: int = 512,
 ) -> KernelResult:
     """Multi-head Latent Attention (MLA) kernel.
-    
+
     MLA compresses KV cache into a latent vector, reducing memory usage.
-    
+
     Two modes:
     1. Non-absorb mode (training/inference standard):
        - KV is compressed to kv_lora_rank dimensions
        - At attention time, KV is decompressed to full head_dim
        - Requires explicit K and V inputs (decompressed)
-    
+
     2. Absorb mode (inference optimization):
        - The KV decompression matrices are absorbed into Q and O projections
        - Attention computed directly on compressed KV representation
        - No explicit K/V decompression needed
        - Significant memory and compute savings
-    
+
     Reference: DeepSeek-V2 Technical Report
     https://arxiv.org/abs/2405.04434
-    
+
     Args:
         query: Shape (batch, num_heads, seq_len, qk_head_dim)
         compressed_kv: Shape (batch, seq_len, kv_lora_rank) - compressed KV
@@ -564,61 +571,61 @@ def mla_attention(
         qk_head_dim: Dimension for QK (after RoPE and projection)
         v_head_dim: Dimension for V heads
         kv_lora_rank: Compressed KV dimension
-    
+
     Returns:
         KernelResult with performance metrics
     """
     dtype_size = _compute_dtype_size(dtype)
-    
+
     batch, num_heads, seq_len, _ = query
     _, kv_seq_len, _ = compressed_kv
-    
+
     output_shape = (batch, num_heads, seq_len, v_head_dim)
-    
+
     if use_absorb:
         # Absorb mode: attention directly on compressed KV
         # The KV decompression is implicitly done through Q and O projection
         # This is mathematically equivalent but more efficient
-        
+
         # FLOPs: same as standard attention but with compressed dimensions
         # Q @ compressed_K^T: (num_heads, seq, qk_dim) @ (kv_rank, seq)^T
         qk_flops = 2 * batch * num_heads * seq_len * kv_seq_len * kv_lora_rank
-        
+
         # Softmax
         softmax_flops = 5 * batch * num_heads * seq_len * kv_seq_len
-        
+
         # Attention @ compressed_V: (num_heads, seq, seq) @ (seq, kv_rank)
         attn_v_flops = 2 * batch * num_heads * seq_len * kv_lora_rank * kv_seq_len
-        
+
         flops = qk_flops + softmax_flops + attn_v_flops
-        
+
         # Memory: only compressed KV is accessed
         bytes_accessed = (
-            batch * num_heads * seq_len * qk_head_dim * dtype_size +  # Q
-            batch * kv_seq_len * kv_lora_rank * dtype_size +  # compressed K
-            batch * kv_seq_len * kv_lora_rank * dtype_size +  # compressed V
-            batch * num_heads * seq_len * v_head_dim * dtype_size  # output
+            batch * num_heads * seq_len * qk_head_dim * dtype_size  # Q
+            + batch * kv_seq_len * kv_lora_rank * dtype_size  # compressed K
+            + batch * kv_seq_len * kv_lora_rank * dtype_size  # compressed V
+            + batch * num_heads * seq_len * v_head_dim * dtype_size  # output
         )
     else:
         # Non-absorb mode: standard attention on decompressed K/V
         assert key is not None and value is not None, "key/value required for non-absorb mode"
         _, kv_num_heads, _, _ = key
-        
+
         # Standard attention FLOPs
         qk_flops = 2 * batch * num_heads * seq_len * kv_seq_len * qk_head_dim
         softmax_flops = 5 * batch * num_heads * seq_len * kv_seq_len
         attn_v_flops = 2 * batch * num_heads * seq_len * v_head_dim * kv_seq_len
-        
+
         flops = qk_flops + softmax_flops + attn_v_flops
-        
+
         # Memory: full K/V heads
         bytes_accessed = (
-            batch * num_heads * seq_len * qk_head_dim * dtype_size +  # Q
-            batch * kv_num_heads * kv_seq_len * qk_head_dim * dtype_size +  # K
-            batch * kv_num_heads * kv_seq_len * v_head_dim * dtype_size +  # V
-            batch * num_heads * seq_len * v_head_dim * dtype_size  # output
+            batch * num_heads * seq_len * qk_head_dim * dtype_size  # Q
+            + batch * kv_num_heads * kv_seq_len * qk_head_dim * dtype_size  # K
+            + batch * kv_num_heads * kv_seq_len * v_head_dim * dtype_size  # V
+            + batch * num_heads * seq_len * v_head_dim * dtype_size  # output
         )
-    
+
     params = 0
     param_bytes = 0
 
@@ -634,7 +641,7 @@ def mla_attention(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[query, compressed_kv] + ([key, value] if key else []),
         params=params,
@@ -643,14 +650,12 @@ def mla_attention(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["query", "compressed_kv"],  # backward needs Q and compressed KV
     )
 
 
 def layer_norm(
-    input: Tuple[int, ...],
-    normalized_shape: Tuple[int, ...],
-    elementwise_affine: bool = True,
-    dtype: str = "fp16"
+    input: Tuple[int, ...], normalized_shape: Tuple[int, ...], elementwise_affine: bool = True, dtype: str = "fp16"
 ) -> KernelResult:
     """Layer normalization.
 
@@ -695,14 +700,16 @@ def layer_norm(
     # ≈ 2x forward bytes
     bytes_accessed_backward = numel * dtype_size * 2  # read input + write dX
     if elementwise_affine:
-        bytes_accessed_backward += math.prod(normalized_shape) * dtype_size * 3  # read gamma, beta + write dGamma, dBeta
+        bytes_accessed_backward += (
+            math.prod(normalized_shape) * dtype_size * 3
+        )  # read gamma, beta + write dGamma, dBeta
     bytes_accessed_backward += numel * dtype_size  # read dY
 
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -714,11 +721,7 @@ def layer_norm(
     )
 
 
-def rms_norm(
-    input: Tuple[int, ...],
-    dim: int = -1,
-    dtype: str = "fp16"
-) -> KernelResult:
+def rms_norm(input: Tuple[int, ...], dim: int = -1, dtype: str = "fp16") -> KernelResult:
     """RMS normalization (common in LLMs like LLaMA, T5).
 
     y = x / sqrt(mean(x^2) + eps) * weight
@@ -757,16 +760,16 @@ def rms_norm(
     # Backward memory: read input, weight, gradient; write gradient for input and weight
     # ≈ 1.5x forward bytes
     bytes_accessed_backward = (
-        numel * dtype_size * 2 +  # read input + write dX
-        input[dim] * dtype_size * 2 +  # read weight + write dW
-        numel * dtype_size  # read dY
+        numel * dtype_size * 2  # read input + write dX
+        + input[dim] * dtype_size * 2  # read weight + write dW
+        + numel * dtype_size  # read dY
     )
 
     return KernelResult(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -778,10 +781,7 @@ def rms_norm(
     )
 
 
-def silu(
-    input: Tuple[int, ...],
-    dtype: str = "fp16"
-) -> KernelResult:
+def silu(input: Tuple[int, ...], dtype: str = "fp16") -> KernelResult:
     """SiLU activation: x * sigmoid(x)
 
     Similar to torch.nn.functional.silu
@@ -821,7 +821,7 @@ def silu(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -833,11 +833,7 @@ def silu(
     )
 
 
-def gelu(
-    input: Tuple[int, ...],
-    approximate: str = "none",
-    dtype: str = "fp16"
-) -> KernelResult:
+def gelu(input: Tuple[int, ...], approximate: str = "none", dtype: str = "fp16") -> KernelResult:
     """GELU activation.
 
     Similar to torch.nn.functional.gelu
@@ -876,7 +872,7 @@ def gelu(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -885,13 +881,11 @@ def gelu(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["input"],  # backward needs input for gradient computation
     )
 
 
-def relu(
-    input: Tuple[int, ...],
-    dtype: str = "fp16"
-) -> KernelResult:
+def relu(input: Tuple[int, ...], dtype: str = "fp16") -> KernelResult:
     """ReLU activation: max(0, x)
 
     Similar to torch.nn.functional.relu
@@ -924,7 +918,7 @@ def relu(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -933,14 +927,11 @@ def relu(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=[],  # ReLU backward doesn't need to save input (uses mask from forward)
     )
 
 
-def softmax(
-    input: Tuple[int, ...],
-    dim: int = -1,
-    dtype: str = "fp16"
-) -> KernelResult:
+def softmax(input: Tuple[int, ...], dim: int = -1, dtype: str = "fp16") -> KernelResult:
     """Softmax activation.
 
     Similar to torch.nn.functional.softmax
@@ -977,7 +968,7 @@ def softmax(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -986,14 +977,11 @@ def softmax(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["output"],  # softmax backward needs output (softmax values), not input
     )
 
 
-def dropout(
-    input: Tuple[int, ...],
-    p: float = 0.5,
-    dtype: str = "fp16"
-) -> KernelResult:
+def dropout(input: Tuple[int, ...], p: float = 0.5, dtype: str = "fp16") -> KernelResult:
     """Dropout regularization.
 
     Similar to torch.nn.functional.dropout
@@ -1028,7 +1016,7 @@ def dropout(
         output=input,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input],
         params=params,
@@ -1041,12 +1029,12 @@ def dropout(
 
 
 def conv2d(
-    input: Tuple[int, ...],      # (N, C_in, H, W)
-    weight: Tuple[int, ...],     # (C_out, C_in, kH, kW)
+    input: Tuple[int, ...],  # (N, C_in, H, W)
+    weight: Tuple[int, ...],  # (C_out, C_in, kH, kW)
     bias: Optional[Tuple[int, ...]] = None,
     stride: Tuple[int, int] = (1, 1),
     padding: Tuple[int, int] = (0, 0),
-    dtype: str = "fp16"
+    dtype: str = "fp16",
 ) -> KernelResult:
     """2D convolution.
 
@@ -1083,9 +1071,9 @@ def conv2d(
 
     # Forward memory accessed
     bytes_accessed = (
-        N * C_in * H * W * dtype_size +  # input
-        C_out * C_in * kH * kW * dtype_size +  # weight
-        N * C_out * H_out * W_out * dtype_size  # output
+        N * C_in * H * W * dtype_size  # input
+        + C_out * C_in * kH * kW * dtype_size  # weight
+        + N * C_out * H_out * W_out * dtype_size  # output
     )
     if bias is not None:
         bytes_accessed += C_out * dtype_size
@@ -1114,7 +1102,7 @@ def conv2d(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=bytes_accessed > flops / 100,
         input_shapes=[input, weight] + ([bias] if bias else []),
         params=params,
@@ -1123,16 +1111,17 @@ def conv2d(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["input"],  # backward: dX = conv_transpose(dY, W), needs X for dW
     )
 
 
 def conv3d(
-    input: Tuple[int, ...],      # (N, C_in, D, H, W)
-    weight: Tuple[int, ...],     # (C_out, C_in, kD, kH, kW)
+    input: Tuple[int, ...],  # (N, C_in, D, H, W)
+    weight: Tuple[int, ...],  # (C_out, C_in, kD, kH, kW)
     bias: Optional[Tuple[int, ...]] = None,
     stride: Tuple[int, int, int] = (1, 1, 1),
     padding: Tuple[int, int, int] = (0, 0, 0),
-    dtype: str = "fp16"
+    dtype: str = "fp16",
 ) -> KernelResult:
     """3D convolution.
 
@@ -1167,9 +1156,9 @@ def conv3d(
 
     # Forward memory accessed
     bytes_accessed = (
-        N * C_in * D * H * W * dtype_size +  # input
-        C_out * C_in * kD * kH * kW * dtype_size +  # weight
-        N * C_out * D_out * H_out * W_out * dtype_size  # output
+        N * C_in * D * H * W * dtype_size  # input
+        + C_out * C_in * kD * kH * kW * dtype_size  # weight
+        + N * C_out * D_out * H_out * W_out * dtype_size  # output
     )
     if bias is not None:
         bytes_accessed += C_out * dtype_size
@@ -1192,7 +1181,7 @@ def conv3d(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=bytes_accessed > flops / 100,
         input_shapes=[input, weight] + ([bias] if bias else []),
         params=params,
@@ -1201,14 +1190,12 @@ def conv3d(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["input"],  # backward: dX = conv_transpose(dY, W), needs X for dW
     )
 
 
 def embedding(
-    num_embeddings: int,
-    embedding_dim: int,
-    input_shape: Tuple[int, ...],
-    dtype: str = "fp16"
+    num_embeddings: int, embedding_dim: int, input_shape: Tuple[int, ...], dtype: str = "fp16"
 ) -> KernelResult:
     """Embedding lookup.
 
@@ -1233,8 +1220,8 @@ def embedding(
 
     # Forward memory accessed
     bytes_accessed = (
-        num_embeddings * embedding_dim * dtype_size +  # embedding table
-        numel * embedding_dim * dtype_size  # output
+        num_embeddings * embedding_dim * dtype_size  # embedding table
+        + numel * embedding_dim * dtype_size  # output
     )
 
     # Calculate params: embedding table
@@ -1250,15 +1237,15 @@ def embedding(
     # Backward memory: read gradient, update embedding table
     # Only update the accessed embeddings (sparse)
     bytes_accessed_backward = (
-        numel * embedding_dim * dtype_size +  # dY (gradient)
-        numel * embedding_dim * dtype_size * 2  # read + write accessed embeddings
+        numel * embedding_dim * dtype_size  # dY (gradient)
+        + numel * embedding_dim * dtype_size * 2  # read + write accessed embeddings
     )
 
     return KernelResult(
         output=output_shape,
         flops=flops,
         bytes_accessed=bytes_accessed,
-        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float('inf'),
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
         memory_bound=False,
         input_shapes=[input_shape],
         params=params,
@@ -1267,4 +1254,5 @@ def embedding(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["input_ids"],  # backward: need indices to update embedding rows
     )
