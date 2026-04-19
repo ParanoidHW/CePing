@@ -119,6 +119,7 @@ def generate_module_breakdown(
     phases: List[Any],
     workload_type: str,
     global_comm_bytes: int = 0,
+    merge_norm_to_next: bool = True,
 ) -> Dict[str, Any]:
     """生成模块分解结果.
 
@@ -126,6 +127,7 @@ def generate_module_breakdown(
         phases: PhaseResult列表
         workload_type: workload类型
         global_comm_bytes: 全局通信量（避免重复累计）
+        merge_norm_to_next: 是否将norm层归属到后续子模块
 
     Returns:
         Dict containing:
@@ -136,40 +138,47 @@ def generate_module_breakdown(
     by_module: Dict[str, ModuleBreakdown] = {}
     by_block_type: Dict[str, ModuleBreakdown] = {}
 
+    submodule_list = []
     for phase in phases:
         for sm in phase.submodules:
-            module_key = sm.name
+            submodule_list.append(sm)
 
-            if module_key not in by_module:
-                by_module[module_key] = ModuleBreakdown(
-                    name=module_key,
-                    module_type=sm.submodule_type,
-                    compute_time_sec=0.0,
-                    compute_flops=0,
-                    memory_activations_gb=0.0,
-                    communication_bytes=0,
-                )
+    if merge_norm_to_next:
+        submodule_list = _merge_norm_submodules(submodule_list)
 
-            by_module[module_key].compute_time_sec += sm.time_sec
-            by_module[module_key].compute_flops += sm.flops
-            by_module[module_key].memory_activations_gb += sm.memory_gb
-            by_module[module_key].communication_bytes += sm.communication_bytes
+    for sm in submodule_list:
+        module_key = sm.name
 
-            block_type = sm.submodule_type
-            if block_type not in by_block_type:
-                by_block_type[block_type] = ModuleBreakdown(
-                    name=block_type,
-                    module_type=block_type,
-                    compute_time_sec=0.0,
-                    compute_flops=0,
-                    memory_activations_gb=0.0,
-                    communication_bytes=0,
-                )
+        if module_key not in by_module:
+            by_module[module_key] = ModuleBreakdown(
+                name=module_key,
+                module_type=sm.submodule_type,
+                compute_time_sec=0.0,
+                compute_flops=0,
+                memory_activations_gb=0.0,
+                communication_bytes=0,
+            )
 
-            by_block_type[block_type].compute_time_sec += sm.time_sec
-            by_block_type[block_type].compute_flops += sm.flops
-            by_block_type[block_type].memory_activations_gb += sm.memory_gb
-            by_block_type[block_type].communication_bytes += sm.communication_bytes
+        by_module[module_key].compute_time_sec += sm.time_sec
+        by_module[module_key].compute_flops += sm.flops
+        by_module[module_key].memory_activations_gb += sm.memory_gb
+        by_module[module_key].communication_bytes += sm.communication_bytes
+
+        block_type = sm.submodule_type
+        if block_type not in by_block_type:
+            by_block_type[block_type] = ModuleBreakdown(
+                name=block_type,
+                module_type=block_type,
+                compute_time_sec=0.0,
+                compute_flops=0,
+                memory_activations_gb=0.0,
+                communication_bytes=0,
+            )
+
+        by_block_type[block_type].compute_time_sec += sm.time_sec
+        by_block_type[block_type].compute_flops += sm.flops
+        by_block_type[block_type].memory_activations_gb += sm.memory_gb
+        by_block_type[block_type].communication_bytes += sm.communication_bytes
 
     summary = BreakdownSummary(
         total_compute_time_sec=sum(m.compute_time_sec for m in by_module.values()),
@@ -182,3 +191,50 @@ def generate_module_breakdown(
         "by_block_type": {k: v.to_dict() for k, v in by_block_type.items()},
         "summary": summary.to_dict(),
     }
+
+
+def _merge_norm_submodules(submodules: List[Any]) -> List[Any]:
+    """将norm层归属到后续子模块.
+
+    规则:
+    - rms_norm -> 合并到下一个非norm模块
+    - 例如: final_norm -> lm_head
+    - transformer block内的norm已在block内处理，不单独呈现
+
+    Args:
+        submodules: 原始SubmoduleResult列表
+
+    Returns:
+        合并后的SubmoduleResult列表（norm已合并到后续模块）
+    """
+    from .base import SubmoduleResult
+
+    merged = []
+    pending_norm = None
+
+    for sm in submodules:
+        sm_type = sm.submodule_type
+
+        if sm_type == "rms_norm" or sm_type == "layer_norm":
+            pending_norm = sm
+            continue
+
+        if pending_norm is not None:
+            merged_name = sm.name
+            merged_type = sm.submodule_type
+
+            merged.append(
+                SubmoduleResult(
+                    name=merged_name,
+                    submodule_type=merged_type,
+                    time_sec=sm.time_sec + pending_norm.time_sec,
+                    flops=sm.flops + pending_norm.flops,
+                    memory_gb=sm.memory_gb + pending_norm.memory_gb,
+                    communication_bytes=sm.communication_bytes + pending_norm.communication_bytes,
+                )
+            )
+            pending_norm = None
+        else:
+            merged.append(sm)
+
+    return merged

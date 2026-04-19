@@ -934,7 +934,7 @@ class TestModuleBreakdown:
         assert "summary" in result.module_breakdown
 
     def test_module_breakdown_by_module(self):
-        """Verify by_module contains all submodules."""
+        """Verify by_module contains all submodules (after norm merge)."""
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         cluster = make_cluster(device, 8)
@@ -950,11 +950,11 @@ class TestModuleBreakdown:
         assert "layers.1" in by_module
         assert "layers.2" in by_module
         assert "layers.3" in by_module
-        assert "final_norm" in by_module
         assert "lm_head" in by_module
+        assert "final_norm" not in by_module
 
     def test_module_breakdown_by_block_type(self):
-        """Verify by_block_type groups modules correctly."""
+        """Verify by_block_type groups modules correctly (after norm merge)."""
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         cluster = make_cluster(device, 8)
@@ -967,8 +967,8 @@ class TestModuleBreakdown:
 
         assert "embedding" in by_block_type
         assert "transformer_block" in by_block_type
-        assert "rms_norm" in by_block_type
         assert "lm_head" in by_block_type
+        assert "rms_norm" not in by_block_type
 
     def test_module_breakdown_fields(self):
         """Verify each module entry has compute/memory/communication fields."""
@@ -1045,3 +1045,273 @@ class TestModuleBreakdown:
 
         transformer_comm = by_block_type["transformer_block"]["communication"]["total_gb"]
         assert transformer_comm > 0, "Transformer blocks should have non-zero communication"
+
+    def test_norm_merged_into_lm_head(self):
+        """Verify final_norm is merged into lm_head."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        by_module = result.module_breakdown["by_module"]
+
+        lm_head_flops = by_module["lm_head"]["compute"]["flops"]
+        lm_head_memory = by_module["lm_head"]["memory"]["activations_gb"]
+
+        assert lm_head_flops > 30e9, f"lm_head flops should include final_norm, got {lm_head_flops / 1e9:.1f}G"
+        assert lm_head_memory > 1.0, f"lm_head memory should include final_norm, got {lm_head_memory:.2f}GB"
+
+
+class TestEvaluationAccuracy:
+    """Test evaluation accuracy and correctness."""
+
+    def test_flops_approximately_correct(self):
+        """Verify FLOPs estimation is approximately correct."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        batch_size = 32
+        seq_len = 2048
+        hidden_size = 4096
+        num_layers = 4
+        vocab_size = 32000
+
+        expected_forward_flops_per_layer = 2 * batch_size * seq_len * hidden_size * hidden_size * 6
+        expected_forward_flops = expected_forward_flops_per_layer * num_layers
+
+        forward_phase = result.get_phase("forward")
+        actual_flops = forward_phase.flops
+
+        ratio = actual_flops / expected_forward_flops
+        assert 0.5 < ratio < 2.0, f"FLOPs ratio should be ~1, got {ratio}"
+
+    def test_memory_reasonable_range(self):
+        """Verify memory estimation is in reasonable range."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        backward_phase = result.get_phase("backward")
+        memory_gb = backward_phase.memory_gb
+
+        assert 10 < memory_gb < 100, f"Memory should be in reasonable range, got {memory_gb}GB"
+
+    def test_time_scaling_with_layers(self):
+        """Verify time scales approximately linearly with number of layers."""
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        model4 = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        analyzer4 = UnifiedAnalyzer(model4, device, cluster, strategy)
+        result4 = analyzer4.analyze("training", batch_size=32, seq_len=2048)
+
+        model8 = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=8, num_heads=32)
+        analyzer8 = UnifiedAnalyzer(model8, device, cluster, strategy)
+        result8 = analyzer8.analyze("training", batch_size=32, seq_len=2048)
+
+        time4 = result4.get_phase("forward").single_time_sec
+        time8 = result8.get_phase("forward").single_time_sec
+
+        ratio = time8 / time4
+        assert ratio > 1.8, f"Time ratio for 8/4 layers should be > 1.8, got {ratio}"
+
+    def test_time_scaling_with_batch_size(self):
+        """Verify time scales with batch size."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+
+        result32 = analyzer.analyze("training", batch_size=32, seq_len=2048)
+        result64 = analyzer.analyze("training", batch_size=64, seq_len=2048)
+
+        time32 = result32.get_phase("forward").single_time_sec
+        time64 = result64.get_phase("forward").single_time_sec
+
+        ratio = time64 / time32
+        assert 1.5 < ratio < 3.0, f"Time ratio for batch 64/32 should be ~2, got {ratio}"
+
+    def test_tp_communication_scaling(self):
+        """Verify TP communication scales with hidden_size."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+
+        result_seq2048 = analyzer.analyze("training", batch_size=32, seq_len=2048)
+        result_seq4096 = analyzer.analyze("training", batch_size=32, seq_len=4096)
+
+        comm2048 = result_seq2048.module_breakdown["by_block_type"]["transformer_block"]["communication"]["total_gb"]
+        comm4096 = result_seq4096.module_breakdown["by_block_type"]["transformer_block"]["communication"]["total_gb"]
+
+        ratio = comm4096 / comm2048
+        assert 1.5 < ratio < 2.5, f"Communication ratio for seq 4096/2048 should be ~2, got {ratio}"
+
+    def test_mfu_reasonable(self):
+        """Verify MFU is in reasonable range."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        assert 0 < result.mfu < 1.0, f"MFU should be between 0 and 1, got {result.mfu}"
+
+        assert result.mfu < 0.8, f"MFU for theory backend should be < 0.8, got {result.mfu}"
+
+
+class TestInferenceEvaluation:
+    """Test inference-specific evaluation."""
+
+    def test_inference_prefill_decode_separate(self):
+        """Verify inference has separate prefill and decode phases."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("autoregressive-inference", batch_size=1, prompt_len=512, generation_len=128)
+
+        prefill = result.get_phase("prefill")
+        decode = result.get_phase("decode")
+
+        assert prefill is not None
+        assert decode is not None
+
+        assert prefill.single_time_sec > 0
+        assert decode.single_time_sec > 0
+
+        assert decode.repeat_count == 128
+        assert decode.total_time_sec > prefill.total_time_sec
+
+    def test_decode_repeat_count_matches_generation_len(self):
+        """Verify decode repeat count matches generation length."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+
+        result_gen10 = analyzer.analyze("autoregressive-inference", batch_size=1, prompt_len=512, generation_len=10)
+        result_gen100 = analyzer.analyze("autoregressive-inference", batch_size=1, prompt_len=512, generation_len=100)
+
+        decode10 = result_gen10.get_phase("decode")
+        decode100 = result_gen100.get_phase("decode")
+
+        assert decode10.repeat_count == 10
+        assert decode100.repeat_count == 100
+
+    def test_inference_memory_lower_than_training(self):
+        """Verify inference memory is lower than training."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+
+        training_result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+        inference_result = analyzer.analyze(
+            "autoregressive-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        training_memory = training_result.peak_memory_gb
+        inference_memory = inference_result.peak_memory_gb
+
+        assert inference_memory < training_memory
+
+    def test_kv_cache_field_present(self):
+        """Verify KV cache field is present in metadata."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("autoregressive-inference", batch_size=1, prompt_len=512, generation_len=128)
+
+        assert "kv_cache_gb" in result.metadata
+
+
+class TestSubmoduleTypeInference:
+    """Test submodule type inference."""
+
+    def test_embedding_type_correct(self):
+        """Verify embedding submodule has correct type."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        forward_phase = result.get_phase("forward")
+        embedding_sm = next(sm for sm in forward_phase.submodules if sm.name == "embedding")
+
+        assert embedding_sm.submodule_type == "embedding"
+
+    def test_transformer_block_type_correct(self):
+        """Verify transformer_block submodule has correct type."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        forward_phase = result.get_phase("forward")
+        layer0_sm = next(sm for sm in forward_phase.submodules if sm.name == "layers.0")
+
+        assert layer0_sm.submodule_type == "transformer_block"
+
+    def test_lm_head_type_correct(self):
+        """Verify lm_head submodule has correct type."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        forward_phase = result.get_phase("forward")
+        lm_head_sm = next(sm for sm in forward_phase.submodules if sm.name == "lm_head")
+
+        assert lm_head_sm.submodule_type == "lm_head"
+
+    def test_no_unknown_types(self):
+        """Verify no submodule has unknown type."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        forward_phase = result.get_phase("forward")
+        for sm in forward_phase.submodules:
+            assert sm.submodule_type != "unknown", f"Submodule {sm.name} should not have unknown type"
