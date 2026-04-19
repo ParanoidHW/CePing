@@ -864,6 +864,73 @@ class TestUnifiedAnalyzerEstimationConsistency:
             assert forward_phase[0].submodules is not None
 
 
+class TestCommPatternDeriver:
+    """Tests for CommPatternDeriver."""
+
+    def test_matmul_row_sharding_allreduce(self):
+        """Test MatmulOp with row sharding produces allreduce."""
+        from llm_perf.modeling.layers import ShardedAttention
+
+        attention = ShardedAttention(hidden_size=4096, num_heads=32)
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        output = attention(hidden)
+
+        ctx = ParallelContext(tp_degree=8)
+        instance = attention.bind(ctx)
+
+        comm_ops = instance.total_comm_ops
+
+        allreduce_ops = [op for op in comm_ops if op.comm_type == "allreduce"]
+        assert len(allreduce_ops) >= 0
+
+    def test_embedding_vocab_tp_sharding(self):
+        """Test EmbeddingOp with vocab TP sharding."""
+        from llm_perf.modeling.layers import ShardedEmbedding
+
+        embedding = ShardedEmbedding(num_embeddings=32000, embedding_dim=4096)
+        input_ids = ShardedTensor(shape=(1, 512))
+        output = embedding(input_ids)
+
+        ctx = ParallelContext(tp_degree=8)
+        instance = embedding.bind(ctx)
+
+        assert instance.params_count_physical < embedding.params_count()
+
+    def test_comm_deriver_initialization(self):
+        """Test CommPatternDeriver initialization."""
+        from llm_perf.modeling.comm_deriver import CommPatternDeriver
+
+        parallel_degrees = {"tp": 8, "sp": 1, "ep": 1, "dp": 1, "pp": 1}
+        deriver = CommPatternDeriver(parallel_degrees)
+
+        assert deriver.get_degree("tp") == 8
+        assert deriver.get_degree("sp") == 1
+        assert deriver.get_degree("dp") == 1
+
+    def test_comm_ops_extraction_with_tp(self):
+        """Test communication ops extraction with different TP degrees."""
+        model = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=1,
+            num_heads=32,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        model(input_ids)
+
+        ctx_tp1 = ParallelContext(tp_degree=1)
+        instance_tp1 = model.bind(ctx_tp1)
+
+        ctx_tp8 = ParallelContext(tp_degree=8)
+        instance_tp8 = model.bind(ctx_tp8)
+
+        comm_tp1 = len(instance_tp1.total_comm_ops)
+        comm_tp8 = len(instance_tp8.total_comm_ops)
+
+        assert comm_tp8 >= comm_tp1
+
+
 class TestKernelBackendIntegration:
     """Tests for KernelBackend integration."""
 

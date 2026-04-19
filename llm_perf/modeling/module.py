@@ -8,6 +8,7 @@ from typing import Dict, Optional, List, Any, Tuple, Union, TYPE_CHECKING
 import math
 
 from .tensor import ShardedTensor
+from .comm_deriver import CommPatternDeriver
 from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
@@ -244,6 +245,10 @@ class ModuleInstance:
         self.pp_stage = pp_stage
         self.mode = mode
 
+        self._parallel_degrees = self._get_parallel_degrees()
+        self._comm_deriver = CommPatternDeriver(self._parallel_degrees)
+        self._physical_shape_cache: Dict[str, Tuple[int, ...]] = {}
+
         self._submodule_instances: Dict[str, ModuleInstance] = {}
         for name, submodule in module._submodules.items():
             self._submodule_instances[name] = ModuleInstance(submodule, ctx, pp_stage=pp_stage, mode=mode)
@@ -270,16 +275,16 @@ class ModuleInstance:
     def flops_forward_physical(self) -> int:
         """Forward FLOPs (physical, sharded).
 
-        Includes both current module's ops and all submodule FLOPs.
+        Only counts current module's ops (not including submodule ops).
+        Total FLOPs for a model should be computed from _last_forward_output._op_history
+        which contains the complete forward pass history.
         """
+        if self.module._last_forward_output is None:
+            return 0
+
         total_flops = 0
-
-        if self.module._last_forward_output is not None:
-            for op in self.module._last_forward_output._op_history:
-                total_flops += self._infer_physical_flops(op)
-
-        for sub_inst in self._submodule_instances.values():
-            total_flops += sub_inst.flops_forward_physical
+        for op in self.module._last_forward_output._op_history:
+            total_flops += self._infer_physical_flops(op)
 
         return total_flops
 
@@ -388,87 +393,41 @@ class ModuleInstance:
         }
 
     def _infer_comm_ops(self, op: Any) -> List["CommOp"]:
-        """Derive forward communication from operation."""
-        from llm_perf.kernels.op import MatmulOp, AttentionOp, MoEExpertOp, CommOp
+        """Derive forward communication from operation.
 
-        ops = []
+        Uses CommPatternDeriver for systematic derivation.
+        """
+        physical_shapes = self._get_op_physical_shapes(op)
+        return self._comm_deriver.derive_comm_ops(op, physical_shapes)
 
-        if isinstance(op, MatmulOp):
-            input_shardable = op.input.shardable
-            weight_shardable = op.weight.shardable
-            output_shardable = op.output.shardable
+    def _get_op_physical_shapes(self, op: Any) -> Dict[str, tuple]:
+        """Get physical shapes for all tensors in an op."""
+        shapes = {}
 
-            if len(op.input.shape) == 2:
-                if 0 in input_shardable and 0 not in output_shardable:
-                    ptype = input_shardable[0]
-                    physical_output = self._infer_physical_shape(op.output)
-                    dtype_size = DTYPE_SIZES.get(op.dtype, 2)
-                    comm_bytes = math.prod(physical_output) * dtype_size
-                    ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
+        if hasattr(op, "input"):
+            shapes["input"] = self._infer_physical_shape(op.input)
+        if hasattr(op, "weight"):
+            shapes["weight"] = self._infer_physical_shape(op.weight)
+        if hasattr(op, "output"):
+            shapes["output"] = self._infer_physical_shape(op.output)
+        if hasattr(op, "query"):
+            shapes["query"] = self._infer_physical_shape(op.query)
+        if hasattr(op, "key") and op.key:
+            shapes["key"] = self._infer_physical_shape(op.key)
+        if hasattr(op, "value") and op.value:
+            shapes["value"] = self._infer_physical_shape(op.value)
+        if hasattr(op, "hidden"):
+            shapes["hidden"] = self._infer_physical_shape(op.hidden)
 
-                elif 1 in weight_shardable and len(op.weight.shape) == 2:
-                    if 0 not in output_shardable and 1 not in output_shardable:
-                        ptype = weight_shardable[1]
-                        physical_output = self._infer_physical_shape(op.output)
-                        dtype_size = DTYPE_SIZES.get(op.dtype, 2)
-                        comm_bytes = math.prod(physical_output) * dtype_size
-                        ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
-
-        elif isinstance(op, AttentionOp):
-            if hasattr(self.ctx, "sp_degree") and self.ctx.sp_degree > 1:
-                if 2 in op.query.shardable:
-                    ptype = op.query.shardable[2]
-                    sp_type = getattr(self.ctx, "sp_type", None)
-
-                    if sp_type and hasattr(sp_type, "name"):
-                        sp_name = sp_type.name
-                    else:
-                        sp_name = str(sp_type) if sp_type else "ulysses"
-
-                    physical_q = self._infer_physical_shape(op.query)
-                    dtype_size = DTYPE_SIZES.get(op.dtype, 2)
-
-                    if sp_name.lower() == "ulysses":
-                        comm_bytes = math.prod(physical_q) * dtype_size
-                        ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
-
-        elif isinstance(op, MoEExpertOp):
-            expert_shardable = op.expert_gate_weights.shardable
-            if 0 in expert_shardable:
-                ptype = expert_shardable[0]
-                if ptype == "ep":
-                    physical_hidden = self._infer_physical_shape(op.hidden)
-                    dtype_size = DTYPE_SIZES.get(op.dtype, 2)
-                    comm_bytes = math.prod(physical_hidden) * dtype_size
-                    ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
-                    ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
-
-        return ops
+        return shapes
 
     def _infer_backward_comm_ops(self, op: Any) -> List["CommOp"]:
-        """Derive backward communication from operation."""
-        from llm_perf.kernels.op import MatmulOp, MoEExpertOp, CommOp
+        """Derive backward communication from operation.
 
-        ops = []
-
-        if isinstance(op, MatmulOp):
-            weight = op.weight
-            for dim, ptype in weight.shardable.items():
-                if ptype == "dp":
-                    weight_bytes = weight.numel() * DTYPE_SIZES.get(weight.dtype, 2)
-                    ops.append(CommOp("allreduce", weight_bytes, ptype, direction="backward"))
-
-        elif isinstance(op, MoEExpertOp):
-            expert_shardable = op.expert_gate_weights.shardable
-            if 0 in expert_shardable:
-                ptype = expert_shardable[0]
-                if ptype == "ep":
-                    physical_hidden = self._infer_physical_shape(op.hidden)
-                    dtype_size = DTYPE_SIZES.get(op.dtype, 2)
-                    comm_bytes = math.prod(physical_hidden) * dtype_size
-                    ops.append(CommOp("alltoall", comm_bytes, ptype, direction="backward"))
-
-        return ops
+        Uses CommPatternDeriver for systematic derivation.
+        """
+        physical_shapes = self._get_op_physical_shapes(op)
+        return self._comm_deriver.derive_backward_comm_ops(op, physical_shapes)
 
     def estimate_memory(self, batch_size: int = 1) -> int:
         """Estimate memory (params + activations + optimizer states)."""
@@ -498,12 +457,15 @@ class ModuleInstance:
 
         return total
 
-    def estimate_time(self, backend: Any, include_submodules: bool = True) -> float:
+    def estimate_time(self, backend: Any) -> float:
         """Estimate time (compute + comm).
+
+        Only counts current module's ops (not including submodule ops).
+        Total time for a model should be computed from _last_forward_output._op_history
+        which contains the complete forward pass history.
 
         Args:
             backend: Kernel backend
-            include_submodules: Whether to include submodule time (default True)
 
         Returns:
             Total time in seconds
@@ -525,10 +487,6 @@ class ModuleInstance:
                     )
                 except Exception:
                     pass
-
-        if include_submodules:
-            for sub_inst in self._submodule_instances.values():
-                compute_time += sub_inst.estimate_time(backend, include_submodules=False)
 
         if self.mode == "forward_backward":
             compute_time *= 2
