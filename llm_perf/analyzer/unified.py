@@ -177,6 +177,11 @@ class UnifiedAnalyzer:
                 "device": self.device.config.name,
                 "num_devices": self.cluster.num_devices,
                 "strategy": self.strategy.to_dict(),
+                "tp_degree": self.strategy.tp_degree,
+                "pp_degree": self.strategy.pp_degree,
+                "dp_degree": self.strategy.dp_degree,
+                "ep_degree": self.strategy.ep_degree,
+                "kv_cache_gb": 0.0,
             },
             breakdown=breakdown,
             detailed_breakdown=detailed_breakdown,
@@ -1148,12 +1153,29 @@ class UnifiedAnalyzer:
         workload: WorkloadConfig,
         comm_breakdown: Optional[CommunicationBreakdown] = None,
     ) -> Dict[str, Any]:
-        """Generate legacy detailed_breakdown format for frontend compatibility."""
+        """Generate detailed breakdown format for frontend compatibility.
+
+        All memory metrics are per-GPU.
+        """
         by_component: Dict[str, Dict[str, float]] = {}
         for phase in phases:
             if phase.component not in by_component:
                 by_component[phase.component] = {}
-            by_component[phase.component]["activations"] = phase.memory_gb
+            by_component[phase.component]["activations_gb"] = phase.memory_gb
+
+        by_block_type: Dict[str, Dict[str, Any]] = {}
+        for phase in phases:
+            for sm in phase.submodules:
+                block_type = sm.submodule_type
+                if block_type not in by_block_type:
+                    by_block_type[block_type] = {
+                        "activations_gb": 0.0,
+                        "flops": 0,
+                        "time_sec": 0.0,
+                    }
+                by_block_type[block_type]["activations_gb"] += sm.memory_gb
+                by_block_type[block_type]["flops"] += sm.flops
+                by_block_type[block_type]["time_sec"] += sm.time_sec
 
         total_memory = sum(p.memory_gb for p in phases)
 
@@ -1167,18 +1189,18 @@ class UnifiedAnalyzer:
                     "model_name": phase.component,
                     "model_type": phase.compute_type.value,
                     "compute_time_sec": phase.total_time_sec,
-                    "memory": {"by_type": {"activations": phase.memory_gb}},
+                    "memory": {"by_type": {"activations_gb": phase.memory_gb}},
                 }
                 for phase in phases
             ],
             "memory": {
-                "by_type": {"activations": total_memory},
+                "by_type": {"activations_gb": total_memory},
                 "by_submodel": by_component,
-                "by_block_type": {},
+                "by_block_type": by_block_type,
             },
             "communication": {
                 "by_parallelism": comm_breakdown_dict,
-                "total_bytes": sum(v["total_bytes"] for v in comm_breakdown_dict.values()),
+                "total_bytes": sum(v.get("total_bytes", 0) for v in comm_breakdown_dict.values()),
             },
         }
 

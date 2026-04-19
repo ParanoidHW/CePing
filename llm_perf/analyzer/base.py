@@ -215,6 +215,14 @@ class UnifiedResult:
     communication_breakdown: Optional["CommunicationBreakdown"] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with frontend compatibility fields.
+
+        Dimension convention:
+        - Memory metrics: per-GPU (each GPU's memory usage)
+        - Compute metrics: per-GPU (each GPU's FLOPs)
+        - Throughput metrics: global (system-wide throughput)
+        - Latency metrics: global (request-level latency)
+        """
         result = {
             "workload_name": self.workload_name,
             "workload_type": self.workload_type.value,
@@ -227,6 +235,11 @@ class UnifiedResult:
             "metadata": self.metadata,
             "mfu": self.mfu,
             "qps": self.qps,
+            "time": self._build_time_dict(),
+            "memory": self._build_memory_dict(),
+            "prefill": self._build_prefill_dict(),
+            "decode": self._build_decode_dict(),
+            "end_to_end": self._build_end_to_end_dict(),
         }
         if self.breakdown:
             result["breakdown"] = self.breakdown
@@ -235,6 +248,64 @@ class UnifiedResult:
         if self.communication_breakdown:
             result["communication_breakdown"] = self.communication_breakdown.to_dict()
         return result
+
+    def _build_time_dict(self) -> Dict[str, float]:
+        """Build time dictionary - global time."""
+        return {
+            "time_per_step_sec": self.total_time_sec,
+            "total_time_sec": self.total_time_sec,
+        }
+
+    def _build_memory_dict(self) -> Dict[str, float]:
+        """Build memory dictionary - per GPU memory."""
+        kv_cache_gb = 0.0
+        if self.workload_type == WorkloadType.INFERENCE:
+            kv_cache_gb = self.metadata.get("kv_cache_gb", 0.0)
+
+        return {
+            "memory_per_gpu_gb": self.peak_memory_gb,
+            "peak_memory_gb": self.peak_memory_gb,
+            "kv_cache_gb": kv_cache_gb,
+        }
+
+    def _build_prefill_dict(self) -> Optional[Dict[str, float]]:
+        """Build prefill dictionary - global time, per request TTFT."""
+        if self.workload_type != WorkloadType.INFERENCE:
+            return None
+
+        prefill = self.get_phase("prefill")
+        if not prefill:
+            return None
+
+        return {
+            "ttft_sec": prefill.total_time_sec,
+            "total_time_sec": prefill.total_time_sec,
+        }
+
+    def _build_decode_dict(self) -> Optional[Dict[str, float]]:
+        """Build decode dictionary - global TPS, global per-token time."""
+        if self.workload_type != WorkloadType.INFERENCE:
+            return None
+
+        decode = self.get_phase("decode")
+        if not decode:
+            return None
+
+        global_tps = self.throughput.get("tokens_per_sec", 0)
+
+        return {
+            "tps": global_tps,
+            "tpot_sec": decode.single_time_sec,
+            "single_time_sec": decode.single_time_sec,
+            "repeat_count": decode.repeat_count,
+        }
+
+    def _build_end_to_end_dict(self) -> Dict[str, float]:
+        """Build end_to_end dictionary - global metrics."""
+        return {
+            "overall_tps": self.qps or self.throughput.get("tokens_per_sec", 0),
+            "total_time_sec": self.total_time_sec,
+        }
 
     def get_phase(self, name: str) -> Optional[PhaseResult]:
         """Get a specific phase result by name."""
