@@ -96,7 +96,11 @@ class SubmoduleResult:
         submodule_type: 子模块类型 (embedding, attention, ffn, moe, lm_head, rms_norm, conv, resblock)
         time_sec: 执行时间（秒）
         flops: FLOPs
-        memory_gb: 内存占用（GB，每卡）
+        params_count: 参数量（物理，每卡）
+        weight_memory_gb: 权重内存（GB，每卡）
+        gradient_memory_gb: 梯度内存（GB，每卡，训练时）
+        optimizer_memory_gb: 优化器内存（GB，每卡，训练时）
+        activation_memory_gb: 激活内存（GB，每卡）
         communication_bytes: 通信数据量（字节，每卡）
         nested_submodules: 嵌套子模块（如 transformer_block 内的 attention, ffn）
     """
@@ -105,7 +109,11 @@ class SubmoduleResult:
     submodule_type: str
     time_sec: float
     flops: int
-    memory_gb: float
+    params_count: int = 0
+    weight_memory_gb: float = 0.0
+    gradient_memory_gb: float = 0.0
+    optimizer_memory_gb: float = 0.0
+    activation_memory_gb: float = 0.0
     communication_bytes: int = 0
     nested_submodules: List["SubmoduleResult"] = field(default_factory=list)
 
@@ -117,7 +125,20 @@ class SubmoduleResult:
             "time_ms": self.time_sec * 1000,
             "flops": self.flops,
             "flops_gflops": self.flops / 1e9,
-            "memory_gb": self.memory_gb,
+            "params_count": self.params_count,
+            "params_count_billion": self.params_count / 1e9,
+            "memory": {
+                "weight_gb": self.weight_memory_gb,
+                "gradient_gb": self.gradient_memory_gb,
+                "optimizer_gb": self.optimizer_memory_gb,
+                "activation_gb": self.activation_memory_gb,
+                "total_gb": (
+                    self.weight_memory_gb
+                    + self.gradient_memory_gb
+                    + self.optimizer_memory_gb
+                    + self.activation_memory_gb
+                ),
+            },
             "communication_gb": self.communication_bytes / 1e9,
             "nested_submodules": [ns.to_dict() for ns in self.nested_submodules],
         }
@@ -135,7 +156,8 @@ class PhaseResult:
         single_time_sec: Time for single execution
         repeat_count: Actual repeat count (resolved from dynamic params)
         total_time_sec: Total time (single_time × repeat_count)
-        memory_gb: Memory usage for this phase
+        memory_gb: Total memory usage for this phase (deprecated, use memory_breakdown)
+        memory_breakdown: Detailed memory breakdown (weight, gradient, optimizer, activation)
         flops: FLOPs for this phase (optional)
         submodules: 子模块分解结果列表
     """
@@ -147,6 +169,7 @@ class PhaseResult:
     repeat_count: int = 1
     total_time_sec: float = 0.0
     memory_gb: float = 0.0
+    memory_breakdown: Dict[str, float] = field(default_factory=dict)
     flops: Optional[float] = None
     submodules: List["SubmoduleResult"] = field(default_factory=list)
 
@@ -161,6 +184,7 @@ class PhaseResult:
             "total_time_sec": self.total_time_sec,
             "total_time_ms": self.total_time_sec * 1000,
             "memory_gb": self.memory_gb,
+            "memory_breakdown": self.memory_breakdown,
             "flops": self.flops,
             "submodules": [sm.to_dict() for sm in self.submodules],
         }

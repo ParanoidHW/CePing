@@ -337,6 +337,66 @@ class ModuleInstance:
             return total
 
     @property
+    def weight_memory_physical(self) -> int:
+        """Weight memory (physical, sharded) in bytes.
+
+        Weight memory = params_count_physical × dtype_size
+        """
+        from llm_perf.utils.constants import DTYPE_SIZES
+
+        dtype_size = DTYPE_SIZES.get(self.ctx.dtype, 2)
+        return self.params_count_physical * dtype_size
+
+    @property
+    def gradient_memory_physical(self) -> int:
+        """Gradient memory (physical, sharded) in bytes.
+
+        Gradient memory = params_count_physical × dtype_size
+        Only applicable for training (forward_backward mode).
+        """
+        if self.mode != "forward_backward":
+            return 0
+
+        from llm_perf.utils.constants import DTYPE_SIZES
+
+        dtype_size = DTYPE_SIZES.get(self.ctx.dtype, 2)
+        return self.params_count_physical * dtype_size
+
+    @property
+    def optimizer_memory_physical(self) -> int:
+        """Optimizer state memory (physical, sharded) in bytes.
+
+        For Adam optimizer:
+        - Momentum (FP32): params_count × 4 bytes
+        - Velocity (FP32): params_count × 4 bytes
+        Total: params_count × 8 bytes
+
+        ZeRO stage affects optimizer memory:
+        - ZeRO-0: Full optimizer states on each GPU
+        - ZeRO-1: Optimizer states sharded across DP
+        - ZeRO-2: Optimizer + gradients sharded
+        - ZeRO-3: Optimizer + gradients + weights sharded
+        """
+        if self.mode != "forward_backward":
+            return 0
+
+        zero_stage = getattr(self.ctx, "zero_stage", 0)
+        dp_degree = self.ctx.dp_degree
+
+        # Adam optimizer: 2 × FP32 states
+        optimizer_multiplier = 8  # 2 × 4 bytes (FP32)
+
+        base_memory = self.params_count_physical * optimizer_multiplier
+
+        # Apply ZeRO sharding
+        if zero_stage == 0:
+            return base_memory
+        elif zero_stage >= 1:
+            return base_memory // dp_degree
+        else:
+            return base_memory
+
+    @property
     def total_comm_ops(self) -> List["CommOp"]:
         """Total communication operations (forward + backward).
 
@@ -631,6 +691,14 @@ class WeightInstance:
     @property
     def physical_numel(self) -> int:
         return math.prod(self.physical_shape)
+
+    @property
+    def physical_bytes(self) -> int:
+        """Physical memory bytes after sharding."""
+        from llm_perf.utils.constants import DTYPE_SIZES
+
+        dtype_size = DTYPE_SIZES.get(self.weight.dtype, 2)
+        return self.physical_numel * dtype_size
 
 
 class ActivationInstance:

@@ -393,13 +393,19 @@ class TestResultDimensions:
             memory = result_dict["detailed_breakdown"]["memory"]
 
             assert "by_type" in memory
-            assert "activations_gb" in memory["by_type"]
-            assert memory["by_type"]["activations_gb"] >= 0
+            assert "weight_gb" in memory["by_type"]
+            assert "activation_gb" in memory["by_type"]
+            assert "gradient_gb" in memory["by_type"]
+            assert "optimizer_gb" in memory["by_type"]
+            assert memory["by_type"]["weight_gb"] >= 0
+            assert memory["by_type"]["activation_gb"] >= 0
 
             assert "by_submodule_type" in memory
             for block_type, metrics in memory.get("by_submodule_type", {}).items():
-                assert "activations_gb" in metrics
-                assert metrics["activations_gb"] >= 0
+                assert "weight_gb" in metrics
+                assert "activation_gb" in metrics
+                assert metrics["weight_gb"] >= 0
+                assert metrics["activation_gb"] >= 0
 
     """Test UnifiedAnalyzer."""
 
@@ -1105,7 +1111,20 @@ class TestEvaluationAccuracy:
         backward_phase = result.get_phase("backward")
         memory_gb = backward_phase.memory_gb
 
-        assert 10 < memory_gb < 100, f"Memory should be in reasonable range, got {memory_gb}GB"
+        # Training memory includes: weight + gradient + optimizer + activation
+        # For 4-layer LLaMA with TP=8:
+        # - weight: ~1.7GB (per GPU)
+        # - gradient: ~1.7GB
+        # - optimizer: ~6.8GB (Adam: 2 × FP32 states)
+        # - activation: ~7GB
+        # Total: ~16GB per GPU
+        assert 10 < memory_gb < 200, f"Memory should be in reasonable range, got {memory_gb}GB"
+
+        # Verify memory breakdown exists
+        assert "weight_gb" in backward_phase.memory_breakdown
+        assert "gradient_gb" in backward_phase.memory_breakdown
+        assert "optimizer_gb" in backward_phase.memory_breakdown
+        assert "activation_gb" in backward_phase.memory_breakdown
 
     def test_time_scaling_with_layers(self):
         """Verify time scales approximately linearly with number of layers."""

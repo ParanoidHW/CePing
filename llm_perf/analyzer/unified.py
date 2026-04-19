@@ -251,6 +251,29 @@ class UnifiedAnalyzer:
 
             total_time = single_time * repeat_count
 
+            # Aggregate memory breakdown from submodules
+            memory_breakdown = {
+                "weight_gb": 0.0,
+                "gradient_gb": 0.0,
+                "optimizer_gb": 0.0,
+                "activation_gb": memory,  # Use activation memory from estimate_phase
+            }
+
+            # Only add gradient/optimizer for training (backward phase)
+            is_training_backward = workload.workload_type == WorkloadType.TRAINING and phase.compute_type in [
+                ComputeType.BACKWARD,
+                ComputeType.OPTIMIZER,
+            ]
+
+            for sub in submodules:
+                memory_breakdown["weight_gb"] += sub.weight_memory_gb
+                if is_training_backward:
+                    memory_breakdown["gradient_gb"] += sub.gradient_memory_gb
+                    memory_breakdown["optimizer_gb"] += sub.optimizer_memory_gb
+
+            # Calculate total memory
+            total_memory_gb = sum(memory_breakdown.values())
+
             results.append(
                 PhaseResult(
                     name=phase.name,
@@ -259,7 +282,8 @@ class UnifiedAnalyzer:
                     single_time_sec=single_time,
                     repeat_count=repeat_count,
                     total_time_sec=total_time,
-                    memory_gb=memory,
+                    memory_gb=total_memory_gb,
+                    memory_breakdown=memory_breakdown,
                     flops=flops,
                     submodules=submodules,
                 )
@@ -414,7 +438,11 @@ class UnifiedAnalyzer:
                     submodule_type=submodule_type,
                     time_sec=self._estimate_submodule_time(sub_inst),
                     flops=sub_inst.flops_forward_physical,
-                    memory_gb=sub_inst.activation_memory_physical / 1e9,
+                    params_count=sub_inst.params_count_physical,
+                    weight_memory_gb=sub_inst.weight_memory_physical / 1e9,
+                    gradient_memory_gb=sub_inst.gradient_memory_physical / 1e9,
+                    optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
+                    activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
                     communication_bytes=delta_comm_bytes,
                     nested_submodules=nested_submodules,
                 )
@@ -473,7 +501,11 @@ class UnifiedAnalyzer:
                     submodule_type=nested_type,
                     time_sec=self._estimate_submodule_time(sub_inst),
                     flops=sub_inst.flops_forward_physical,
-                    memory_gb=sub_inst.activation_memory_physical / 1e9,
+                    params_count=sub_inst.params_count_physical,
+                    weight_memory_gb=sub_inst.weight_memory_physical / 1e9,
+                    gradient_memory_gb=sub_inst.gradient_memory_physical / 1e9,
+                    optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
+                    activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
                     communication_bytes=delta_comm_bytes,
                     nested_submodules=[],
                 )
@@ -1276,7 +1308,19 @@ class UnifiedAnalyzer:
                         "time_ms": sm.time_sec * 1000,
                         "flops": sm.flops,
                         "flops_gflops": sm.flops / 1e9,
-                        "memory_gb": sm.memory_gb,
+                        "params_count": sm.params_count,
+                        "memory": {
+                            "weight_gb": sm.weight_memory_gb,
+                            "gradient_gb": sm.gradient_memory_gb,
+                            "optimizer_gb": sm.optimizer_memory_gb,
+                            "activation_gb": sm.activation_memory_gb,
+                            "total_gb": (
+                                sm.weight_memory_gb
+                                + sm.gradient_memory_gb
+                                + sm.optimizer_memory_gb
+                                + sm.activation_memory_gb
+                            ),
+                        },
                         "communication_gb": sm.communication_bytes / 1e9,
                     }
                 )
@@ -1310,31 +1354,21 @@ class UnifiedAnalyzer:
 
         Structure:
         - by_submodule_type: aggregated by module type (embedding, transformer_block, lm_head, etc.)
-          each entry contains: memory, compute, communication
+          each entry contains: memory (weight/gradient/optimizer/activation), compute, communication
           Note: rms_norm is merged into subsequent module (e.g., final_norm -> lm_head)
         """
         from .breakdown import _merge_norm_submodules
 
-        by_component: Dict[str, Dict[str, float]] = {}
-        for phase in phases:
-            if phase.component not in by_component:
-                by_component[phase.component] = {}
-            by_component[phase.component]["activations_gb"] = phase.memory_gb
-
-        # Find peak memory phase
+        # Find peak memory phase for memory display
         peak_phase = max(phases, key=lambda p: p.memory_gb) if phases else None
 
-        # For compute/communication: sum across all phases (total work)
-        # For memory: use peak phase only (peak memory)
+        # Aggregate by submodule type
         all_submodules = []
         for phase in phases:
             all_submodules.extend(phase.submodules)
         merged_submodules = _merge_norm_submodules(all_submodules)
 
-        # Use peak phase submodules for memory display
-        peak_submodules = []
-        if peak_phase:
-            peak_submodules = _merge_norm_submodules(peak_phase.submodules)
+        peak_submodules = _merge_norm_submodules(peak_phase.submodules) if peak_phase else []
 
         by_submodule_type: Dict[str, Dict[str, Any]] = {}
         by_nested_type: Dict[str, Dict[str, Any]] = {}
@@ -1343,18 +1377,26 @@ class UnifiedAnalyzer:
             block_type = sm.submodule_type
             if block_type not in by_submodule_type:
                 by_submodule_type[block_type] = {
-                    "memory": {"activations_gb": 0.0},
+                    "memory": {
+                        "params_count": 0,
+                        "weight_gb": 0.0,
+                        "gradient_gb": 0.0,
+                        "optimizer_gb": 0.0,
+                        "activation_gb": 0.0,
+                    },
                     "compute": {"flops": 0, "flops_gflops": 0.0, "time_sec": 0.0},
                     "communication": {"bytes": 0, "gb": 0.0},
                     "nested_breakdown": {},
                 }
 
-            # Memory: sum all peak phase submodules of same type
+            # Memory: use peak phase submodules
             peak_sms = [s for s in peak_submodules if s.submodule_type == block_type]
-            if peak_sms:
-                peak_mem = sum(s.memory_gb for s in peak_sms)
-                if by_submodule_type[block_type]["memory"]["activations_gb"] == 0:
-                    by_submodule_type[block_type]["memory"]["activations_gb"] = peak_mem
+            if peak_sms and by_submodule_type[block_type]["memory"]["activation_gb"] == 0:
+                by_submodule_type[block_type]["memory"]["params_count"] = sum(s.params_count for s in peak_sms)
+                by_submodule_type[block_type]["memory"]["weight_gb"] = sum(s.weight_memory_gb for s in peak_sms)
+                by_submodule_type[block_type]["memory"]["gradient_gb"] = sum(s.gradient_memory_gb for s in peak_sms)
+                by_submodule_type[block_type]["memory"]["optimizer_gb"] = sum(s.optimizer_memory_gb for s in peak_sms)
+                by_submodule_type[block_type]["memory"]["activation_gb"] = sum(s.activation_memory_gb for s in peak_sms)
 
             # Compute/communication: sum all phases
             by_submodule_type[block_type]["compute"]["flops"] += sm.flops
@@ -1363,9 +1405,8 @@ class UnifiedAnalyzer:
             by_submodule_type[block_type]["communication"]["bytes"] += sm.communication_bytes
             by_submodule_type[block_type]["communication"]["gb"] += sm.communication_bytes / 1e9
 
-            # Handle nested submodules (attention, ffn/moe)
+            # Handle nested submodules
             if sm.nested_submodules:
-                # Get all peak nested submodules of this type
                 peak_nested_all = []
                 for peak_s in peak_sms:
                     if peak_s.nested_submodules:
@@ -1376,24 +1417,39 @@ class UnifiedAnalyzer:
 
                     if nested_type not in by_submodule_type[block_type]["nested_breakdown"]:
                         by_submodule_type[block_type]["nested_breakdown"][nested_type] = {
-                            "memory": {"activations_gb": 0.0},
+                            "memory": {
+                                "params_count": 0,
+                                "weight_gb": 0.0,
+                                "gradient_gb": 0.0,
+                                "optimizer_gb": 0.0,
+                                "activation_gb": 0.0,
+                            },
                             "compute": {"flops": 0, "time_sec": 0.0},
                             "communication": {"bytes": 0, "gb": 0.0},
                         }
 
-                    # Memory: sum all peak phase nested submodules of same type
                     peak_nested_sms = [n for n in peak_nested_all if n.submodule_type == nested_type]
-                    if peak_nested_sms:
-                        peak_nested_mem = sum(n.memory_gb for n in peak_nested_sms)
-                        if (
-                            by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["activations_gb"]
-                            == 0
-                        ):
-                            by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"][
-                                "activations_gb"
-                            ] = peak_nested_mem
+                    if (
+                        peak_nested_sms
+                        and by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["activation_gb"]
+                        == 0
+                    ):
+                        by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["params_count"] = sum(
+                            n.params_count for n in peak_nested_sms
+                        )
+                        by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["weight_gb"] = sum(
+                            n.weight_memory_gb for n in peak_nested_sms
+                        )
+                        by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["gradient_gb"] = sum(
+                            n.gradient_memory_gb for n in peak_nested_sms
+                        )
+                        by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["optimizer_gb"] = sum(
+                            n.optimizer_memory_gb for n in peak_nested_sms
+                        )
+                        by_submodule_type[block_type]["nested_breakdown"][nested_type]["memory"]["activation_gb"] = sum(
+                            n.activation_memory_gb for n in peak_nested_sms
+                        )
 
-                    # Compute/communication: sum all phases
                     by_submodule_type[block_type]["nested_breakdown"][nested_type]["compute"]["flops"] += nested.flops
                     by_submodule_type[block_type]["nested_breakdown"][nested_type]["compute"]["time_sec"] += (
                         nested.time_sec
@@ -1405,28 +1461,59 @@ class UnifiedAnalyzer:
                         nested.communication_bytes / 1e9
                     )
 
-                    # Also aggregate by_nested_type for frontend
+                    # by_nested_type
                     if nested_type not in by_nested_type:
                         by_nested_type[nested_type] = {
-                            "memory": {"activations_gb": 0.0},
+                            "memory": {
+                                "params_count": 0,
+                                "weight_gb": 0.0,
+                                "gradient_gb": 0.0,
+                                "optimizer_gb": 0.0,
+                                "activation_gb": 0.0,
+                            },
                             "compute": {"flops": 0, "flops_gflops": 0.0, "time_sec": 0.0},
                             "communication": {"bytes": 0, "gb": 0.0},
                             "parent_type": block_type,
                         }
 
-                    # Memory: sum all peak phase nested submodules
-                    if peak_nested_sms and by_nested_type[nested_type]["memory"]["activations_gb"] == 0:
-                        by_nested_type[nested_type]["memory"]["activations_gb"] = peak_nested_mem
+                    if peak_nested_sms and by_nested_type[nested_type]["memory"]["activation_gb"] == 0:
+                        by_nested_type[nested_type]["memory"]["params_count"] = sum(
+                            n.params_count for n in peak_nested_sms
+                        )
+                        by_nested_type[nested_type]["memory"]["weight_gb"] = sum(
+                            n.weight_memory_gb for n in peak_nested_sms
+                        )
+                        by_nested_type[nested_type]["memory"]["gradient_gb"] = sum(
+                            n.gradient_memory_gb for n in peak_nested_sms
+                        )
+                        by_nested_type[nested_type]["memory"]["optimizer_gb"] = sum(
+                            n.optimizer_memory_gb for n in peak_nested_sms
+                        )
+                        by_nested_type[nested_type]["memory"]["activation_gb"] = sum(
+                            n.activation_memory_gb for n in peak_nested_sms
+                        )
 
-                    # Compute/communication: sum all phases
                     by_nested_type[nested_type]["compute"]["flops"] += nested.flops
                     by_nested_type[nested_type]["compute"]["flops_gflops"] += nested.flops / 1e9
                     by_nested_type[nested_type]["compute"]["time_sec"] += nested.time_sec
                     by_nested_type[nested_type]["communication"]["bytes"] += nested.communication_bytes
                     by_nested_type[nested_type]["communication"]["gb"] += nested.communication_bytes / 1e9
 
-        total_memory = sum(p.memory_gb for p in phases)
-        peak_memory = max(p.memory_gb for p in phases) if phases else 0.0
+        # Calculate total memory breakdown
+        total_memory_breakdown = {
+            "weight_gb": sum(data["memory"]["weight_gb"] for data in by_submodule_type.values()),
+            "gradient_gb": sum(data["memory"]["gradient_gb"] for data in by_submodule_type.values()),
+            "optimizer_gb": sum(data["memory"]["optimizer_gb"] for data in by_submodule_type.values()),
+            "activation_gb": sum(data["memory"]["activation_gb"] for data in by_submodule_type.values()),
+            "activations_gb": sum(
+                data["memory"]["activation_gb"] for data in by_submodule_type.values()
+            ),  # Backward compat
+        }
+        total_memory_gb = sum(v for k, v in total_memory_breakdown.items() if k != "activations_gb")
+
+        # Add backward compat to by_submodule_type
+        for block_type, data in by_submodule_type.items():
+            data["memory"]["activations_gb"] = data["memory"]["activation_gb"]
 
         comm_breakdown_dict = {}
         if comm_breakdown:
@@ -1438,15 +1525,21 @@ class UnifiedAnalyzer:
                     "model_name": phase.component,
                     "model_type": phase.compute_type.value,
                     "compute_time_sec": phase.total_time_sec,
-                    "memory": {"by_type": {"activations_gb": phase.memory_gb}},
+                    "memory": {
+                        "by_type": phase.memory_breakdown,
+                        "total_gb": phase.memory_gb,
+                    },
                 }
                 for phase in phases
             ],
             "memory": {
-                "by_type": {"activations_gb": total_memory},
-                "by_submodel": by_component,
+                "by_type": total_memory_breakdown,
+                "total_gb": total_memory_gb,
                 "by_submodule_type": {
-                    block_type: {"activations_gb": data["memory"]["activations_gb"]}
+                    block_type: {
+                        **data["memory"],
+                        "activations_gb": data["memory"]["activation_gb"],  # Backward compat
+                    }
                     for block_type, data in by_submodule_type.items()
                 },
             },

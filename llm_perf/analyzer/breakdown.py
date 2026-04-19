@@ -48,7 +48,11 @@ class ModuleBreakdown:
         module_type: 模块类型 (embedding, transformer_block, attention, ffn, rms_norm, lm_head等)
         compute_time_sec: 计算时间（秒，每卡）
         compute_flops: 计算量（每卡）
-        memory_activations_gb: 激活内存（GB，每卡）
+        params_count: 参数量（每卡）
+        memory_weight_gb: 权重内存（GB，每卡）
+        memory_gradient_gb: 梯度内存（GB，每卡）
+        memory_optimizer_gb: 优化器内存（GB，每卡）
+        memory_activation_gb: 激活内存（GB，每卡）
         communication_bytes: 通信量（字节，每卡）
         sub_modules: 子模块分解列表
     """
@@ -57,9 +61,18 @@ class ModuleBreakdown:
     module_type: str
     compute_time_sec: float = 0.0
     compute_flops: int = 0
-    memory_activations_gb: float = 0.0
+    params_count: int = 0
+    memory_weight_gb: float = 0.0
+    memory_gradient_gb: float = 0.0
+    memory_optimizer_gb: float = 0.0
+    memory_activation_gb: float = 0.0
     communication_bytes: int = 0
     sub_modules: List["ModuleBreakdown"] = field(default_factory=list)
+
+    @property
+    def memory_total_gb(self) -> float:
+        """Total memory (weight + gradient + optimizer + activation)."""
+        return self.memory_weight_gb + self.memory_gradient_gb + self.memory_optimizer_gb + self.memory_activation_gb
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式，包含计算、通信、内存分解."""
@@ -73,8 +86,14 @@ class ModuleBreakdown:
                 "flops_gflops": self.compute_flops / 1e9 if self.compute_flops else 0,
             },
             "memory": {
-                "activations_gb": self.memory_activations_gb,
-                "activations_mb": self.memory_activations_gb * 1024,
+                "params_count": self.params_count,
+                "params_count_billion": self.params_count / 1e9,
+                "weight_gb": self.memory_weight_gb,
+                "gradient_gb": self.memory_gradient_gb,
+                "optimizer_gb": self.memory_optimizer_gb,
+                "activation_gb": self.memory_activation_gb,
+                "activations_gb": self.memory_activation_gb,  # Backward compatibility
+                "total_gb": self.memory_total_gb,
             },
             "communication": {
                 "total_bytes": self.communication_bytes,
@@ -95,7 +114,11 @@ class ModuleBreakdown:
 
         self.compute_time_sec = sum(sm.compute_time_sec for sm in self.sub_modules)
         self.compute_flops = sum(sm.compute_flops for sm in self.sub_modules)
-        self.memory_activations_gb = sum(sm.memory_activations_gb for sm in self.sub_modules)
+        self.params_count = sum(sm.params_count for sm in self.sub_modules)
+        self.memory_weight_gb = sum(sm.memory_weight_gb for sm in self.sub_modules)
+        self.memory_gradient_gb = sum(sm.memory_gradient_gb for sm in self.sub_modules)
+        self.memory_optimizer_gb = sum(sm.memory_optimizer_gb for sm in self.sub_modules)
+        self.memory_activation_gb = sum(sm.memory_activation_gb for sm in self.sub_modules)
         self.communication_bytes = sum(sm.communication_bytes for sm in self.sub_modules)
 
 
@@ -155,13 +178,21 @@ def generate_module_breakdown(
                 module_type=sm.submodule_type,
                 compute_time_sec=0.0,
                 compute_flops=0,
-                memory_activations_gb=0.0,
+                params_count=0,
+                memory_weight_gb=0.0,
+                memory_gradient_gb=0.0,
+                memory_optimizer_gb=0.0,
+                memory_activation_gb=0.0,
                 communication_bytes=0,
             )
 
         by_module[module_key].compute_time_sec += sm.time_sec
         by_module[module_key].compute_flops += sm.flops
-        by_module[module_key].memory_activations_gb += sm.memory_gb
+        by_module[module_key].params_count += sm.params_count
+        by_module[module_key].memory_weight_gb += sm.weight_memory_gb
+        by_module[module_key].memory_gradient_gb += sm.gradient_memory_gb
+        by_module[module_key].memory_optimizer_gb += sm.optimizer_memory_gb
+        by_module[module_key].memory_activation_gb += sm.activation_memory_gb
         by_module[module_key].communication_bytes += sm.communication_bytes
 
         block_type = sm.submodule_type
@@ -171,18 +202,26 @@ def generate_module_breakdown(
                 module_type=block_type,
                 compute_time_sec=0.0,
                 compute_flops=0,
-                memory_activations_gb=0.0,
+                params_count=0,
+                memory_weight_gb=0.0,
+                memory_gradient_gb=0.0,
+                memory_optimizer_gb=0.0,
+                memory_activation_gb=0.0,
                 communication_bytes=0,
             )
 
         by_block_type[block_type].compute_time_sec += sm.time_sec
         by_block_type[block_type].compute_flops += sm.flops
-        by_block_type[block_type].memory_activations_gb += sm.memory_gb
+        by_block_type[block_type].params_count += sm.params_count
+        by_block_type[block_type].memory_weight_gb += sm.weight_memory_gb
+        by_block_type[block_type].memory_gradient_gb += sm.gradient_memory_gb
+        by_block_type[block_type].memory_optimizer_gb += sm.optimizer_memory_gb
+        by_block_type[block_type].memory_activation_gb += sm.activation_memory_gb
         by_block_type[block_type].communication_bytes += sm.communication_bytes
 
     summary = BreakdownSummary(
         total_compute_time_sec=sum(m.compute_time_sec for m in by_module.values()),
-        total_memory_gb=sum(m.memory_activations_gb for m in by_module.values()),
+        total_memory_gb=sum(m.memory_total_gb for m in by_module.values()),
         total_communication_gb=global_comm_bytes / 1e9,
     )
 
@@ -229,7 +268,11 @@ def _merge_norm_submodules(submodules: List[Any]) -> List[Any]:
                     submodule_type=merged_type,
                     time_sec=sm.time_sec + pending_norm.time_sec,
                     flops=sm.flops + pending_norm.flops,
-                    memory_gb=sm.memory_gb + pending_norm.memory_gb,
+                    params_count=sm.params_count + pending_norm.params_count,
+                    weight_memory_gb=sm.weight_memory_gb + pending_norm.weight_memory_gb,
+                    gradient_memory_gb=sm.gradient_memory_gb + pending_norm.gradient_memory_gb,
+                    optimizer_memory_gb=sm.optimizer_memory_gb + pending_norm.optimizer_memory_gb,
+                    activation_memory_gb=sm.activation_memory_gb + pending_norm.activation_memory_gb,
                     communication_bytes=sm.communication_bytes + pending_norm.communication_bytes,
                 )
             )
