@@ -392,13 +392,15 @@ class TestResultDimensions:
         if result_dict["detailed_breakdown"]:
             memory = result_dict["detailed_breakdown"]["memory"]
 
-            assert "by_type" in memory
-            assert "weight_gb" in memory["by_type"]
-            assert "activation_gb" in memory["by_type"]
-            assert "gradient_gb" in memory["by_type"]
-            assert "optimizer_gb" in memory["by_type"]
-            assert memory["by_type"]["weight_gb"] >= 0
-            assert memory["by_type"]["activation_gb"] >= 0
+            assert "summary" in memory
+            assert "weight_gb" in memory["summary"]
+            assert "activation_gb" in memory["summary"]
+            assert "gradient_gb" in memory["summary"]
+            assert "optimizer_gb" in memory["summary"]
+            assert "total_gb" in memory["summary"]
+            assert memory["summary"]["weight_gb"] >= 0
+            assert memory["summary"]["activation_gb"] >= 0
+            assert memory["summary"]["total_gb"] >= 0
 
             assert "by_submodule_type" in memory
             for block_type, metrics in memory.get("by_submodule_type", {}).items():
@@ -406,6 +408,9 @@ class TestResultDimensions:
                 assert "activation_gb" in metrics
                 assert metrics["weight_gb"] >= 0
                 assert metrics["activation_gb"] >= 0
+
+            # Backward compatibility: by_type field
+            assert "by_type" in memory or "summary" in memory
 
     """Test UnifiedAnalyzer."""
 

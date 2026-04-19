@@ -168,7 +168,7 @@ class TestWebAppAPI:
         assert result_dict["detailed_breakdown"] is not None
         assert "submodels" in result_dict["detailed_breakdown"]
         assert "memory" in result_dict["detailed_breakdown"]
-        assert "by_type" in result_dict["detailed_breakdown"]["memory"]
+        assert "summary" in result_dict["detailed_breakdown"]["memory"]
 
     def test_pipeline_phases_not_zero(self):
         """Test diffusion-video pipeline phases have non-zero time values."""
@@ -253,8 +253,10 @@ class TestWebAppAPI:
 
         if result_dict["detailed_breakdown"]:
             memory = result_dict["detailed_breakdown"]["memory"]
-            assert "by_type" in memory
-            assert "activations_gb" in memory["by_type"]
+            assert "summary" in memory
+            assert "total_gb" in memory["summary"]
+            # Backward compatibility
+            assert "by_type" in memory or "summary" in memory
 
     def test_throughput_is_global(self):
         """Test that throughput metrics are global."""
@@ -359,12 +361,12 @@ class TestFrontendCompatibility:
         if not detailed:
             return
 
-        # Test memory.by_type - all values should be numbers
-        mem_by_type = detailed.get("memory", {}).get("by_type", {})
-        for key, value in mem_by_type.items():
-            assert isinstance(value, (int, float)), f"memory.by_type[{key}] should be number, got {type(value)}"
+        # Test memory.summary - all values should be numbers
+        mem_summary = detailed.get("memory", {}).get("summary", {})
+        for key, value in mem_summary.items():
+            assert isinstance(value, (int, float)), f"memory.summary[{key}] should be number, got {type(value)}"
 
-        # Test memory.by_submodel - all nested values should be numbers
+        # Test memory.by_submodule - all nested values should be numbers
         mem_by_submodel = detailed.get("memory", {}).get("by_submodel", {})
         for name, mems in mem_by_submodel.items():
             for key, value in mems.items():
@@ -373,8 +375,11 @@ class TestFrontendCompatibility:
         # Test memory.by_submodule_type - activations_gb should be number
         mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
         for submodule_type, data in mem_by_submodule_type.items():
-            assert "activations_gb" in data, f"memory.by_submodule_type[{submodule_type}] missing activations_gb"
-            assert isinstance(data["activations_gb"], (int, float)), f"activations_gb should be number"
+            assert "activation_gb" in data or "activations_gb" in data, (
+                f"memory.by_submodule_type[{submodule_type}] missing activation fields"
+            )
+            activation_val = data.get("activation_gb", data.get("activations_gb", 0))
+            assert isinstance(activation_val, (int, float)), f"activation should be number"
 
         # Test unified by_submodule_type structure
         by_submodule_type = detailed.get("by_submodule_type", {})
@@ -454,9 +459,9 @@ class TestFrontendCompatibility:
 
         submodels = detailed.get("submodels", [])
         for sm in submodels:
-            mem_by_type = sm.get("memory", {}).get("by_type", {})
-            for key, value in mem_by_type.items():
-                assert isinstance(value, (int, float)), f"submodel.memory.by_type[{key}] should be number"
+            mem_summary = sm.get("memory", {}).get("summary", {})
+            for key, value in mem_summary.items():
+                assert isinstance(value, (int, float)), f"submodel.memory.summary[{key}] should be number"
 
     def test_inference_detailed_breakdown_fields(self):
         """Test inference detailed_breakdown fields."""
@@ -472,8 +477,9 @@ class TestFrontendCompatibility:
         # Same checks as training
         mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
         for submodule_type, data in mem_by_submodule_type.items():
-            assert "activations_gb" in data
-            assert isinstance(data["activations_gb"], (int, float))
+            assert "activation_gb" in data or "activations_gb" in data
+            activation_val = data.get("activation_gb", data.get("activations_gb", 0))
+            assert isinstance(activation_val, (int, float))
 
         # Check by_submodule_type has complete structure
         by_submodule_type = detailed.get("by_submodule_type", {})

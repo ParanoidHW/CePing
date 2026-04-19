@@ -1500,7 +1500,10 @@ class UnifiedAnalyzer:
                     by_nested_type[nested_type]["communication"]["gb"] += nested.communication_bytes / 1e9
 
         # Calculate total memory breakdown
+        total_params_count = sum(data["memory"]["params_count"] for data in by_submodule_type.values())
         total_memory_breakdown = {
+            "params_count": total_params_count,
+            "params_count_billion": total_params_count / 1e9,
             "weight_gb": sum(data["memory"]["weight_gb"] for data in by_submodule_type.values()),
             "gradient_gb": sum(data["memory"]["gradient_gb"] for data in by_submodule_type.values()),
             "optimizer_gb": sum(data["memory"]["optimizer_gb"] for data in by_submodule_type.values()),
@@ -1508,8 +1511,15 @@ class UnifiedAnalyzer:
             "activations_gb": sum(
                 data["memory"]["activation_gb"] for data in by_submodule_type.values()
             ),  # Backward compat
+            "total_gb": 0,  # Will be calculated below
         }
-        total_memory_gb = sum(v for k, v in total_memory_breakdown.items() if k != "activations_gb")
+        total_memory_gb = (
+            total_memory_breakdown["weight_gb"]
+            + total_memory_breakdown["gradient_gb"]
+            + total_memory_breakdown["optimizer_gb"]
+            + total_memory_breakdown["activation_gb"]
+        )
+        total_memory_breakdown["total_gb"] = total_memory_gb
 
         # Add backward compat to by_submodule_type
         for block_type, data in by_submodule_type.items():
@@ -1526,14 +1536,14 @@ class UnifiedAnalyzer:
                     "model_type": phase.compute_type.value,
                     "compute_time_sec": phase.total_time_sec,
                     "memory": {
-                        "by_type": phase.memory_breakdown,
+                        "summary": phase.memory_breakdown,
                         "total_gb": phase.memory_gb,
                     },
                 }
                 for phase in phases
             ],
             "memory": {
-                "by_type": total_memory_breakdown,
+                "summary": total_memory_breakdown,
                 "total_gb": total_memory_gb,
                 "by_submodule_type": {
                     block_type: {
