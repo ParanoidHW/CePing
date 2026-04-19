@@ -913,3 +913,135 @@ class TestMFU:
 
         result_dict = result.to_dict()
         assert "mfu" in result_dict
+
+
+class TestModuleBreakdown:
+    """Test module_breakdown feature."""
+
+    def test_module_breakdown_structure(self):
+        """Verify module_breakdown has correct structure."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        assert result.module_breakdown is not None
+        assert "by_module" in result.module_breakdown
+        assert "by_block_type" in result.module_breakdown
+        assert "summary" in result.module_breakdown
+
+    def test_module_breakdown_by_module(self):
+        """Verify by_module contains all submodules."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        by_module = result.module_breakdown["by_module"]
+
+        assert "embedding" in by_module
+        assert "layers.0" in by_module
+        assert "layers.1" in by_module
+        assert "layers.2" in by_module
+        assert "layers.3" in by_module
+        assert "final_norm" in by_module
+        assert "lm_head" in by_module
+
+    def test_module_breakdown_by_block_type(self):
+        """Verify by_block_type groups modules correctly."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        by_block_type = result.module_breakdown["by_block_type"]
+
+        assert "embedding" in by_block_type
+        assert "transformer_block" in by_block_type
+        assert "rms_norm" in by_block_type
+        assert "lm_head" in by_block_type
+
+    def test_module_breakdown_fields(self):
+        """Verify each module entry has compute/memory/communication fields."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        for module_name, module_data in result.module_breakdown["by_module"].items():
+            assert "name" in module_data
+            assert "module_type" in module_data
+            assert "compute" in module_data
+            assert "memory" in module_data
+            assert "communication" in module_data
+
+            compute = module_data["compute"]
+            assert "time_sec" in compute
+            assert "flops" in compute
+
+            memory = module_data["memory"]
+            assert "activations_gb" in memory
+
+            communication = module_data["communication"]
+            assert "total_bytes" in communication
+            assert "total_gb" in communication
+
+    def test_module_breakdown_summary(self):
+        """Verify summary aggregates correctly."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        summary = result.module_breakdown["summary"]
+
+        assert "total_compute_time_sec" in summary
+        assert "total_memory_gb" in summary
+        assert "total_communication_gb" in summary
+
+        assert summary["total_compute_time_sec"] > 0
+        assert summary["total_memory_gb"] > 0
+
+    def test_module_breakdown_memory_per_gpu(self):
+        """Verify memory in module_breakdown is per-GPU dimension."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        for module_data in result.module_breakdown["by_module"].values():
+            memory_gb = module_data["memory"]["activations_gb"]
+            assert memory_gb < 100, f"Memory per GPU should be < 100GB, got {memory_gb}GB"
+
+    def test_module_breakdown_communication_non_zero(self):
+        """Verify transformer_block modules have non-zero communication."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
+        device = Device.from_preset("H100-SXM-80GB")
+        cluster = make_cluster(device, 8)
+        strategy = StrategyConfig(tp_degree=8)
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze("training", batch_size=32, seq_len=2048)
+
+        by_block_type = result.module_breakdown["by_block_type"]
+
+        transformer_comm = by_block_type["transformer_block"]["communication"]["total_gb"]
+        assert transformer_comm > 0, "Transformer blocks should have non-zero communication"
