@@ -213,6 +213,7 @@ class UnifiedResult:
     mfu: Optional[float] = None
     qps: Optional[float] = None
     communication_breakdown: Optional["CommunicationBreakdown"] = None
+    module_breakdown: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with frontend compatibility fields.
@@ -247,6 +248,8 @@ class UnifiedResult:
             result["detailed_breakdown"] = self.detailed_breakdown
         if self.communication_breakdown:
             result["communication_breakdown"] = self.communication_breakdown.to_dict()
+        if self.module_breakdown:
+            result["module_breakdown"] = self.module_breakdown
         return result
 
     def _build_time_dict(self) -> Dict[str, float]:

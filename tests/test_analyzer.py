@@ -566,7 +566,7 @@ class TestBackwardKernelEstimation:
         assert backward_phase.flops > 0
 
         ratio = backward_phase.flops / forward_phase.flops
-        assert ratio > 1.5 and ratio < 2.5, f"backward/forward ratio should be ~2x, got {ratio}"
+        assert ratio > 2.5 and ratio < 3.5, f"backward/forward ratio should be ~3x (forward+backward), got {ratio}"
 
         assert backward_phase.single_time_sec > forward_phase.single_time_sec
 

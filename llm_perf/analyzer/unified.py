@@ -29,6 +29,7 @@ from .base import (
     ThroughputMetric,
     CommunicationBreakdown,
 )
+from .breakdown import generate_module_breakdown
 from .workload_loader import get_workload
 
 
@@ -192,6 +193,12 @@ class UnifiedAnalyzer:
         breakdown = self._generate_breakdown(phase_results, workload, total_time, throughput)
         detailed_breakdown = self._generate_detailed_breakdown(phase_results, workload, comm_breakdown)
 
+        global_comm_bytes = 0
+        if comm_breakdown:
+            global_comm_bytes = sum(v.get("total_bytes", 0) for v in comm_breakdown.to_dict().values())
+
+        module_breakdown = generate_module_breakdown(phase_results, workload.workload_type.value, global_comm_bytes)
+
         return UnifiedResult(
             workload_name=workload.name,
             workload_type=workload.workload_type,
@@ -215,6 +222,7 @@ class UnifiedAnalyzer:
             mfu=mfu,
             qps=qps,
             communication_breakdown=comm_breakdown,
+            module_breakdown=module_breakdown,
         )
 
     def _analyze_phases(
@@ -348,7 +356,7 @@ class UnifiedAnalyzer:
                     time_sec=self._estimate_submodule_time(sub_inst),
                     flops=sub_inst.flops_forward_physical,
                     memory_gb=sub_inst.activation_memory_physical / 1e9,
-                    communication_bytes=sum(op.data_bytes for op in sub_inst.total_comm_ops),
+                    communication_bytes=sum(op.data_bytes for op in sub_inst.own_comm_ops),
                 )
             )
 

@@ -321,10 +321,34 @@ class ModuleInstance:
 
     @property
     def total_comm_ops(self) -> List["CommOp"]:
-        """Total communication operations (forward + backward)."""
+        """Total communication operations (forward + backward).
+
+        Includes both own ops and submodule ops.
+        """
         ops = []
         for inst in self._submodule_instances.values():
             ops.extend(inst.total_comm_ops)
+
+        if self.module._last_forward_output:
+            for op in self.module._last_forward_output._op_history:
+                comm_ops = self._infer_comm_ops(op)
+                ops.extend(comm_ops)
+
+                if self.mode == "forward_backward":
+                    backward_comm_ops = self._infer_backward_comm_ops(op)
+                    ops.extend(backward_comm_ops)
+
+        return ops
+
+    @property
+    def own_comm_ops(self) -> List["CommOp"]:
+        """Own communication operations (excluding submodules).
+
+        Note: Due to op_history structure, this currently returns
+        ops from this module's direct operations. For modules with
+        submodules, some ops may be double-counted.
+        """
+        ops = []
 
         if self.module._last_forward_output:
             for op in self.module._last_forward_output._op_history:
@@ -498,12 +522,13 @@ class ModuleInstance:
                 physical_output = self._infer_physical_shape(op.output)
 
                 try:
+                    device = getattr(backend.config, "device", None)
                     compute_time += backend.estimate_compute_time(
                         op.kernel_name,
                         physical_inputs,
                         physical_output,
                         op.dtype,
-                        self.ctx.device if hasattr(self.ctx, "device") else None,
+                        device,
                     )
                 except Exception:
                     pass
