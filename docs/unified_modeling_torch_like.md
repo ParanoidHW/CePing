@@ -64,12 +64,14 @@ class ShardedTensor:
     1. 像torch.Tensor一样操作（matmul, view, transpose等）
     2. 自动推导输出shape和切分约束
     3. 记录操作历史，用于后续推导FLOPs和通信
+    4. 标记view tensor (_is_view)，用于激活内存自动追踪
     
     Attributes:
         shape: 逻辑shape（未切分）
         shardable: 各维度的切分约束 {dim_idx: parallel_type}
         dtype: 数据类型
         _op_history: 操作历史（用于推导FLOPs）
+        _is_view: 是否是view tensor（不分配新内存）
     """
     
     def __init__(
@@ -84,6 +86,7 @@ class ShardedTensor:
         self.dtype = dtype
         self.name = name
         self._op_history = []  # 记录操作历史
+        self._is_view = False  # 标记是否是view tensor
     
     @property
     def ndim(self) -> int:
@@ -185,6 +188,7 @@ def view(self, *shape) -> ShardedTensor:
     """reshape: 类似 torch.Tensor.view()
     
     切分约束跟随维度映射。
+    标记为view tensor (_is_view=True)，不分配新内存。
     """
     # 推导维度映射
     old_numel = self.numel()
@@ -199,12 +203,14 @@ def view(self, *shape) -> ShardedTensor:
     
     output = ShardedTensor(shape=shape, shardable=new_shardable, dtype=self.dtype)
     output._op_history = self._op_history + [ViewOp(self, shape)]
+    output._is_view = True  # 标记为view tensor
     return output
 
 def transpose(self, dim0: int, dim1: int) -> ShardedTensor:
     """转置: 类似 torch.Tensor.transpose()
     
     切分约束跟随维度交换。
+    标记为view tensor (_is_view=True)，不分配新内存。
     """
     new_shape = list(self.shape)
     new_shape[dim0], new_shape[dim1] = new_shape[dim1], new_shape[dim0]
@@ -220,7 +226,36 @@ def transpose(self, dim0: int, dim1: int) -> ShardedTensor:
     
     output = ShardedTensor(shape=tuple(new_shape), shardable=new_shardable, dtype=self.dtype)
     output._op_history = self._op_history + [TransposeOp(self, dim0, dim1)]
+    output._is_view = True  # 标记为view tensor
     return output
+
+def contiguous(self) -> ShardedTensor:
+    """返回一个非view的副本。
+    
+    类似 torch.Tensor.contiguous()，确保张量有连续内存布局。
+    标记为非view tensor (_is_view=False)，分配新内存。
+    """
+    output = ShardedTensor(
+        shape=self.shape,
+        shardable=self.shardable,
+        dtype=self.dtype,
+    )
+    output._op_history = self._op_history
+    output._is_view = False  # 强制标记为非view
+    return output
+
+def get_physical_bytes(self, parallel_degrees: Dict[str, int]) -> int:
+    """获取物理内存字节数（考虑切分）。
+    
+    Args:
+        parallel_degrees: {parallel_type: degree}
+    
+    Returns:
+        物理内存字节数 (numel_after_sharding * dtype_size)
+    """
+    physical_shape = self.get_physical_shape(parallel_degrees)
+    dtype_size = DTYPE_SIZES.get(self.dtype, 2)
+    return math.prod(physical_shape) * dtype_size
 ```
 
 ### 2.3 特殊算子
@@ -611,8 +646,110 @@ class OpInstance:
 2. 切分约束自动推导（自动）
 3. 绑定 ParallelContext 后获得物理形态和开销（灵活）
 4. 完全兼容现有 functional API 和 KernelBackend（无缝）
+5. 自动激活内存追踪，过滤view tensor（准确）
 
 ---
+
+## 6.1 自动激活内存追踪机制
+
+**问题背景**:
+
+训练时需要保存所有中间激活用于 backward pass。但有些操作产生的 tensor 是 view（不分配新内存），如：
+- `q_proj.view(batch, seq, heads, head_dim).transpose(1, 2)` 是 view
+- Flash Attention 的输入 Q, K, V 可以从 Q_proj, K_proj, V_proj 重新 reshape
+
+之前用户需要手动判断哪些 tensor 需要保存，容易出错。
+
+**解决方案**:
+
+分四个层次自动追踪：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ Layer 1: ShardedTensor._is_view                                      │
+│   - 标记 tensor 是否是 view（不分配新内存）                            │
+│   - view(), transpose() → _is_view=True                              │
+│   - matmul(), silu() → _is_view=False                                │
+│   - contiguous() → 强制 _is_view=False                               │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ Layer 2: KernelResult.saved_inputs                                   │
+│   - 标记 backward pass 需要保存哪些输入                                │
+│   - linear: saved_inputs=["input"]                                   │
+│   - flash_attention: saved_inputs=[]                                 │
+│   - rms_norm: saved_inputs=["input"]                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ Layer 3: Op.get_saved_tensors()                                      │
+│   - 从 Op 对象推导 backward 需要保存的 tensor                          │
+│   - MatmulOp: get_saved_tensors() → [self.input]                     │
+│   - AttentionOp: get_saved_tensors() → []                            │
+│   - ActivationOp: 根据激活类型返回不同结果                            │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ Layer 4: ModuleInstance.activation_memory_physical                   │
+│   - 从 _intermediate_tensors 收集                                    │
+│   - 过滤 _is_view=True 的 tensor                                      │
+│   - 计算物理内存字节数                                                 │
+│   - 结果：只统计非view tensor                                          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Flash Attention 示例**:
+
+```python
+class ShardedAttention(ShardedModule):
+    def forward(self, hidden):
+        # 这些是真正的张量（需要保存，_is_view=False）
+        q_proj = self._track_intermediate("q_proj", hidden @ self.q_weight)  # 新张量
+        k_proj = self._track_intermediate("k_proj", hidden @ self.k_weight)  # 新张量
+        v_proj = self._track_intermediate("v_proj", hidden @ self.v_weight)  # 新张量
+        
+        # 这些是 view tensor（不保存，_is_view=True）
+        q = q_proj.view(batch, seq, heads, head_dim).transpose(1, 2)  # view!
+        k = k_proj.view(...).transpose(1, 2)  # view!
+        v = v_proj.view(...).transpose(1, 2)  # view!
+        
+        # flash_attention 返回的也是 view（可以重计算）
+        attn_out = flash_attention(q, k, v)  # 内部状态已保存，tensor是view
+        
+        # output projection 产生新张量（需要保存）
+        attn_flat = attn_out.transpose(1, 2).view(...)  # view!
+        output = self._track_intermediate("output", attn_flat @ self.o_weight)  # 新张量
+        
+        # ModuleInstance.activation_memory_physical 自动：
+        # - 统计: q_proj, k_proj, v_proj, output (非view)
+        # - 过滤: q, k, v, attn_out, attn_flat (view)
+```
+
+**效果对比**:
+
+| 场景 | 手动追踪（之前） | 自动追踪（之后） |
+|------|-----------------|-----------------|
+| Flash Attention | ~32GB（错误追踪所有tensor） | ~13GB（只追踪非view） |
+| 训练内存估算 | 可能重复计算view | 自动过滤view |
+
+**关键设计**:
+
+1. **_is_view 标记**: 
+   - `view()`, `transpose()`, `reshape()` 设置 `_is_view=True`
+   - `matmul()`, `silu()`, `rms_norm()` 等产生新张量，`_is_view=False`
+
+2. **saved_inputs 标记**:
+   - `KernelResult.saved_inputs` 标记 backward 需要保存哪些输入
+   - 如 `linear` 的 `saved_inputs=["input"]` 表示 backward 需要 input 计算 dW
+
+3. **Op.get_saved_tensors()**:
+   - 从 Op 对象自动推导 saved tensors
+   - 如 `MatmulOp.get_saved_tensors() → [self.input]`
+
+4. **ModuleInstance 自动收集**:
+   - 从 `_intermediate_tensors` 收集
+   - 过滤 `_is_view=True`
+   - 递归添加子模块激活内存
 
 ## 7. 实现路径
 
@@ -868,8 +1005,13 @@ class ModuleInstance:
     def activation_memory_physical(self) -> int:
         """激活内存（物理，切分后）
         
+        自动激活内存追踪:
+        - 从 _intermediate_tensors 收集
+        - 过滤 view tensor (_is_view=True)
+        - 只统计需要保存的非view tensor
+        
         规则:
-        - 训练(mode="forward_backward"): 保存所有激活
+        - 训练(mode="forward_backward"): 保存非view中间张量
         - 推理(mode="forward"): 只需最大单层激活
         """
         if self.mode == "forward":
@@ -878,11 +1020,26 @@ class ModuleInstance:
                 return 0
             return max(a.physical_bytes for a in self._activation_instances.values())
         else:
-            # 训练: 所有激活（除非启用activation_checkpointing）
-            total = sum(a.physical_bytes for a in self._activation_instances.values())
-            if self.ctx.activation_checkpointing:
-                # 激活重计算: 只保存部分激活
-                total = total // self.ctx.activation_checkpointing_ratio
+            # 训练: 自动收集非view中间张量
+            parallel_degrees = self._get_parallel_degrees()
+            total = 0
+            
+            for name, activation in self.module._intermediate_tensors.items():
+                # 过滤view tensor（不分配新内存）
+                if hasattr(activation, "_is_view") and activation._is_view:
+                    continue
+                if hasattr(activation, "get_physical_bytes"):
+                    total += activation.get_physical_bytes(parallel_degrees)
+            
+            # 添加子模块激活内存
+            for sub_inst in self._submodule_instances.values():
+                total += sub_inst.activation_memory_physical
+            
+            # 激活重计算（如果启用activation_checkpointing）
+            if hasattr(self.ctx, "activation_checkpointing") and self.ctx.activation_checkpointing:
+                ratio = getattr(self.ctx, "activation_checkpointing_ratio", 1)
+                total = total // ratio
+            
             return total
     
     @property

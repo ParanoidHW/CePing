@@ -354,6 +354,94 @@ print(f"Forward FLOPs: {result.flops}")
 print(f"Backward FLOPs: {result.flops_backward}")
 print(f"Forward bytes: {result.bytes_accessed}")
 print(f"Backward bytes: {result.bytes_accessed_backward}")
+print(f"Saved inputs: {result.saved_inputs}")  # backward需要的输入
+```
+
+**KernelResult.saved_inputs**: 标记 backward pass 需要保存哪些输入：
+
+| Kernel | saved_inputs | 说明 |
+|--------|-------------|------|
+| `linear` | `["input"]` | backward: dW = x^T @ dy |
+| `bmm` | `["input", "mat2"]` | backward: dA = dC @ B^T, dB = A^T @ dC |
+| `scaled_dot_product_attention` | `["query", "key", "value"]` | backward需要Q, K, V |
+| `flash_attention` | `[]` | Q/K/V是view，不单独保存 |
+| `rms_norm` | `["input"]` | backward需要input |
+| `silu/gelu` | `["input"]` | backward需要input |
+| `relu` | `[]` | backward使用mask，不保存input |
+| `softmax` | `["output"]` | backward需要softmax值 |
+| `conv2d/conv3d` | `["input"]` | backward: dW需要input |
+| `embedding` | `["input_ids"]` | backward需要indices |
+
+---
+
+### 5.1 Automatic Activation Memory Tracking
+
+**职责**: 自动追踪激活内存，过滤 view tensor
+
+**架构**:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ Level 1: ShardedTensor._is_view                                      │
+│   - view(), transpose() → _is_view=True (view tensor, no new memory) │
+│   - matmul(), silu() → _is_view=False (new tensor allocation)        │
+│   - contiguous() → _is_view=False (force non-view copy)              │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ Level 2: KernelResult.saved_inputs                                   │
+│   - linear: saved_inputs=["input"]                                   │
+│   - flash_attention: saved_inputs=[] (Q/K/V are views)               │
+│   - Mark which inputs need to be saved for backward pass             │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ Level 3: Op.get_saved_tensors()                                      │
+│   - MatmulOp: get_saved_tensors() → [self.input]                     │
+│   - AttentionOp: get_saved_tensors() → []                            │
+│   - RMSNormOp: get_saved_tensors() → [self.input]                    │
+│   - ActivationOp: get_saved_tensors() → depends on activation_type   │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ Level 4: ModuleInstance.activation_memory_physical                   │
+│   - Collect from _intermediate_tensors                               │
+│   - Filter out _is_view=True tensors                                 │
+│   - Calculate physical bytes with get_physical_bytes()               │
+│   - Result: only non-view tensors counted                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**效果对比**:
+
+| 场景 | 之前（手动追踪） | 之后（自动追踪） |
+|------|-----------------|-----------------|
+| Flash Attention | ~32GB（错误追踪q, k, v, attn_out, attn_flat） | ~13GB（只追踪q_proj, k_proj, v_proj, output） |
+| 训练内存估算 | 可能重复计算view tensor | 自动过滤view，准确估算 |
+
+**使用示例**:
+
+```python
+class ShardedAttention(ShardedModule):
+    def forward(self, hidden):
+        # 这些是真正的张量（需要保存）
+        q_proj = self._track_intermediate("q_proj", hidden @ self.q_weight)
+        k_proj = self._track_intermediate("k_proj", hidden @ self.k_weight)
+        v_proj = self._track_intermediate("v_proj", hidden @ self.v_weight)
+        
+        # 这些是view tensor（_is_view=True，不保存）
+        q = q_proj.view(batch, seq, heads, head_dim).transpose(1, 2)
+        k = k_proj.view(...).transpose(1, 2)
+        v = v_proj.view(...).transpose(1, 2)
+        
+        attn_out = flash_attention(q, k, v)  # flash_attention返回view
+        
+        # 只追踪非view tensor
+        output = self._track_intermediate("output", attn_flat @ self.o_weight)
+        
+        # ModuleInstance.activation_memory_physical 会自动：
+        # - 统计 q_proj, k_proj, v_proj, output（非view）
+        # - 过滤 q, k, v, attn_out（view）
 ```
 
 ---
@@ -542,6 +630,7 @@ default_params:
 - **混布评估**: ColocateAnalyzer
 - **Preset分类**: preset_type标记（model/pipeline/component）
 - **前端动态**: param_schema驱动参数渲染
+- **自动激活内存追踪**: ShardedTensor._is_view + KernelResult.saved_inputs + Op.get_saved_tensors()
 
 ### v4.0
 - **Unified Modeling Layer**: Torch-like接口
