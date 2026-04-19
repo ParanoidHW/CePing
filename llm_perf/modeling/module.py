@@ -4,7 +4,7 @@ Provides automatic registration of submodules and weights,
 and supports forward/backward mode for performance estimation.
 """
 
-from typing import Dict, Optional, List, Any, Tuple, TYPE_CHECKING
+from typing import Dict, Optional, List, Any, Tuple, Union, TYPE_CHECKING
 import math
 
 from .tensor import ShardedTensor
@@ -12,6 +12,7 @@ from llm_perf.utils.constants import DTYPE_SIZES
 
 if TYPE_CHECKING:
     from llm_perf.strategy.parallel_context import ParallelContext
+    from llm_perf.strategy.pp_model import PPModel
     from llm_perf.kernels.op import CommOp
 
 
@@ -67,20 +68,28 @@ class ShardedModule:
     def bind(
         self,
         ctx: "ParallelContext",
+        pp_strategy: Optional["PPStrategy"] = None,
         pp_stage: Optional[int] = None,
         mode: str = "forward_backward",
-    ) -> "ModuleInstance":
-        """Bind to ParallelContext, return ModuleInstance.
+    ) -> Union["ModuleInstance", "PPModel"]:
+        """Bind to ParallelContext, return ModuleInstance or PPModel.
 
         Args:
             ctx: ParallelContext
-            pp_stage: PP stage index (optional)
+            pp_strategy: Optional PP strategy (creates PPModel if provided)
+            pp_stage: PP stage index (optional, used without pp_strategy)
             mode: "forward" or "forward_backward"
 
         Returns:
-            ModuleInstance with physical shape and performance
+            If pp_strategy is None: ModuleInstance
+            If pp_strategy is provided: PPModel
         """
-        return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
+        if pp_strategy is None:
+            return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
+        else:
+            from llm_perf.strategy.pp_model import PPModel
+
+            return PPModel(self, pp_strategy)
 
     def get_weights(self) -> Dict[str, ShardedTensor]:
         """Get all weights (including submodules)."""

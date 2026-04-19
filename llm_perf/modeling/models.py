@@ -214,32 +214,6 @@ class LlamaModel(ShardedModule):
 
         return logits
 
-    def bind(
-        self,
-        ctx: "ParallelContext",
-        pp_strategy: Optional["PPStrategy"] = None,
-        pp_stage: Optional[int] = None,
-        mode: str = "forward_backward",
-    ) -> Union[ModuleInstance, "PPModel"]:
-        """Bind to ParallelContext.
-
-        Args:
-            ctx: ParallelContext
-            pp_strategy: Optional PP strategy
-            pp_stage: PP stage index (optional, used without pp_strategy)
-            mode: "forward" or "forward_backward"
-
-        Returns:
-            If pp_strategy is None: ModuleInstance
-            If pp_strategy is provided: PPModel
-        """
-        if pp_strategy is None:
-            return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
-        else:
-            from llm_perf.strategy.pp_model import PPModel
-
-            return PPModel(self, pp_strategy)
-
 
 class ShardedMoEBlock(ShardedModule):
     """Transformer Block with MoE.
@@ -488,18 +462,3 @@ class DeepSeekModel(ShardedModule):
         self._activations["lm_head_output"] = logits
 
         return logits
-
-    def bind(
-        self,
-        ctx: "ParallelContext",
-        pp_strategy: Optional["PPStrategy"] = None,
-        pp_stage: Optional[int] = None,
-        mode: str = "forward_backward",
-    ) -> Union[ModuleInstance, "PPModel"]:
-        """Bind to ParallelContext."""
-        if pp_strategy is None:
-            return ModuleInstance(self, ctx, pp_stage=pp_stage, mode=mode)
-        else:
-            from llm_perf.strategy.pp_model import PPModel
-
-            return PPModel(self, pp_strategy)
