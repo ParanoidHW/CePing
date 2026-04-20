@@ -694,7 +694,14 @@ class ModuleInstance:
             except Exception:
                 pass
 
-        return compute_time + comm_time
+        total_time_sec = compute_time + comm_time
+        logger.info(
+            f"[TIME_ESTIMATE] module={self.module.__class__.__name__}, "
+            f"compute_time={compute_time * 1000:.2f}ms, "
+            f"comm_time={comm_time * 1000:.2f}ms, "
+            f"total_time={total_time_sec * 1000:.2f}ms"
+        )
+        return total_time_sec
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for output."""

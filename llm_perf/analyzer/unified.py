@@ -527,6 +527,14 @@ class UnifiedAnalyzer:
                 f"flops={sub_inst.flops_forward_physical / 1e12:.4f}T"
             )
 
+        logger.info(
+            f"[PHASE_ANALYSIS] phase_name={phase.component}, "
+            f"compute_type={phase.compute_type.value}, "
+            f"total_flops={flops / 1e12:.4f}T, "
+            f"time_sec={time_sec:.4f}, "
+            f"memory_gb={memory:.4f}, "
+            f"num_submodules={len(submodules)}"
+        )
         return time_sec, memory, flops, submodules
 
     def _analyze_nested_submodules(
@@ -1622,12 +1630,19 @@ class UnifiedAnalyzer:
         )
         total_memory_breakdown["total_gb"] = total_memory_gb
 
+        total_compute_flops = sum(data["compute"]["flops"] for data in by_submodule_type.values())
+        total_comm_bytes = sum(data["communication"]["bytes"] for data in by_submodule_type.values())
         logger.info(
             f"[TOTAL] weight_gb={total_memory_breakdown['weight_gb']:.2f}GB, "
             f"gradient_gb={total_memory_breakdown['gradient_gb']:.2f}GB, "
             f"optimizer_gb={total_memory_breakdown['optimizer_gb']:.2f}GB, "
             f"activation_gb={total_memory_breakdown['activation_gb']:.2f}GB, "
-            f"total_gb={total_memory_breakdown['total_gb']:.2f}GB"
+            f"total_gb={total_memory_breakdown['total_gb']:.2f}GB, "
+            f"params_count={total_memory_breakdown['params_count_billion']:.4f}B, "
+            f"compute_flops={total_compute_flops / 1e12:.4f}T, "
+            f"comm_bytes={total_comm_bytes / 1e9:.4f}GB, "
+            f"num_phases={len(phases)}, "
+            f"num_submodule_types={len(by_submodule_type)}"
         )
 
         # Add backward compat to by_submodule_type
