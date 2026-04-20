@@ -600,7 +600,7 @@ class TestCommunicationBreakdown:
     """Tests for communication breakdown."""
 
     def test_comm_breakdown_extraction(self):
-        """Test communication breakdown extraction."""
+        """Test communication breakdown extraction with new structure."""
         model = LlamaModel(
             vocab_size=32000,
             hidden_size=4096,
@@ -618,7 +618,13 @@ class TestCommunicationBreakdown:
         assert result.communication_breakdown is not None
 
         comm_dict = result.communication_breakdown.to_dict()
-        assert "all_reduce" in comm_dict or "all_gather" in comm_dict
+        # New structure: by_parallelism and by_operation
+        assert "by_parallelism" in comm_dict
+        assert "by_operation" in comm_dict
+        assert "total_bytes" in comm_dict
+        # TP should have communication
+        if comm_dict["by_parallelism"]:
+            assert "tp" in comm_dict["by_parallelism"]
 
     def test_comm_with_different_tp(self):
         """Test communication with different TP."""
@@ -644,8 +650,9 @@ class TestCommunicationBreakdown:
         comm_tp1 = result_tp1.communication_breakdown.to_dict()
         comm_tp8 = result_tp8.communication_breakdown.to_dict()
 
-        total_tp1 = sum(v["total_bytes"] for v in comm_tp1.values())
-        total_tp8 = sum(v["total_bytes"] for v in comm_tp8.values())
+        # New structure: total_bytes is at top level
+        total_tp1 = comm_tp1.get("total_bytes", 0)
+        total_tp8 = comm_tp8.get("total_bytes", 0)
 
         assert total_tp8 >= total_tp1
 
