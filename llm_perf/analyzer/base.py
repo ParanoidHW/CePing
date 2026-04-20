@@ -102,6 +102,7 @@ class SubmoduleResult:
         optimizer_memory_gb: 优化器内存（GB，每卡，训练时）
         activation_memory_gb: 激活内存（GB，每卡）
         communication_bytes: 通信数据量（字节，每卡）
+        comm_ops_detail: 通信操作详情列表，包含ptype信息
         nested_submodules: 嵌套子模块（如 transformer_block 内的 attention, ffn）
     """
 
@@ -115,6 +116,7 @@ class SubmoduleResult:
     optimizer_memory_gb: float = 0.0
     activation_memory_gb: float = 0.0
     communication_bytes: int = 0
+    comm_ops_detail: List[Dict[str, Any]] = field(default_factory=list)
     nested_submodules: List["SubmoduleResult"] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -192,19 +194,19 @@ class PhaseResult:
 
 @dataclass
 class CommunicationBreakdown:
-    """通信分解结果."""
+    """通信分解，按并行方式和原语双层组织."""
 
-    all_reduce: Dict[str, Any] = field(default_factory=dict)
-    all_gather: Dict[str, Any] = field(default_factory=dict)
-    reduce_scatter: Dict[str, Any] = field(default_factory=dict)
-    all_to_all: Dict[str, Any] = field(default_factory=dict)
+    by_parallelism: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    by_operation: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    total_bytes: int = 0
+    total_time_sec: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "all_reduce": self.all_reduce,
-            "all_gather": self.all_gather,
-            "reduce_scatter": self.reduce_scatter,
-            "all_to_all": self.all_to_all,
+            "by_parallelism": self.by_parallelism,
+            "by_operation": self.by_operation,
+            "total_bytes": self.total_bytes,
+            "total_time_sec": self.total_time_sec,
         }
 
 

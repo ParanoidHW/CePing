@@ -552,8 +552,9 @@ class TestFrontendCompatibility:
         # Test top-level communication_breakdown
         comm_breakdown = result_dict.get("communication_breakdown")
         if comm_breakdown:
+            # Skip top-level numeric fields (total_bytes, total_time_sec)
             for comm_type, data in comm_breakdown.items():
-                if data and "total_bytes" in data:
+                if isinstance(data, dict) and "total_bytes" in data:
                     assert isinstance(data["total_bytes"], (int, float))
 
     def test_no_flops_at_top_level_of_memory(self):

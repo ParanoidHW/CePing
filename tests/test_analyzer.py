@@ -834,7 +834,7 @@ class TestQPSAndCommunicationBreakdown:
         assert result4.qps > result1.qps
 
     def test_communication_breakdown_structure(self):
-        """Verify CommunicationBreakdown has correct structure."""
+        """Verify CommunicationBreakdown has correct dual-layer structure."""
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         cluster = make_cluster(device, 8)
@@ -848,9 +848,16 @@ class TestQPSAndCommunicationBreakdown:
         if result.communication_breakdown:
             comm_dict = result.communication_breakdown.to_dict()
 
-            assert "all_reduce" in comm_dict
-            assert "all_gather" in comm_dict
-            assert "all_to_all" in comm_dict
+            # Check dual-layer structure
+            assert "by_parallelism" in comm_dict
+            assert "by_operation" in comm_dict
+            assert "total_bytes" in comm_dict
+
+            # by_parallelism should contain ptype (tp, dp, pp)
+            if comm_dict["by_parallelism"]:
+                for ptype, pdata in comm_dict["by_parallelism"].items():
+                    assert "total_bytes" in pdata
+                    assert "operations" in pdata
 
     def test_communication_breakdown_in_detailed_breakdown(self):
         """Verify communication breakdown is in detailed_breakdown."""
