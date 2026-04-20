@@ -124,9 +124,10 @@ class TestWebHTTPAPI:
         assert len(by_submodule_type) >= 3, "by_submodule_type should have at least 3 module types"
 
         for submodule_type, data in by_submodule_type.items():
-            assert "weight_gb" in data
-            assert isinstance(data["weight_gb"], (int, float))
-            assert data["weight_gb"] >= 0
+            assert "memory" in data
+            assert "weight_gb" in data["memory"]
+            assert isinstance(data["memory"]["weight_gb"], (int, float))
+            assert data["memory"]["weight_gb"] >= 0
 
 
 class TestWebAppAPI:
@@ -447,8 +448,9 @@ class TestWebAppAPI:
 
             if memory["by_submodule_type"]:
                 for block_type, metrics in memory["by_submodule_type"].items():
-                    assert "activations_gb" in metrics
-                    assert metrics["activations_gb"] >= 0
+                    assert "memory" in metrics
+                    assert "activations_gb" in metrics["memory"]
+                    assert metrics["memory"]["activations_gb"] >= 0
 
             # Check unified by_submodule_type structure
             assert "by_submodule_type" in detailed
@@ -506,10 +508,11 @@ class TestFrontendCompatibility:
         # Test memory.by_submodule_type - activations_gb should be number
         mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
         for submodule_type, data in mem_by_submodule_type.items():
-            assert "activation_gb" in data or "activations_gb" in data, (
+            assert "memory" in data, f"memory.by_submodule_type[{submodule_type}] missing memory field"
+            assert "activation_gb" in data["memory"] or "activations_gb" in data["memory"], (
                 f"memory.by_submodule_type[{submodule_type}] missing activation fields"
             )
-            activation_val = data.get("activation_gb", data.get("activations_gb", 0))
+            activation_val = data["memory"].get("activation_gb", data["memory"].get("activations_gb", 0))
             assert isinstance(activation_val, (int, float)), f"activation should be number"
 
         # Test unified by_submodule_type structure
@@ -609,8 +612,9 @@ class TestFrontendCompatibility:
         # Same checks as training
         mem_by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
         for submodule_type, data in mem_by_submodule_type.items():
-            assert "activation_gb" in data or "activations_gb" in data
-            activation_val = data.get("activation_gb", data.get("activations_gb", 0))
+            assert "memory" in data
+            assert "activation_gb" in data["memory"] or "activations_gb" in data["memory"]
+            activation_val = data["memory"].get("activation_gb", data["memory"].get("activations_gb", 0))
             assert isinstance(activation_val, (int, float))
 
         # Check by_submodule_type has complete structure
