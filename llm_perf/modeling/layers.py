@@ -10,7 +10,7 @@ Includes:
 
 from typing import Optional
 from llm_perf.modeling.module import ShardedModule
-from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
 from llm_perf.kernels.op import RMSNormOp, EmbeddingOp, ActivationOp
 
 
@@ -37,7 +37,7 @@ class ShardedEmbedding(ShardedModule):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
 
-        self.weight = ShardedTensor(
+        self.weight = ShardedParameter(
             shape=(num_embeddings, embedding_dim),
             shardable={0: "tp"},
             dtype=dtype,
@@ -100,7 +100,7 @@ class ShardedRMSNorm(ShardedModule):
         super().__init__()
         self.hidden_size = hidden_size
 
-        self.weight = ShardedTensor(
+        self.weight = ShardedParameter(
             shape=(hidden_size,),
             shardable={},
             dtype=dtype,
@@ -275,28 +275,28 @@ class ShardedAttention(ShardedModule):
         self.num_kv_heads = num_kv_heads or num_heads
         self.head_dim = head_dim or (hidden_size // num_heads)
 
-        self.q_weight = ShardedTensor(
+        self.q_weight = ShardedParameter(
             shape=(hidden_size, num_heads * self.head_dim),
             shardable={1: "tp"},
             dtype=dtype,
             name="q_weight",
         )
 
-        self.k_weight = ShardedTensor(
+        self.k_weight = ShardedParameter(
             shape=(hidden_size, self.num_kv_heads * self.head_dim),
             shardable={1: "tp"},
             dtype=dtype,
             name="k_weight",
         )
 
-        self.v_weight = ShardedTensor(
+        self.v_weight = ShardedParameter(
             shape=(hidden_size, self.num_kv_heads * self.head_dim),
             shardable={1: "tp"},
             dtype=dtype,
             name="v_weight",
         )
 
-        self.o_weight = ShardedTensor(
+        self.o_weight = ShardedParameter(
             shape=(num_heads * self.head_dim, hidden_size),
             shardable={0: "tp"},
             dtype=dtype,
@@ -378,21 +378,21 @@ class ShardedFFN(ShardedModule):
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
 
-        self.gate_weight = ShardedTensor(
+        self.gate_weight = ShardedParameter(
             shape=(hidden_size, intermediate_size),
             shardable={1: "tp"},
             dtype=dtype,
             name="gate_weight",
         )
 
-        self.up_weight = ShardedTensor(
+        self.up_weight = ShardedParameter(
             shape=(hidden_size, intermediate_size),
             shardable={1: "tp"},
             dtype=dtype,
             name="up_weight",
         )
 
-        self.down_weight = ShardedTensor(
+        self.down_weight = ShardedParameter(
             shape=(intermediate_size, hidden_size),
             shardable={0: "tp"},
             dtype=dtype,
@@ -447,7 +447,7 @@ class ShardedLMHead(ShardedModule):
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
 
-        self.weight = ShardedTensor(
+        self.weight = ShardedParameter(
             shape=(hidden_size, vocab_size),
             shardable={1: "tp"},
             dtype=dtype,
@@ -505,26 +505,26 @@ class ShardedMoE(ShardedModule):
         self.num_experts_per_token = num_experts_per_token
         self.shared_expert_intermediate = shared_expert_intermediate
 
-        self.router_weight = ShardedTensor(
+        self.router_weight = ShardedParameter(
             shape=(hidden_size, num_experts),
             shardable={},
             dtype=dtype,
             name="router_weight",
         )
 
-        self.expert_gate_weight = ShardedTensor(
+        self.expert_gate_weight = ShardedParameter(
             shape=(num_experts, hidden_size, intermediate_size),
             shardable={0: "ep", 2: "tp"},
             dtype=dtype,
             name="expert_gate_weight",
         )
-        self.expert_up_weight = ShardedTensor(
+        self.expert_up_weight = ShardedParameter(
             shape=(num_experts, hidden_size, intermediate_size),
             shardable={0: "ep", 2: "tp"},
             dtype=dtype,
             name="expert_up_weight",
         )
-        self.expert_down_weight = ShardedTensor(
+        self.expert_down_weight = ShardedParameter(
             shape=(num_experts, intermediate_size, hidden_size),
             shardable={0: "ep", 1: "tp"},
             dtype=dtype,
@@ -532,19 +532,19 @@ class ShardedMoE(ShardedModule):
         )
 
         if shared_expert_intermediate:
-            self.shared_gate_weight = ShardedTensor(
+            self.shared_gate_weight = ShardedParameter(
                 shape=(hidden_size, shared_expert_intermediate),
                 shardable={1: "tp"},
                 dtype=dtype,
                 name="shared_gate_weight",
             )
-            self.shared_up_weight = ShardedTensor(
+            self.shared_up_weight = ShardedParameter(
                 shape=(hidden_size, shared_expert_intermediate),
                 shardable={1: "tp"},
                 dtype=dtype,
                 name="shared_up_weight",
             )
-            self.shared_down_weight = ShardedTensor(
+            self.shared_down_weight = ShardedParameter(
                 shape=(shared_expert_intermediate, hidden_size),
                 shardable={0: "tp"},
                 dtype=dtype,
