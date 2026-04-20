@@ -132,18 +132,26 @@ class UnifiedAnalyzer:
 
         if hasattr(self.cluster, "topology"):
             topology = self.cluster.topology
+
+            def _get_level_bandwidth(topology, level_name: str, default: float) -> float:
+                """从 topology.levels 获取指定层级的带宽."""
+                for level in topology.levels:
+                    if level.name == level_name:
+                        return level.bandwidth_gbps
+                return default
+
             ctx.comm_domains = {
                 "tp": CommDomain(
                     "tp",
                     ctx.tp_degree,
                     list(range(ctx.tp_degree)),
-                    getattr(topology, "intra_node_bandwidth_gbps", 400.0),
+                    _get_level_bandwidth(topology, "node", 400.0),
                 ),
                 "dp": CommDomain(
                     "dp",
                     ctx.dp_degree,
                     list(range(ctx.dp_degree)),
-                    getattr(topology, "inter_node_bandwidth_gbps", 100.0),
+                    _get_level_bandwidth(topology, "inter_node", 100.0),
                 ),
             }
 
