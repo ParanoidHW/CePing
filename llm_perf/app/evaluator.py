@@ -335,12 +335,10 @@ class Evaluator:
                 return self._cluster_cache[cache_key]
 
             device = Device.from_preset(hardware)
-            topology = NetworkTopology(
-                name="default",
-                intra_node_bandwidth_gbps=200.0,
-                intra_node_latency_us=1.0,
-                inter_node_bandwidth_gbps=25.0,
-                inter_node_latency_us=10.0,
+            topology = NetworkTopology.create_2tier_simple(
+                intra_node_bw_gbps=200.0,
+                inter_node_bw_gbps=25.0,
+                devices_per_node=8,
             )
             cluster = Cluster.create_homogeneous(device.config, num_devices, topology)
             self._cluster_cache[cache_key] = cluster
@@ -349,12 +347,10 @@ class Evaluator:
         elif isinstance(hardware, dict):
             device_preset = hardware.get("device_preset", "H100-SXM-80GB")
             device = Device.from_preset(device_preset)
-            topology = NetworkTopology(
-                name="default",
-                intra_node_bandwidth_gbps=hardware.get("intra_node_bw_gbps", 200.0),
-                intra_node_latency_us=hardware.get("intra_node_latency_us", 1.0),
-                inter_node_bandwidth_gbps=hardware.get("inter_node_bw_gbps", 25.0),
-                inter_node_latency_us=hardware.get("inter_node_latency_us", 10.0),
+            topology = NetworkTopology.create_2tier_simple(
+                intra_node_bw_gbps=hardware.get("intra_node_bw_gbps", 200.0),
+                inter_node_bw_gbps=hardware.get("inter_node_bw_gbps", 25.0),
+                devices_per_node=8,
             )
             num_devices = hardware.get("num_devices", num_devices)
             cluster = Cluster.create_homogeneous(device.config, num_devices, topology)

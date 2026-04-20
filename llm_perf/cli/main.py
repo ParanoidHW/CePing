@@ -37,12 +37,10 @@ def create_hardware(config: dict):
         device_config = config.get("device", {})
         device = Device.from_dict(device_config)
 
-    topology = NetworkTopology(
-        name="default",
-        intra_node_bandwidth_gbps=config.get("intra_node_bw_gbps", 200.0),
-        intra_node_latency_us=config.get("intra_node_latency_us", 1.0),
-        inter_node_bandwidth_gbps=config.get("inter_node_bw_gbps", 25.0),
-        inter_node_latency_us=config.get("inter_node_latency_us", 10.0),
+    topology = NetworkTopology.create_2tier_simple(
+        intra_node_bw_gbps=config.get("intra_node_bw_gbps", 200.0),
+        inter_node_bw_gbps=config.get("inter_node_bw_gbps", 25.0),
+        devices_per_node=8,
     )
 
     num_devices = config.get("num_devices", 8)
