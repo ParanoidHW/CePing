@@ -248,6 +248,10 @@ class UnifiedAnalyzer:
 
         module_breakdown = generate_module_breakdown(phase_results, workload.workload_type.value, global_comm_bytes)
 
+        topology_dict = None
+        if hasattr(self.cluster, "topology") and self.cluster.topology:
+            topology_dict = self.cluster.topology.to_dict()
+
         return UnifiedResult(
             workload_name=workload.name,
             workload_type=workload.workload_type,
@@ -265,6 +269,7 @@ class UnifiedAnalyzer:
                 "dp_degree": self.strategy.dp_degree,
                 "ep_degree": self.strategy.ep_degree,
                 "kv_cache_gb": 0.0,
+                "topology": topology_dict,
             },
             breakdown=breakdown,
             detailed_breakdown=detailed_breakdown,
@@ -1629,13 +1634,7 @@ class UnifiedAnalyzer:
                     "total": total_memory_breakdown["total_gb"],
                 },
                 "by_submodel": _aggregate_submodel_memory(phases),
-                "by_submodule_type": {
-                    block_type: {
-                        **data["memory"],
-                        "activations_gb": data["memory"]["activation_gb"],  # Backward compat
-                    }
-                    for block_type, data in by_submodule_type.items()
-                },
+                "by_submodule_type": by_submodule_type,
             },
             "compute": {
                 "by_submodule_type": {

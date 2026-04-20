@@ -799,7 +799,7 @@ class TestFrontendCompatibility:
         mem = detailed.get("memory", {})
         by_type_weight = mem.get("by_type", {}).get("weight", 0)
         by_submodule = mem.get("by_submodule_type", {})
-        by_submodule_sum = sum(v.get("weight_gb", 0) for v in by_submodule.values())
+        by_submodule_sum = sum(v.get("memory", {}).get("weight_gb", 0) for v in by_submodule.values())
 
         assert abs(by_type_weight - by_submodule_sum) < 0.1, (
             f"weight mismatch: by_type={by_type_weight}, by_submodule_sum={by_submodule_sum}"
@@ -836,3 +836,197 @@ class TestFrontendCompatibility:
         assert abs(compute_sec - forward_time) < 0.01, (
             f"compute_sec mismatch: {compute_sec} vs forward_time {forward_time}"
         )
+
+
+class TestMultipleModelsHTTPAPI:
+    """Test multiple models consistency via HTTP API after topology migration."""
+
+    def _verify_weight_memory_consistency(self, result):
+        """Verify weight memory consistency between by_type and by_submodule_type."""
+        detailed = result.get("detailed_breakdown")
+        assert detailed is not None
+
+        mem = detailed.get("memory", {})
+        by_type_weight = mem.get("by_type", {}).get("weight", 0)
+        by_submodule = mem.get("by_submodule_type", {})
+        by_submodule_sum = sum(v.get("memory", {}).get("weight_gb", 0) for v in by_submodule.values())
+
+        assert abs(by_type_weight - by_submodule_sum) < 0.1, (
+            f"Weight memory inconsistency: by_type.weight={by_type_weight}, by_submodule_sum={by_submodule_sum}"
+        )
+
+    def _verify_compute_time_consistency(self, result):
+        """Verify compute_sec equals sum of forward phases."""
+        breakdown = result.get("breakdown", {})
+        compute_sec = breakdown.get("time_breakdown", {}).get("compute_sec", 0)
+
+        forward_phases = [p for p in result["phases"] if "forward" in p["name"].lower()]
+        forward_time = sum(p.get("total_time_sec", 0) for p in forward_phases)
+
+        assert abs(compute_sec - forward_time) < 0.01, (
+            f"Compute time inconsistency: compute_sec={compute_sec}, forward_time={forward_time}"
+        )
+
+    def _verify_communication_breakdown(self, result):
+        """Verify communication breakdown structure and consistency."""
+        comm_breakdown = result.get("communication_breakdown")
+        if not comm_breakdown:
+            return
+
+        assert "by_parallelism" in comm_breakdown
+        if comm_breakdown["by_parallelism"]:
+            for ptype, data in comm_breakdown["by_parallelism"].items():
+                assert "total_bytes" in data, f"{ptype} missing total_bytes"
+                assert "operations" in data, f"{ptype} missing operations"
+
+                ops_sum = sum(op.get("total_bytes", 0) for op in data["operations"].values())
+                assert abs(ops_sum - data["total_bytes"]) < 0.01, (
+                    f"{ptype}: operations sum {ops_sum} != total_bytes {data['total_bytes']}"
+                )
+
+    def _verify_topology_bandwidth(self, result):
+        """Verify topology has valid bandwidth values."""
+        metadata = result.get("metadata", {})
+        topology = metadata.get("topology")
+
+        assert topology is not None, "Topology should not be None"
+        assert "levels" in topology, "Topology should have levels"
+
+        levels = topology["levels"]
+        assert len(levels) > 0, "Topology levels should not be empty"
+
+        for level in levels:
+            if "bandwidth_gbps" in level:
+                assert level["bandwidth_gbps"] > 0, "Bandwidth should be positive"
+
+    def _verify_all_checks(self, result, model_name):
+        """Run all consistency checks on result."""
+        self._verify_weight_memory_consistency(result)
+        self._verify_compute_time_consistency(result)
+        self._verify_communication_breakdown(result)
+        self._verify_topology_bandwidth(result)
+
+    def test_llama_7b_evaluation_consistency(self):
+        """Test LLaMA 7B (TP=8) evaluation consistency."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        self._verify_all_checks(result, "llama-7b")
+
+    def test_llama_13b_evaluation_consistency(self):
+        """Test LLaMA 13B (TP=8) evaluation consistency."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-13b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        self._verify_all_checks(result, "llama-13b")
+
+    def test_llama_70b_gqa_evaluation_consistency(self):
+        """Test LLaMA 70B (TP=8, GQA) evaluation consistency."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-70b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 8,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        self._verify_all_checks(result, "llama-70b")
+
+    def test_deepseek_v3_evaluation_consistency(self):
+        """Test DeepSeek V3 (TP=8, MoE) evaluation consistency."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "deepseek-v3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 1,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        self._verify_all_checks(result, "deepseek-v3")
+
+    def test_wan_dit_evaluation_consistency(self):
+        """Test Wan-DiT (video generation model) evaluation consistency."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "wan-dit"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 1,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        self._verify_all_checks(result, "wan-dit")
