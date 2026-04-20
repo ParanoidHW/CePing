@@ -36,7 +36,11 @@ class ShardedConv2d(ShardedModule):
 
 
 class ShardedConv3d(ShardedModule):
-    """3D Convolution layer."""
+    """3D Convolution layer.
+
+    Sharding:
+    - out_channels dimension TP-sharded (output channel parallelism)
+    """
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=(1, 1, 1), padding=(0, 0, 0), dtype="fp16"):
         super().__init__()
@@ -48,7 +52,7 @@ class ShardedConv3d(ShardedModule):
 
         self.weight = ShardedParameter(
             shape=(out_channels, in_channels, *self.kernel_size),
-            shardable={},
+            shardable={0: "tp"},
             dtype=dtype,
             name="weight",
         )

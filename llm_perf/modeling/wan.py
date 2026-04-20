@@ -220,16 +220,16 @@ class ShardedWanDiTBlock(ShardedModule):
 
         self.self_attn_qkv = ShardedModule()
         self.self_attn_qkv.q_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="q_weight"
+            shape=(hidden_size, hidden_size), shardable={1: "tp"}, dtype=dtype, name="q_weight"
         )
         self.self_attn_qkv.k_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="k_weight"
+            shape=(hidden_size, hidden_size), shardable={1: "tp"}, dtype=dtype, name="k_weight"
         )
         self.self_attn_qkv.v_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="v_weight"
+            shape=(hidden_size, hidden_size), shardable={1: "tp"}, dtype=dtype, name="v_weight"
         )
         self.self_attn_qkv.o_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="o_weight"
+            shape=(hidden_size, hidden_size), shardable={0: "tp"}, dtype=dtype, name="o_weight"
         )
 
         self.self_attn_q_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
@@ -238,13 +238,13 @@ class ShardedWanDiTBlock(ShardedModule):
         self.norm2 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
         self.cross_attn_q_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="cross_q_weight"
+            shape=(hidden_size, hidden_size), shardable={1: "tp"}, dtype=dtype, name="cross_q_weight"
         )
         self.cross_attn_kv_weight = ShardedParameter(
-            shape=(text_dim, 2 * hidden_size), shardable={}, dtype=dtype, name="cross_kv_weight"
+            shape=(text_dim, 2 * hidden_size), shardable={1: "tp"}, dtype=dtype, name="cross_kv_weight"
         )
         self.cross_attn_o_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="cross_o_weight"
+            shape=(hidden_size, hidden_size), shardable={0: "tp"}, dtype=dtype, name="cross_o_weight"
         )
 
         self.norm3 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
@@ -361,17 +361,17 @@ class ShardedWanDiT(ShardedModule):
 
         self.time_embedding_in = ShardedModule()
         self.time_embedding_in.weight = ShardedParameter(
-            shape=(freq_dim, hidden_size), shardable={}, dtype=dtype, name="time_embed_in"
+            shape=(freq_dim, hidden_size), shardable={1: "tp"}, dtype=dtype, name="time_embed_in"
         )
 
         self.time_embedding_out = ShardedModule()
         self.time_embedding_out.weight = ShardedParameter(
-            shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="time_embed_out"
+            shape=(hidden_size, hidden_size), shardable={1: "tp"}, dtype=dtype, name="time_embed_out"
         )
 
         self.time_projection = ShardedModule()
         self.time_projection.weight = ShardedParameter(
-            shape=(hidden_size, 6 * hidden_size), shardable={}, dtype=dtype, name="time_proj"
+            shape=(hidden_size, 6 * hidden_size), shardable={1: "tp"}, dtype=dtype, name="time_proj"
         )
 
         self.blocks = [
@@ -389,7 +389,7 @@ class ShardedWanDiT(ShardedModule):
 
         self.unpatchify = ShardedModule()
         self.unpatchify.weight = ShardedParameter(
-            shape=(hidden_size, out_channels), shardable={}, dtype=dtype, name="unpatchify_weight"
+            shape=(hidden_size, out_channels), shardable={0: "tp"}, dtype=dtype, name="unpatchify_weight"
         )
 
     def forward(
