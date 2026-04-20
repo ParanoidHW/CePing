@@ -468,9 +468,14 @@ class TestWebAppAPI:
         result_dict = result.to_dict()
 
         if result_dict["communication_breakdown"]:
-            for comm_type, data in result_dict["communication_breakdown"].items():
-                if data and "total_bytes" in data:
-                    assert data["total_bytes"] >= 0
+            comm_breakdown = result_dict["communication_breakdown"]
+            # Check new structure: by_parallelism and by_operation
+            if "by_parallelism" in comm_breakdown:
+                for ptype, data in comm_breakdown["by_parallelism"].items():
+                    if data and "total_bytes" in data:
+                        assert data["total_bytes"] >= 0
+            if "total_bytes" in comm_breakdown:
+                assert comm_breakdown["total_bytes"] >= 0
 
 
 class TestFrontendCompatibility:
@@ -696,3 +701,73 @@ class TestFrontendCompatibility:
         assert abs(total - sum_of_breakdown) < 0.01, (
             f"total ({total}) should equal sum of breakdown items ({sum_of_breakdown})"
         )
+
+    def test_http_api_deepseek_v3_has_transformer_block(self):
+        """Test that DeepSeek V3 breakdown includes transformer_block."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "deepseek-v3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 1,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
+        assert "transformer_block" in by_submodule_type, "Should have transformer_block"
+
+        by_submodule_type_full = detailed.get("by_submodule_type", {})
+        assert "transformer_block" in by_submodule_type_full, "Should have transformer_block in full breakdown"
+
+        transformer_full = by_submodule_type_full["transformer_block"]
+        assert "nested_breakdown" in transformer_full, "Should have nested_breakdown"
+        nested = transformer_full["nested_breakdown"]
+        assert "attention" in nested, "Should have attention in nested_breakdown"
+
+    def test_http_api_communication_by_parallelism(self):
+        """Test that communication breakdown shows TP/DP/PP."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        comm_breakdown = result.get("communication_breakdown", {})
+
+        by_parallelism = comm_breakdown.get("by_parallelism", {})
+
+        if by_parallelism:
+            assert "tp" in by_parallelism or "tensor_parallel" in by_parallelism, (
+                "by_parallelism should contain tp for TP=8"
+            )
+
+            for ptype, pdata in by_parallelism.items():
+                assert "total_bytes" in pdata, f"by_parallelism[{ptype}] should have total_bytes"
+                assert isinstance(pdata["total_bytes"], (int, float))
+                assert pdata["total_bytes"] >= 0

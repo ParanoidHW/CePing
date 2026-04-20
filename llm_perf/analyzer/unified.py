@@ -16,7 +16,7 @@ from llm_perf.kernels.compute import ComputeKernelRegistry
 from llm_perf.kernels.communication import CommKernelRegistry
 from llm_perf.kernels.functional import linear, flash_attention, conv3d, KernelResult
 from llm_perf.kernels.backend.theory import TheoryBackend, BackendConfig
-from llm_perf.utils.constants import DTYPE_SIZES
+from llm_perf.utils.constants import DTYPE_SIZES, SubmoduleType
 
 from .base import (
     Phase,
@@ -32,6 +32,28 @@ from .base import (
 )
 from .breakdown import generate_module_breakdown
 from .workload_loader import get_workload
+
+
+MODULE_CLASS_TO_TYPE = {
+    "ShardedTransformerBlock": SubmoduleType.TRANSFORMER_BLOCK,
+    "ShardedMoEBlock": SubmoduleType.TRANSFORMER_BLOCK,
+    "ShardedWanDiTBlock": SubmoduleType.TRANSFORMER_BLOCK,
+    "ShardedT5Block": SubmoduleType.TRANSFORMER_BLOCK,
+    "ShardedAttention": SubmoduleType.ATTENTION,
+    "ShardedFFN": SubmoduleType.FFN,
+    "ShardedMoE": SubmoduleType.MOE,
+    "ShardedMLA": SubmoduleType.ATTENTION,
+    "ShardedEmbedding": SubmoduleType.EMBEDDING,
+    "ShardedLMHead": SubmoduleType.LM_HEAD,
+    "ShardedRMSNorm": SubmoduleType.RMS_NORM,
+    "ShardedLayerNorm": SubmoduleType.RMS_NORM,
+}
+
+NESTED_MODULE_TYPES = {SubmoduleType.ATTENTION, SubmoduleType.FFN, SubmoduleType.MOE}
+
+NESTED_MODULE_CLASSES = {
+    cls_name for cls_name, sub_type in MODULE_CLASS_TO_TYPE.items() if sub_type in NESTED_MODULE_TYPES
+}
 
 
 def _aggregate_submodel_memory(phases: List[PhaseResult]) -> Dict[str, Dict[str, float]]:
@@ -128,51 +150,42 @@ class UnifiedAnalyzer:
         return ctx
 
     def _infer_submodule_type(self, sub_name: str, sub_inst: Any = None) -> str:
-        """推断子模块类型，优先检查实际类型."""
+        """使用精确匹配识别子模块类型."""
         if sub_inst and hasattr(sub_inst, "module") and sub_inst.module:
-            module = sub_inst.module
-            module_class = type(module).__name__.lower()
+            module_class = type(sub_inst.module).__name__
 
-            if "attention" in module_class:
-                return "attention"
-            elif "ffn" in module_class or "mlp" in module_class:
-                return "ffn"
-            elif "embedding" in module_class:
-                return "embedding"
-            elif "transformerblock" in module_class or "block" in module_class:
-                return "transformer_block"
-            elif "rmsnorm" in module_class or "norm" in module_class:
-                return "rms_norm"
-            elif "lmhead" in module_class:
-                return "lm_head"
-            elif "moe" in module_class:
-                return "moe"
-            elif "vae" in module_class:
+            if module_class in MODULE_CLASS_TO_TYPE:
+                return MODULE_CLASS_TO_TYPE[module_class].value
+
+            module_class_lower = module_class.lower()
+            if "vae" in module_class_lower:
                 return "vae"
-            elif "conv" in module_class:
+            elif "conv" in module_class_lower:
                 return "conv"
-            elif "dit" in module_class:
+            elif "resnet" in module_class_lower or "resblock" in module_class_lower:
+                return "resblock"
+            elif "dit" in module_class_lower:
                 return "dit"
 
         sub_lower = sub_name.lower()
-        if "embedding" in sub_lower or "emb" in sub_lower:
-            return "embedding"
+        if sub_lower.startswith("layers.") or sub_lower.startswith("blocks."):
+            return SubmoduleType.TRANSFORMER_BLOCK.value
+        elif "embedding" in sub_lower or "emb" in sub_lower:
+            return SubmoduleType.EMBEDDING.value
         elif "attention" in sub_lower or "attn" in sub_lower:
-            return "attention"
+            return SubmoduleType.ATTENTION.value
         elif "ffn" in sub_lower or "mlp" in sub_lower:
-            return "ffn"
+            return SubmoduleType.FFN.value
         elif "moe" in sub_lower:
-            return "moe"
+            return SubmoduleType.MOE.value
         elif "lm_head" in sub_lower or "output" in sub_lower:
-            return "lm_head"
+            return SubmoduleType.LM_HEAD.value
         elif "norm" in sub_lower:
-            return "rms_norm"
+            return SubmoduleType.RMS_NORM.value
         elif "conv" in sub_lower:
             return "conv"
         elif "resblock" in sub_lower or "res" in sub_lower:
             return "resblock"
-        elif "layer" in sub_lower:
-            return "transformer_block"
         else:
             return "unknown"
 
@@ -223,7 +236,7 @@ class UnifiedAnalyzer:
 
         global_comm_bytes = 0
         if comm_breakdown:
-            global_comm_bytes = sum(v.get("total_bytes", 0) for v in comm_breakdown.to_dict().values())
+            global_comm_bytes = comm_breakdown.total_bytes
 
         module_breakdown = generate_module_breakdown(phase_results, workload.workload_type.value, global_comm_bytes)
 
@@ -438,17 +451,34 @@ class UnifiedAnalyzer:
                 current_op_count = len(sub_inst.module._last_forward_output._op_history)
 
             delta_comm_bytes = 0
+            comm_ops_detail = []
             if sub_inst.module._last_forward_output and current_op_count > prev_op_count:
                 delta_ops = sub_inst.module._last_forward_output._op_history[prev_op_count:current_op_count]
                 if phase.compute_type != ComputeType.OPTIMIZER:
                     for op in delta_ops:
                         comm_ops = sub_inst._infer_comm_ops(op)
-                        if phase.compute_type == ComputeType.FORWARD:
-                            delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
-                        elif phase.compute_type == ComputeType.BACKWARD:
-                            delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
+                        for comm_op in comm_ops:
+                            ptype = getattr(comm_op, "ptype", "unknown")
+                            comm_ops_detail.append(
+                                {
+                                    "comm_type": comm_op.comm_type,
+                                    "ptype": ptype,
+                                    "data_bytes": comm_op.data_bytes,
+                                }
+                            )
+                            delta_comm_bytes += comm_op.data_bytes
+                        if phase.compute_type == ComputeType.BACKWARD:
                             backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
-                            delta_comm_bytes += sum(op.data_bytes for op in backward_comm_ops)
+                            for comm_op in backward_comm_ops:
+                                ptype = getattr(comm_op, "ptype", "unknown")
+                                comm_ops_detail.append(
+                                    {
+                                        "comm_type": comm_op.comm_type,
+                                        "ptype": ptype,
+                                        "data_bytes": comm_op.data_bytes,
+                                    }
+                                )
+                                delta_comm_bytes += comm_op.data_bytes
 
             prev_op_count = current_op_count
 
@@ -471,6 +501,7 @@ class UnifiedAnalyzer:
                     optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
                     activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
                     communication_bytes=delta_comm_bytes,
+                    comm_ops_detail=comm_ops_detail,
                     nested_submodules=nested_submodules,
                 )
             )
@@ -491,8 +522,7 @@ class UnifiedAnalyzer:
         for sub_name, sub_inst in parent_inst._submodule_instances.items():
             sub_type = type(sub_inst.module).__name__
 
-            # Only analyze attention and ffn, skip norms (they belong to parent)
-            if sub_type not in ["ShardedAttention", "ShardedFFN", "ShardedMoE"]:
+            if sub_type not in NESTED_MODULE_CLASSES:
                 continue
 
             current_op_count = 0
@@ -512,15 +542,7 @@ class UnifiedAnalyzer:
 
             prev_op_count = current_op_count
 
-            # Infer submodule type
-            if sub_type == "ShardedAttention":
-                nested_type = "attention"
-            elif sub_type == "ShardedFFN":
-                nested_type = "ffn"
-            elif sub_type == "ShardedMoE":
-                nested_type = "moe"
-            else:
-                nested_type = sub_name
+            nested_type = MODULE_CLASS_TO_TYPE.get(sub_type, SubmoduleType.FFN).value
 
             nested.append(
                 SubmoduleResult(
@@ -1190,22 +1212,41 @@ class UnifiedAnalyzer:
         return type_mapping.get(submodule_type, "all_reduce")
 
     def _extract_communication_breakdown(self, phase_results: List[PhaseResult]) -> CommunicationBreakdown:
-        """从PhaseResult.submodules的communication_bytes提取通信分解."""
-        comm_ops = {
-            "all_reduce": {"total_bytes": 0, "total_time_sec": 0.0},
-            "all_gather": {"total_bytes": 0, "total_time_sec": 0.0},
-            "reduce_scatter": {"total_bytes": 0, "total_time_sec": 0.0},
-            "all_to_all": {"total_bytes": 0, "total_time_sec": 0.0},
-        }
+        """从PhaseResult.submodules的comm_ops_detail提取通信分解，按并行方式和原语双层组织."""
+        by_parallelism: Dict[str, Dict[str, Any]] = {}
+        by_operation: Dict[str, Dict[str, Any]] = {}
+        total_bytes = 0
 
         for phase in phase_results:
             for sm in phase.submodules:
-                if sm.communication_bytes > 0:
-                    op_type = self._infer_comm_op_type(sm.submodule_type)
-                    comm_ops[op_type]["total_bytes"] += sm.communication_bytes
-                    comm_ops[op_type]["total_time_sec"] += sm.time_sec * 0.1
+                for op_detail in sm.comm_ops_detail:
+                    ptype = op_detail["ptype"]
+                    comm_type = op_detail["comm_type"]
+                    data_bytes = op_detail["data_bytes"]
 
-        return CommunicationBreakdown(**comm_ops)
+                    if ptype not in by_parallelism:
+                        by_parallelism[ptype] = {"total_bytes": 0, "operations": {}}
+                    by_parallelism[ptype]["total_bytes"] += data_bytes
+
+                    if comm_type not in by_parallelism[ptype]["operations"]:
+                        by_parallelism[ptype]["operations"][comm_type] = {"total_bytes": 0}
+                    by_parallelism[ptype]["operations"][comm_type]["total_bytes"] += data_bytes
+
+                    if comm_type not in by_operation:
+                        by_operation[comm_type] = {"total_bytes": 0, "by_ptype": {}}
+                    by_operation[comm_type]["total_bytes"] += data_bytes
+
+                    if ptype not in by_operation[comm_type]["by_ptype"]:
+                        by_operation[comm_type]["by_ptype"][ptype] = {"total_bytes": 0}
+                    by_operation[comm_type]["by_ptype"][ptype]["total_bytes"] += data_bytes
+
+                    total_bytes += data_bytes
+
+        return CommunicationBreakdown(
+            by_parallelism=by_parallelism,
+            by_operation=by_operation,
+            total_bytes=total_bytes,
+        )
 
     def _calculate_throughput(
         self,
@@ -1623,8 +1664,9 @@ class UnifiedAnalyzer:
                     }
                     for nested_type, data in by_nested_type.items()
                 },
-                "by_parallelism": comm_breakdown_dict,
-                "total_bytes": sum(v.get("total_bytes", 0) for v in comm_breakdown_dict.values()),
+                "by_parallelism": comm_breakdown_dict.get("by_parallelism", {}),
+                "by_operation": comm_breakdown_dict.get("by_operation", {}),
+                "total_bytes": comm_breakdown_dict.get("total_bytes", 0),
             },
             "by_submodule_type": by_submodule_type,
             "by_nested_type": by_nested_type,
