@@ -266,10 +266,14 @@ class ModuleInstance:
             self._activation_instances[name] = ActivationInstance(activation, ctx)
 
         logger.info(
-            f"[BIND] module={module.__class__.__name__}, tp={ctx.tp_degree}, "
+            f"[BIND] module={module.__class__.__name__}, "
+            f"tp={ctx.tp_degree}, pp={ctx.pp_degree}, dp={ctx.dp_degree}, "
+            f"ep={ctx.ep_degree}, sp={ctx.sp_degree}, mode={mode}, "
             f"logical_params={module.params_count() / 1e9:.2f}B, "
             f"physical_params={self.params_count_physical / 1e9:.2f}B, "
-            f"weight_memory_physical={self.weight_memory_physical / 1e9:.2f}GB"
+            f"weight_mem={self.weight_memory_physical / 1e9:.2f}GB, "
+            f"num_weights={len(self._weight_instances)}, "
+            f"num_submodules={len(self._submodule_instances)}"
         )
 
     @property
