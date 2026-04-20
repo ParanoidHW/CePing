@@ -1,20 +1,18 @@
 """Tests for complete models."""
 
-import pytest
 from llm_perf.modeling import (
     ShardedTensor,
     ShardedParameter,
-    ShardedModule,
     ParallelContext,
     ShardedTransformerBlock,
     ShardedMoEBlock,
     ShardedMoE,
+    ShardedFFN,
     LlamaModel,
     DeepSeekModel,
     create_model_from_config,
     get_model_presets,
     ShardedWanDiT,
-    ShardedEmbedding,
 )
 
 
@@ -780,3 +778,151 @@ class TestShardedParameterWeightRegistration:
 
         for name, weight in model.get_weights().items():
             assert isinstance(weight, ShardedParameter), f"{name} should be ShardedParameter"
+
+
+class TestShardedFFNTypes:
+    """Test ShardedFFN with different activation types."""
+
+    def test_ffn_swiglu_default(self):
+        """Test FFN default uses SwiGLU (gated, 3 weights)."""
+        from llm_perf.utils.constants import FFNActType
+
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008)
+
+        assert ffn.ffn_act_type == FFNActType.SWIGLU.value
+        assert hasattr(ffn, "gate_weight")
+        assert hasattr(ffn, "up_weight")
+        assert hasattr(ffn, "down_weight")
+
+    def test_ffn_gelu_non_gated(self):
+        """Test FFN with GELU (non-gated, 2 weights)."""
+        from llm_perf.utils.constants import FFNActType
+
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008, ffn_act_type=FFNActType.GELU.value)
+
+        assert ffn.ffn_act_type == FFNActType.GELU.value
+        assert not hasattr(ffn, "gate_weight")
+        assert hasattr(ffn, "up_weight")
+        assert hasattr(ffn, "down_weight")
+
+    def test_ffn_relu_non_gated(self):
+        """Test FFN with ReLU (non-gated, 2 weights)."""
+        from llm_perf.utils.constants import FFNActType
+
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008, ffn_act_type=FFNActType.RELU.value)
+
+        assert ffn.ffn_act_type == FFNActType.RELU.value
+        assert not hasattr(ffn, "gate_weight")
+
+    def test_ffn_silu_non_gated(self):
+        """Test FFN with SiLU (non-gated, 2 weights)."""
+        from llm_perf.utils.constants import FFNActType
+
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008, ffn_act_type=FFNActType.SILU.value)
+
+        assert ffn.ffn_act_type == FFNActType.SILU.value
+        assert not hasattr(ffn, "gate_weight")
+
+    def test_ffn_swiglu_params_count(self):
+        """Test SwiGLU FFN has 3 weight params."""
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008)
+
+        expected = 3 * 4096 * 11008
+        assert ffn.params_count() == expected
+
+    def test_ffn_gelu_params_count(self):
+        """Test GELU FFN has 2 weight params."""
+        from llm_perf.utils.constants import FFNActType
+
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008, ffn_act_type=FFNActType.GELU.value)
+
+        expected = 2 * 4096 * 11008
+        assert ffn.params_count() == expected
+
+    def test_ffn_forward_swiglu(self):
+        """Test FFN forward with SwiGLU."""
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008)
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+
+        output = ffn(hidden)
+
+        assert output.shape == (1, 512, 4096)
+        assert hasattr(ffn, "gate_weight")
+        assert "up_proj" in ffn._activations
+        assert "intermediate" in ffn._activations
+
+    def test_ffn_forward_gelu(self):
+        """Test FFN forward with GELU."""
+        from llm_perf.utils.constants import FFNActType
+
+        ffn = ShardedFFN(hidden_size=4096, intermediate_size=11008, ffn_act_type=FFNActType.GELU.value)
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+
+        output = ffn(hidden)
+
+        assert output.shape == (1, 512, 4096)
+        assert "gate_proj" not in ffn._activations
+        assert "up_proj" in ffn._activations
+
+
+class TestWanDiTMemory:
+    """Test Wan DiT memory calculation."""
+
+    def test_wan_dit_total_params(self):
+        """Test Wan DiT total params matches official claim (14B)."""
+        model = create_model_from_config({"type": "wan-dit"})
+        total_params = model.params_count()
+
+        expected = 14e9
+        tolerance = 0.1
+
+        assert abs(total_params - expected) / expected < tolerance, (
+            f"Wan DiT params {total_params / 1e9:.2f}B != expected {expected / 1e9:.2f}B"
+        )
+
+    def test_wan_dit_ffn_params(self):
+        """Test Wan DiT FFN uses non-gated (2 weights)."""
+        from llm_perf.utils.constants import FFNActType
+
+        model = create_model_from_config({"type": "wan-dit"})
+
+        block = model._submodules["blocks.0"]
+        ffn = block.ffn
+
+        assert ffn.ffn_act_type == FFNActType.GELU.value
+
+        assert not hasattr(ffn, "gate_weight") or ffn.gate_weight is None
+
+        expected = 2 * block.hidden_size * block.intermediate_size
+        assert ffn.params_count() == expected, (
+            f"FFN params {ffn.params_count() / 1e6:.2f}M != expected {expected / 1e6:.2f}M"
+        )
+
+    def test_wan_dit_block_ffn_weights_count(self):
+        """Test Wan DiT block FFN has 2 weights."""
+        from llm_perf.utils.constants import FFNActType
+
+        model = create_model_from_config({"type": "wan-dit"})
+
+        for name, block in model._submodules.items():
+            if name.startswith("blocks."):
+                ffn = block.ffn
+                assert ffn.ffn_act_type == FFNActType.GELU.value
+
+                weights = ffn.get_weights()
+                weight_count = len(weights)
+                assert weight_count == 2, f"Block {name} FFN should have 2 weights, got {weight_count}"
+
+    def test_t5_block_ffn_gelu(self):
+        """Test T5 block uses GELU FFN."""
+        from llm_perf.modeling.wan import ShardedT5Block
+        from llm_perf.utils.constants import FFNActType
+
+        block = ShardedT5Block(hidden_size=4096, num_heads=64, intermediate_size=10240)
+
+        ffn = block.ffn_gate
+        assert ffn.ffn_act_type == FFNActType.GELU.value
+        assert not hasattr(ffn, "gate_weight")
+
+        expected = 2 * 4096 * 10240
+        assert ffn.params_count() == expected
