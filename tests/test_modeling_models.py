@@ -3,6 +3,7 @@
 import pytest
 from llm_perf.modeling import (
     ShardedTensor,
+    ShardedParameter,
     ShardedModule,
     ParallelContext,
     ShardedTransformerBlock,
@@ -13,6 +14,7 @@ from llm_perf.modeling import (
     create_model_from_config,
     get_model_presets,
     ShardedWanDiT,
+    ShardedEmbedding,
 )
 
 
@@ -724,3 +726,57 @@ class TestModelParamsVerification:
         assert moe_layer.intermediate_size == 2048
 
         assert len(model.layers) == 61
+
+
+class TestShardedParameterWeightRegistration:
+    """Test ShardedParameter type distinguishes weights from activations."""
+
+    def test_sharded_parameter_not_register_activation(self):
+        """Test that ShardedTensor (activation) is not registered as weight."""
+        from llm_perf.modeling.layers import ShardedEmbedding
+        from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
+
+        embedding = ShardedEmbedding(32000, 4096)
+
+        assert isinstance(embedding.weight, ShardedParameter)
+
+        assert len(embedding._weights) == 1
+        assert "weight" in embedding._weights
+
+        activation = ShardedTensor(shape=(1, 512, 4096))
+        embedding._last_forward_input = activation
+
+        assert len(embedding._weights) == 1
+        assert "_last_forward_input" not in embedding._weights
+
+    def test_llama_model_weight_count(self):
+        """Test LlamaModel has correct number of weights."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
+
+        expected_weights = 1 + 2 * 9 + 1 + 1
+        assert len(model._weights) == 0
+
+        total_weights = len(model.get_weights())
+        assert total_weights == expected_weights
+
+    def test_forward_does_not_add_weights(self):
+        """Test forward pass does not add activation tensors to _weights."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=1, num_heads=32)
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        logits = model(input_ids)
+
+        assert len(model._weights) == 0
+        assert "_last_forward_input" not in model._weights
+        assert "_last_forward_output" not in model._weights
+
+        for name, submodule in model._submodules.items():
+            assert "_last_forward_input" not in submodule._weights
+            assert "_last_forward_output" not in submodule._weights
+
+    def test_all_layer_weights_are_parameters(self):
+        """Test all layer weights are ShardedParameter instances."""
+        model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=1, num_heads=32)
+
+        for name, weight in model.get_weights().items():
+            assert isinstance(weight, ShardedParameter), f"{name} should be ShardedParameter"
