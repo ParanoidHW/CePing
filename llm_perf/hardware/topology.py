@@ -183,8 +183,6 @@ class NetworkTopology:
         return cls(
             name="2tier_simple",
             topology_type=TopologyType.SWITCH,
-            intra_node_bandwidth_gbps=intra_node_bw_gbps,
-            inter_node_bandwidth_gbps=inter_node_bw_gbps,
             levels=[
                 TopologyLevel(
                     name="node",
