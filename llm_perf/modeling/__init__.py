@@ -31,6 +31,7 @@ from .layers import (
     ShardedMoE,
     silu,
     gelu,
+    relu,
     flash_attention,
 )
 
@@ -117,6 +118,7 @@ __all__ = [
     "ShardedMLA",
     "silu",
     "gelu",
+    "relu",
     "flash_attention",
     "LlamaModel",
     "DeepSeekModel",
