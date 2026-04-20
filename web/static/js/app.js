@@ -470,6 +470,23 @@ function collectConfig() {
 function displayResults(result) {
     elements.results.style.display = 'block';
     
+    // DEBUG: Log raw data for troubleshooting
+    console.log('=== DEBUG: Raw API Result ===');
+    console.log('result:', JSON.stringify(result, null, 2).substring(0, 2000));
+    
+    const detailed = result.detailed_breakdown;
+    if (detailed && detailed.memory) {
+        console.log('=== DEBUG: Memory by_type ===');
+        console.log('by_type:', detailed.memory.by_type);
+        console.log('weight:', detailed.memory.by_type?.weight);
+        console.log('by_submodule_type keys:', Object.keys(detailed.memory.by_submodule_type || {}));
+        console.log('by_submodule_type weights:', 
+            Object.entries(detailed.memory.by_submodule_type || {})
+                .map(([k, v]) => `${k}: ${v.memory?.weight_gb?.toFixed(2)} GB`)
+                .join(', ')
+        );
+    }
+    
     // Handle pipeline results (e.g., video generation)
     if (state.currentPipeline === 'diffusion-video') {
         const phases = result.phases || [];
@@ -611,9 +628,20 @@ function displayResults(result) {
 function renderDetailedBreakdown(detailed) {
     if (!detailed) return '';
 
+    // DEBUG: Log memory data for troubleshooting
+    console.log('=== DEBUG: renderDetailedBreakdown ===');
+    console.log('detailed.memory.by_type:', detailed.memory?.by_type);
+    console.log('detailed.memory.by_submodule_type:', detailed.memory?.by_submodule_type);
+    console.log('detailed.by_submodule_type:', detailed.by_submodule_type);
+
     // Memory breakdown by type - separate total from breakdown items
     const memByType = detailed.memory?.by_type || {};
     const { total, ...breakdownItems } = memByType;
+    
+    console.log('=== DEBUG: memByType extracted ===');
+    console.log('total:', total);
+    console.log('breakdownItems:', breakdownItems);
+    console.log('breakdownItems.weight:', breakdownItems.weight);
 
     // Render breakdown items in fixed order
     const orderedTypes = ['weight', 'gradient', 'optimizer', 'activation'];
@@ -621,6 +649,9 @@ function renderDetailedBreakdown(detailed) {
         .filter(type => breakdownItems[type] !== undefined)
         .map(type => `<tr><td>${type}</td><td>${breakdownItems[type].toFixed(2)} GB</td></tr>`)
         .join('');
+    
+    console.log('=== DEBUG: memRows HTML ===');
+    console.log(memRows);
 
     // Total row with visual distinction
     const totalRow = total !== undefined 
@@ -683,20 +714,44 @@ function renderDetailedBreakdown(detailed) {
             return `<tr><td>${type.toUpperCase()}</td><td>${totalGb.toFixed(2)} GB</td><td>${totalMs.toFixed(2)} ms</td></tr>`;
         }).join('');
 
-    // Submodel details
+    // Submodel details - read from summary, not by_type
     const submodelDetails = (detailed.submodels || []).map(sm => {
-        const memTypes = Object.entries(sm.memory?.by_type || {})
-            .map(([t, v]) => `${t}: ${v.toFixed(1)}G`)
+        const summary = sm.memory?.summary || {};
+        const memTypes = Object.entries(summary)
+            .filter(([t]) => t.endsWith('_gb'))
+            .map(([t, v]) => `${t.replace('_gb', '')}: ${v.toFixed(1)}G`)
             .join(', ');
         return `
             <div style="margin: 0.5rem 0; padding: 0.5rem; background: var(--gray-50); border-radius: 4px;">
                 <strong>${sm.model_name}</strong> (${sm.model_type})<br>
-                Memory: ${memTypes}
+                Memory: ${memTypes || '无数据'}
             </div>
         `;
     }).join('');
 
+    // DEBUG panel - show raw memory data for troubleshooting
+    const debugPanel = `
+        <details style="margin: 1.5rem 0; background: var(--gray-100); padding: 0.5rem; border-radius: 4px;">
+            <summary style="cursor: pointer; font-weight: bold; color: #666;">
+                🔍 Debug: 原始内存数据 (点击展开)
+            </summary>
+            <pre style="margin: 0.5rem 0; font-size: 12px; overflow: auto; max-height: 300px;">
+memory.by_type:
+${JSON.stringify(detailed.memory?.by_type, null, 2)}
+
+memory.by_submodule_type (weight_gb):
+${JSON.stringify(
+    Object.fromEntries(
+        Object.entries(detailed.memory?.by_submodule_type || {})
+            .map(([k, v]) => [k, {weight_gb: v.memory?.weight_gb}])
+    ), null, 2
+)}
+            </pre>
+        </details>
+    `;
+
     return `
+        ${debugPanel}
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
         <table class="breakdown-table">
             <tr><th>内存类型</th><th>大小</th></tr>
