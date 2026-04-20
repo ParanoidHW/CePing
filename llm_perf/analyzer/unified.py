@@ -3,36 +3,38 @@
 Analyzes performance based on compute patterns, NOT model types.
 """
 
-from typing import Any, Dict, List, Union, Optional, Tuple
+import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from llm_perf.modeling import ShardedModule
-from llm_perf.modeling.tensor import ShardedTensor
-from llm_perf.modeling.module import ModuleInstance
-from llm_perf.hardware.device import Device
 from llm_perf.hardware.cluster import Cluster
-from llm_perf.strategy.base import StrategyConfig
-from llm_perf.strategy.parallel_context import ParallelContext, SPType, CommDomain
-from llm_perf.kernels.compute import ComputeKernelRegistry
+from llm_perf.hardware.device import Device
+from llm_perf.kernels.backend.theory import BackendConfig, TheoryBackend
 from llm_perf.kernels.communication import CommKernelRegistry
-from llm_perf.kernels.functional import linear, flash_attention, conv3d, KernelResult
-from llm_perf.kernels.backend.theory import TheoryBackend, BackendConfig
+from llm_perf.kernels.compute import ComputeKernelRegistry
+from llm_perf.kernels.functional import KernelResult, conv3d, flash_attention, linear
+from llm_perf.modeling import ShardedModule
+from llm_perf.modeling.module import ModuleInstance
+from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.strategy.base import StrategyConfig
+from llm_perf.strategy.parallel_context import CommDomain, ParallelContext, SPType
 from llm_perf.utils.constants import DTYPE_SIZES, SubmoduleType
 
 from .base import (
+    CommunicationBreakdown,
+    ComputePattern,
+    ComputeType,
     Phase,
     PhaseResult,
     SubmoduleResult,
+    ThroughputMetric,
     UnifiedResult,
     WorkloadConfig,
-    ComputeType,
-    ComputePattern,
-    ThroughputMetric,
-    CommunicationBreakdown,
     WorkloadType,
 )
 from .breakdown import generate_module_breakdown
 from .workload_loader import get_workload
 
+logger = logging.getLogger(__name__)
 
 MODULE_CLASS_TO_TYPE = {
     "ShardedTransformerBlock": SubmoduleType.TRANSFORMER_BLOCK,
@@ -518,6 +520,12 @@ class UnifiedAnalyzer:
                     nested_submodules=nested_submodules,
                 )
             )
+            logger.info(
+                f"[SUBMODULE] name={sub_name}, type={submodule_type}, "
+                f"params_physical={sub_inst.params_count_physical / 1e9:.4f}B, "
+                f"weight_gb={sub_inst.weight_memory_physical / 1e9:.4f}GB, "
+                f"flops={sub_inst.flops_forward_physical / 1e12:.4f}T"
+            )
 
         return time_sec, memory, flops, submodules
 
@@ -636,6 +644,12 @@ class UnifiedAnalyzer:
             time_sec, memory_gb, flops = self._estimate_transformer_block(
                 component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
+
+        logger.info(
+            f"[PHASE] phase={phase.name}, compute_type={phase.compute_type}, "
+            f"time_sec={time_sec:.4f}s, memory_gb={memory_gb:.4f}GB, "
+            f"flops={flops / 1e12:.4f}T, submodules_count={len(submodules)}"
+        )
 
         return time_sec, memory_gb, flops, submodules
 
@@ -1478,6 +1492,12 @@ class UnifiedAnalyzer:
                 by_submodule_type[block_type]["memory"]["gradient_gb"] = sum(s.gradient_memory_gb for s in peak_sms)
                 by_submodule_type[block_type]["memory"]["optimizer_gb"] = sum(s.optimizer_memory_gb for s in peak_sms)
                 by_submodule_type[block_type]["memory"]["activation_gb"] = sum(s.activation_memory_gb for s in peak_sms)
+                logger.info(
+                    f"[BY_TYPE] block_type={block_type}, "
+                    f"count={len(peak_sms)}, "
+                    f"weight_gb={by_submodule_type[block_type]['memory']['weight_gb']:.4f}GB, "
+                    f"activation_gb={by_submodule_type[block_type]['memory']['activation_gb']:.4f}GB"
+                )
 
             # Compute/communication: sum all phases
             by_submodule_type[block_type]["compute"]["flops"] += sm.flops
@@ -1601,6 +1621,14 @@ class UnifiedAnalyzer:
             + total_memory_breakdown["activation_gb"]
         )
         total_memory_breakdown["total_gb"] = total_memory_gb
+
+        logger.info(
+            f"[TOTAL] weight_gb={total_memory_breakdown['weight_gb']:.2f}GB, "
+            f"gradient_gb={total_memory_breakdown['gradient_gb']:.2f}GB, "
+            f"optimizer_gb={total_memory_breakdown['optimizer_gb']:.2f}GB, "
+            f"activation_gb={total_memory_breakdown['activation_gb']:.2f}GB, "
+            f"total_gb={total_memory_breakdown['total_gb']:.2f}GB"
+        )
 
         # Add backward compat to by_submodule_type
         for block_type, data in by_submodule_type.items():

@@ -4,17 +4,21 @@ Provides automatic registration of submodules and weights,
 and supports forward/backward mode for performance estimation.
 """
 
-from typing import Dict, Optional, List, Any, Tuple, Union, TYPE_CHECKING
+import logging
 import math
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from .tensor import ShardedTensor
-from .comm_deriver import CommPatternDeriver
 from llm_perf.utils.constants import DTYPE_SIZES
 
+from .comm_deriver import CommPatternDeriver
+from .tensor import ShardedTensor
+
 if TYPE_CHECKING:
+    from llm_perf.kernels.op import CommOp
     from llm_perf.strategy.parallel_context import ParallelContext
     from llm_perf.strategy.pp_model import PPModel
-    from llm_perf.kernels.op import CommOp
+
+logger = logging.getLogger(__name__)
 
 
 class ShardedModule:
@@ -182,8 +186,8 @@ class ShardedModule:
 
     def _compute_op_flops(self, op: Any) -> int:
         """Compute FLOPs for a single operation."""
-        from llm_perf.kernels.op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
-        from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu
+        from llm_perf.kernels.functional import flash_attention, linear, rms_norm, silu
+        from llm_perf.kernels.op import ActivationOp, AttentionOp, EmbeddingOp, MatmulOp, RMSNormOp
 
         try:
             if isinstance(op, MatmulOp):
@@ -260,6 +264,13 @@ class ModuleInstance:
         self._activation_instances: Dict[str, ActivationInstance] = {}
         for name, activation in module.get_activations().items():
             self._activation_instances[name] = ActivationInstance(activation, ctx)
+
+        logger.info(
+            f"[BIND] module={module.__class__.__name__}, tp={ctx.tp_degree}, "
+            f"logical_params={module.params_count() / 1e9:.2f}B, "
+            f"physical_params={self.params_count_physical / 1e9:.2f}B, "
+            f"weight_memory_physical={self.weight_memory_physical / 1e9:.2f}GB"
+        )
 
     @property
     def params_count_physical(self) -> int:
@@ -460,8 +471,8 @@ class ModuleInstance:
 
     def _infer_physical_flops(self, op: Any) -> int:
         """Derive physical FLOPs from operation."""
-        from llm_perf.kernels.op import MatmulOp, AttentionOp, RMSNormOp, EmbeddingOp, ActivationOp
-        from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu
+        from llm_perf.kernels.functional import flash_attention, linear, rms_norm, silu
+        from llm_perf.kernels.op import ActivationOp, AttentionOp, EmbeddingOp, MatmulOp, RMSNormOp
 
         try:
             if isinstance(op, MatmulOp):
