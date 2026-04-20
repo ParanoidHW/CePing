@@ -324,3 +324,15 @@ class ShardedTensor:
             "name": self.name,
             "numel": self.numel(),
         }
+
+
+class ShardedParameter(ShardedTensor):
+    """Model weight parameter, inherits all attributes and methods from ShardedTensor.
+
+    Used to mark a tensor as a model parameter (weight), not activation tensor.
+    Only ShardedParameter is registered to _weights in __setattr__.
+
+    Reference: torch.nn.Parameter design pattern.
+    """
+
+    pass
