@@ -3,7 +3,7 @@
 PyTorch-like interface for defining models with automatic sharding constraints.
 """
 
-from .tensor import ShardedTensor
+from .tensor import ShardedTensor, ShardedParameter
 from .module import ShardedModule, ModuleInstance, WeightInstance, ActivationInstance
 
 from llm_perf.kernels.op import (
@@ -88,6 +88,7 @@ from .registry import (
 
 __all__ = [
     "ShardedTensor",
+    "ShardedParameter",
     "ShardedModule",
     "ModuleInstance",
     "WeightInstance",
