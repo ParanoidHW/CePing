@@ -15,7 +15,7 @@ Reference: https://huggingface.co/deepseek-ai/DeepSeek-V2
 
 from typing import Optional
 from llm_perf.modeling.module import ShardedModule
-from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
 from llm_perf.modeling.layers import flash_attention
 from llm_perf.kernels.op import MatmulOp
 
@@ -70,7 +70,7 @@ class ShardedMLA(ShardedModule):
         self.head_dim = qk_nope_head_dim + qk_rope_head_dim
 
         if q_lora_rank > 0:
-            self.q_down_weight = ShardedTensor(
+            self.q_down_weight = ShardedParameter(
                 shape=(hidden_size, q_lora_rank),
                 shardable={},
                 dtype=dtype,
@@ -78,7 +78,7 @@ class ShardedMLA(ShardedModule):
             )
 
             q_up_dim = num_heads * qk_nope_head_dim
-            self.q_up_weight = ShardedTensor(
+            self.q_up_weight = ShardedParameter(
                 shape=(q_lora_rank, q_up_dim),
                 shardable={1: "tp"},
                 dtype=dtype,
@@ -88,7 +88,7 @@ class ShardedMLA(ShardedModule):
             self.q_down_weight = None
             self.q_up_weight = None
 
-        self.kv_down_weight = ShardedTensor(
+        self.kv_down_weight = ShardedParameter(
             shape=(hidden_size, kv_lora_rank),
             shardable={},
             dtype=dtype,
@@ -96,7 +96,7 @@ class ShardedMLA(ShardedModule):
         )
 
         k_up_dim = self.num_kv_heads * qk_nope_head_dim
-        self.k_up_weight = ShardedTensor(
+        self.k_up_weight = ShardedParameter(
             shape=(kv_lora_rank, k_up_dim),
             shardable={1: "tp"},
             dtype=dtype,
@@ -104,21 +104,21 @@ class ShardedMLA(ShardedModule):
         )
 
         v_up_dim = self.num_kv_heads * v_head_dim
-        self.v_up_weight = ShardedTensor(
+        self.v_up_weight = ShardedParameter(
             shape=(kv_lora_rank, v_up_dim),
             shardable={1: "tp"},
             dtype=dtype,
             name="v_up_weight",
         )
 
-        self.q_rope_weight = ShardedTensor(
+        self.q_rope_weight = ShardedParameter(
             shape=(hidden_size, num_heads * qk_rope_head_dim),
             shardable={1: "tp"},
             dtype=dtype,
             name="q_rope_weight",
         )
 
-        self.k_rope_weight = ShardedTensor(
+        self.k_rope_weight = ShardedParameter(
             shape=(hidden_size, self.num_kv_heads * qk_rope_head_dim),
             shardable={1: "tp"},
             dtype=dtype,
@@ -126,7 +126,7 @@ class ShardedMLA(ShardedModule):
         )
 
         o_dim = num_heads * v_head_dim
-        self.o_weight = ShardedTensor(
+        self.o_weight = ShardedParameter(
             shape=(o_dim, hidden_size),
             shardable={0: "tp"},
             dtype=dtype,

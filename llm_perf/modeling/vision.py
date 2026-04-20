@@ -8,7 +8,7 @@ Includes:
 
 from typing import Tuple
 from llm_perf.modeling.module import ShardedModule
-from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
 from llm_perf.kernels.op import Conv2dOp, Conv3dOp, GroupNormOp
 from llm_perf.modeling.layers import silu
 
@@ -24,7 +24,7 @@ class ShardedConv2d(ShardedModule):
         self.stride = stride
         self.padding = padding
 
-        self.weight = ShardedTensor(
+        self.weight = ShardedParameter(
             shape=(out_channels, in_channels, *self.kernel_size),
             shardable={},
             dtype=dtype,
@@ -46,7 +46,7 @@ class ShardedConv3d(ShardedModule):
         self.stride = stride
         self.padding = padding
 
-        self.weight = ShardedTensor(
+        self.weight = ShardedParameter(
             shape=(out_channels, in_channels, *self.kernel_size),
             shardable={},
             dtype=dtype,
@@ -65,13 +65,13 @@ class ShardedGroupNorm(ShardedModule):
         self.num_groups = num_groups
         self.num_channels = num_channels
 
-        self.weight = ShardedTensor(
+        self.weight = ShardedParameter(
             shape=(num_channels,),
             shardable={},
             dtype=dtype,
             name="weight",
         )
-        self.bias = ShardedTensor(
+        self.bias = ShardedParameter(
             shape=(num_channels,),
             shardable={},
             dtype=dtype,
@@ -877,7 +877,7 @@ class ShardedResNet(ShardedModule):
 
         final_channels = in_channels
 
-        self.fc_weight = ShardedTensor(
+        self.fc_weight = ShardedParameter(
             shape=(final_channels, num_classes),
             shardable={0: "tp"},
             dtype=dtype,

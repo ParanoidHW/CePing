@@ -11,7 +11,7 @@ Includes:
 
 from typing import Tuple
 from llm_perf.modeling.module import ShardedModule
-from llm_perf.modeling.tensor import ShardedTensor
+from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
 from llm_perf.modeling.layers import (
     ShardedEmbedding,
     ShardedAttention,
@@ -43,13 +43,13 @@ class ShardedLayerNorm(ShardedModule):
         self.elementwise_affine = elementwise_affine
 
         if elementwise_affine:
-            self.weight = ShardedTensor(
+            self.weight = ShardedParameter(
                 shape=(hidden_size,),
                 shardable={},
                 dtype=dtype,
                 name="layernorm_weight",
             )
-            self.bias = ShardedTensor(
+            self.bias = ShardedParameter(
                 shape=(hidden_size,),
                 shardable={},
                 dtype=dtype,
@@ -219,16 +219,16 @@ class ShardedWanDiTBlock(ShardedModule):
         self.norm1 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
         self.self_attn_qkv = ShardedModule()
-        self.self_attn_qkv.q_weight = ShardedTensor(
+        self.self_attn_qkv.q_weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="q_weight"
         )
-        self.self_attn_qkv.k_weight = ShardedTensor(
+        self.self_attn_qkv.k_weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="k_weight"
         )
-        self.self_attn_qkv.v_weight = ShardedTensor(
+        self.self_attn_qkv.v_weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="v_weight"
         )
-        self.self_attn_qkv.o_weight = ShardedTensor(
+        self.self_attn_qkv.o_weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="o_weight"
         )
 
@@ -237,13 +237,13 @@ class ShardedWanDiTBlock(ShardedModule):
 
         self.norm2 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
-        self.cross_attn_q_weight = ShardedTensor(
+        self.cross_attn_q_weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="cross_q_weight"
         )
-        self.cross_attn_kv_weight = ShardedTensor(
+        self.cross_attn_kv_weight = ShardedParameter(
             shape=(text_dim, 2 * hidden_size), shardable={}, dtype=dtype, name="cross_kv_weight"
         )
-        self.cross_attn_o_weight = ShardedTensor(
+        self.cross_attn_o_weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="cross_o_weight"
         )
 
@@ -360,17 +360,17 @@ class ShardedWanDiT(ShardedModule):
         )
 
         self.time_embedding_in = ShardedModule()
-        self.time_embedding_in.weight = ShardedTensor(
+        self.time_embedding_in.weight = ShardedParameter(
             shape=(freq_dim, hidden_size), shardable={}, dtype=dtype, name="time_embed_in"
         )
 
         self.time_embedding_out = ShardedModule()
-        self.time_embedding_out.weight = ShardedTensor(
+        self.time_embedding_out.weight = ShardedParameter(
             shape=(hidden_size, hidden_size), shardable={}, dtype=dtype, name="time_embed_out"
         )
 
         self.time_projection = ShardedModule()
-        self.time_projection.weight = ShardedTensor(
+        self.time_projection.weight = ShardedParameter(
             shape=(hidden_size, 6 * hidden_size), shardable={}, dtype=dtype, name="time_proj"
         )
 
@@ -388,7 +388,7 @@ class ShardedWanDiT(ShardedModule):
         self.norm_final = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
         self.unpatchify = ShardedModule()
-        self.unpatchify.weight = ShardedTensor(
+        self.unpatchify.weight = ShardedParameter(
             shape=(hidden_size, out_channels), shardable={}, dtype=dtype, name="unpatchify_weight"
         )
 
