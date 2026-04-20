@@ -14,6 +14,15 @@ class DtypeType(str, Enum):
     INT4 = "int4"
 
 
+class FFNActType(str, Enum):
+    """FFN activation type."""
+
+    SWIGLU = "swiglu"
+    GELU = "gelu"
+    RELU = "relu"
+    SILU = "silu"
+
+
 class SubmoduleType(str, Enum):
     """Submodule type enumeration for transformer layers."""
 
