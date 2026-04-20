@@ -772,3 +772,67 @@ class TestFrontendCompatibility:
                 assert "total_bytes" in pdata, f"by_parallelism[{ptype}] should have total_bytes"
                 assert isinstance(pdata["total_bytes"], (int, float))
                 assert pdata["total_bytes"] >= 0
+
+    def test_http_api_weight_equals_by_submodule_type_sum(self):
+        """Test that by_type.weight equals sum of by_submodule_type weights."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "deepseek-v3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 1,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        mem = detailed.get("memory", {})
+        by_type_weight = mem.get("by_type", {}).get("weight", 0)
+        by_submodule = mem.get("by_submodule_type", {})
+        by_submodule_sum = sum(v.get("weight_gb", 0) for v in by_submodule.values())
+
+        assert abs(by_type_weight - by_submodule_sum) < 0.1, (
+            f"weight mismatch: by_type={by_type_weight}, by_submodule_sum={by_submodule_sum}"
+        )
+
+    def test_http_api_compute_time_equals_forward_phase(self):
+        """Test that compute_sec equals forward phase total_time_sec."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+
+        breakdown = result.get("breakdown", {})
+        compute_sec = breakdown.get("time_breakdown", {}).get("compute_sec", 0)
+
+        forward_phases = [p for p in result["phases"] if "forward" in p["name"].lower()]
+        forward_time = sum(p.get("total_time_sec", 0) for p in forward_phases)
+
+        assert abs(compute_sec - forward_time) < 0.01, (
+            f"compute_sec mismatch: {compute_sec} vs forward_time {forward_time}"
+        )
