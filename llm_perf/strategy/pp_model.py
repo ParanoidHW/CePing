@@ -243,8 +243,16 @@ class PPModel(ShardedModule):
             cluster = ctx.cluster
             if hasattr(cluster, "p2p_bandwidth_gbps"):
                 bandwidth_gbps = cluster.p2p_bandwidth_gbps
-            elif hasattr(cluster, "inter_node_bandwidth_gbps"):
-                bandwidth_gbps = cluster.inter_node_bandwidth_gbps
+            elif hasattr(cluster, "topology") and cluster.topology:
+
+                def _get_inter_node_bandwidth(topology) -> float:
+                    """从 topology.levels 获取 inter-node 带宽."""
+                    for level in topology.levels:
+                        if level.name == "inter_node":
+                            return level.bandwidth_gbps
+                    return 100.0
+
+                bandwidth_gbps = _get_inter_node_bandwidth(cluster.topology)
 
         data_gb = data_bytes / 1e9
 
