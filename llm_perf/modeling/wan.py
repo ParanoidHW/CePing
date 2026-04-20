@@ -21,6 +21,7 @@ from llm_perf.modeling.layers import (
     flash_attention,
 )
 from llm_perf.modeling.vision import ShardedConv3d
+from llm_perf.utils.constants import FFNActType
 
 
 class ShardedLayerNorm(ShardedModule):
@@ -103,6 +104,7 @@ class ShardedT5Block(ShardedModule):
         self.ffn_gate = ShardedFFN(
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
+            ffn_act_type=FFNActType.GELU.value,
             dtype=dtype,
         )
 
@@ -249,7 +251,7 @@ class ShardedWanDiTBlock(ShardedModule):
 
         self.norm3 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
-        self.ffn = ShardedFFN(hidden_size, intermediate_size, dtype=dtype)
+        self.ffn = ShardedFFN(hidden_size, intermediate_size, ffn_act_type=FFNActType.GELU.value, dtype=dtype)
 
         self.modulation = ShardedTensor(shape=(6, hidden_size), shardable={}, dtype=dtype, name="modulation")
 
