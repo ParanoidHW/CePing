@@ -705,3 +705,22 @@ class TestModelParamsVerification:
         assert lm_head == 32000 * 4096, f"LM head params mismatch"
         assert attention > 2e9, f"Attention params should be >2B"
         assert ffn > 4e9, f"FFN params should be >4B"
+
+    def test_deepseek_v3_params_verification(self):
+        """Verify DeepSeek V3 params match official claim of 671B."""
+        from llm_perf.modeling import create_model_from_config
+
+        model = create_model_from_config({"type": "deepseek-v3"})
+
+        total_params = 0
+        for name, sub in model._submodules.items():
+            if hasattr(sub, "params_count"):
+                total_params += sub.params_count()
+
+        expected_params = 671e9
+        assert abs(total_params - expected_params) / expected_params < 0.05
+
+        moe_layer = model.layers[3]
+        assert moe_layer.intermediate_size == 2048
+
+        assert len(model.layers) == 61
