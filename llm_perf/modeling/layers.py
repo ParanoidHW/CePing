@@ -12,6 +12,7 @@ from typing import Optional
 from llm_perf.modeling.module import ShardedModule
 from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
 from llm_perf.kernels.op import RMSNormOp, EmbeddingOp, ActivationOp
+from llm_perf.utils.constants import FFNActType
 
 
 class ShardedEmbedding(ShardedModule):
@@ -195,6 +196,34 @@ def gelu(input_tensor: ShardedTensor, approximate: str = "none") -> ShardedTenso
     return output
 
 
+def relu(input_tensor: ShardedTensor) -> ShardedTensor:
+    """ReLU activation.
+
+    Args:
+        input: Input tensor
+
+    Returns:
+        output: Same shape, same sharding
+    """
+    output = ShardedTensor(
+        shape=input_tensor.shape,
+        shardable=input_tensor.shardable,
+        dtype=input_tensor.dtype,
+        name="relu_output",
+    )
+
+    output._op_history = input_tensor._op_history + [
+        ActivationOp(
+            dtype=input_tensor.dtype,
+            input=input_tensor,
+            output=output,
+            activation_type="relu",
+        )
+    ]
+
+    return output
+
+
 def flash_attention(
     query: ShardedTensor,
     key: ShardedTensor,
@@ -365,6 +394,7 @@ class ShardedFFN(ShardedModule):
     Args:
         hidden_size: Hidden size
         intermediate_size: Intermediate size
+        ffn_act_type: FFN activation type (swiglu, gelu, relu, silu)
         dtype: Data type
     """
 
@@ -372,25 +402,34 @@ class ShardedFFN(ShardedModule):
         self,
         hidden_size: int,
         intermediate_size: int,
+        ffn_act_type: str = FFNActType.SWIGLU.value,
         dtype: str = "fp16",
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
+        self.ffn_act_type = ffn_act_type
 
-        self.gate_weight = ShardedParameter(
-            shape=(hidden_size, intermediate_size),
-            shardable={1: "tp"},
-            dtype=dtype,
-            name="gate_weight",
-        )
-
-        self.up_weight = ShardedParameter(
-            shape=(hidden_size, intermediate_size),
-            shardable={1: "tp"},
-            dtype=dtype,
-            name="up_weight",
-        )
+        if ffn_act_type == FFNActType.SWIGLU.value:
+            self.gate_weight = ShardedParameter(
+                shape=(hidden_size, intermediate_size),
+                shardable={1: "tp"},
+                dtype=dtype,
+                name="gate_weight",
+            )
+            self.up_weight = ShardedParameter(
+                shape=(hidden_size, intermediate_size),
+                shardable={1: "tp"},
+                dtype=dtype,
+                name="up_weight",
+            )
+        else:
+            self.up_weight = ShardedParameter(
+                shape=(hidden_size, intermediate_size),
+                shardable={1: "tp"},
+                dtype=dtype,
+                name="up_weight",
+            )
 
         self.down_weight = ShardedParameter(
             shape=(intermediate_size, hidden_size),
@@ -400,7 +439,7 @@ class ShardedFFN(ShardedModule):
         )
 
     def forward(self, hidden: ShardedTensor) -> ShardedTensor:
-        """FFN forward (SwiGLU variant).
+        """FFN forward.
 
         Args:
             hidden: (batch, seq, hidden_size)
@@ -408,16 +447,25 @@ class ShardedFFN(ShardedModule):
         Returns:
             output: (batch, seq, hidden_size)
         """
-        gate_proj = self._track_intermediate("gate_proj", hidden @ self.gate_weight)
-        gate_proj = self._track_intermediate("gate_silu", silu(gate_proj))
-
-        up_proj = self._track_intermediate("up_proj", hidden @ self.up_weight)
-
-        intermediate = self._track_intermediate("intermediate", gate_proj * up_proj)
+        if self.ffn_act_type == FFNActType.SWIGLU.value:
+            gate_proj = self._track_intermediate("gate_proj", hidden @ self.gate_weight)
+            gate_silu = self._track_intermediate("gate_silu", silu(gate_proj))
+            up_proj = self._track_intermediate("up_proj", hidden @ self.up_weight)
+            intermediate = self._track_intermediate("intermediate", gate_silu * up_proj)
+        elif self.ffn_act_type == FFNActType.GELU.value:
+            up_proj = self._track_intermediate("up_proj", hidden @ self.up_weight)
+            intermediate = self._track_intermediate("intermediate", gelu(up_proj))
+        elif self.ffn_act_type == FFNActType.RELU.value:
+            up_proj = self._track_intermediate("up_proj", hidden @ self.up_weight)
+            intermediate = self._track_intermediate("intermediate", relu(up_proj))
+        elif self.ffn_act_type == FFNActType.SILU.value:
+            up_proj = self._track_intermediate("up_proj", hidden @ self.up_weight)
+            intermediate = self._track_intermediate("intermediate", silu(up_proj))
+        else:
+            raise ValueError(f"Unknown FFN activation type: {self.ffn_act_type}")
 
         output = self._track_intermediate("output", intermediate @ self.down_weight)
 
-        self._activations["gate_proj"] = gate_proj
         self._activations["up_proj"] = up_proj
         self._activations["intermediate"] = intermediate
 
