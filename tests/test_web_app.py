@@ -654,3 +654,45 @@ class TestFrontendCompatibility:
             assert "activations_gb" in data, f"by_submodel[{name}] should have activations_gb"
             assert isinstance(data["activations_gb"], (int, float)), "activations_gb should be number"
             assert data["activations_gb"] > 0, f"by_submodel[{name}] activations_gb should be > 0"
+
+    def test_http_api_memory_by_type_total_equals_sum(self):
+        """Test that memory.by_type total equals sum of breakdown items."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+        assert detailed is not None
+
+        mem = detailed.get("memory", {})
+        by_type = mem.get("by_type", {})
+
+        # Verify total exists
+        assert "total" in by_type, "memory.by_type should have 'total'"
+        total = by_type["total"]
+
+        # Verify sum of breakdown items equals total
+        breakdown_keys = ["weight", "gradient", "optimizer", "activation"]
+        sum_of_breakdown = sum(by_type.get(key, 0) for key in breakdown_keys)
+
+        # Allow small floating point tolerance
+        assert abs(total - sum_of_breakdown) < 0.01, (
+            f"total ({total}) should equal sum of breakdown items ({sum_of_breakdown})"
+        )

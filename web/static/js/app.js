@@ -611,12 +611,22 @@ function displayResults(result) {
 function renderDetailedBreakdown(detailed) {
     if (!detailed) return '';
 
-    // Memory breakdown by type
+    // Memory breakdown by type - separate total from breakdown items
     const memByType = detailed.memory?.by_type || {};
-    const memRows = Object.entries(memByType)
-        .map(([type, gb]) =>
-            `<tr><td>${type}</td><td>${gb.toFixed(2)} GB</td></tr>`
-        ).join('');
+    const { total, ...breakdownItems } = memByType;
+
+    // Render breakdown items in fixed order
+    const orderedTypes = ['weight', 'gradient', 'optimizer', 'activation'];
+    const memRows = orderedTypes
+        .filter(type => breakdownItems[type] !== undefined)
+        .map(type => `<tr><td>${type}</td><td>${breakdownItems[type].toFixed(2)} GB</td></tr>`)
+        .join('');
+
+    // Total row with visual distinction
+    const totalRow = total !== undefined 
+        ? `<tr style="font-weight: bold; border-top: 2px solid var(--gray-200);">
+             <td>总计</td><td>${total.toFixed(2)} GB</td></tr>` 
+        : '';
 
     // Memory breakdown by submodel
     const memBySubmodel = detailed.memory?.by_submodel || {};
@@ -690,7 +700,7 @@ function renderDetailedBreakdown(detailed) {
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
         <table class="breakdown-table">
             <tr><th>内存类型</th><th>大小</th></tr>
-            ${memRows || '<tr><td colspan="2">无数据</td></tr>'}
+            ${memRows}${totalRow || '<tr><td colspan="2">无数据</td></tr>'}
         </table>
 
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模块分解 (按类型)</h3>
