@@ -297,9 +297,18 @@ class ModuleInstance:
         if self.module._last_forward_output is None:
             return 0
 
+        op_history = self.module._last_forward_output._op_history
         total_flops = 0
-        for op in self.module._last_forward_output._op_history:
+        for op in op_history:
             total_flops += self._infer_physical_flops(op)
+
+        self._flops_forward_physical = total_flops
+        logger.info(
+            f"[FLOPS] module={self.module.__class__.__name__}, "
+            f"op_count={len(op_history)}, "
+            f"flops_forward={self._flops_forward_physical / 1e12:.4f}T, "
+            f"mode={self.mode}"
+        )
 
         return total_flops
 
@@ -348,6 +357,13 @@ class ModuleInstance:
             if hasattr(self.ctx, "activation_checkpointing") and self.ctx.activation_checkpointing:
                 ratio = getattr(self.ctx, "activation_checkpointing_ratio", 1)
                 total = total // ratio
+
+            self._activation_memory_physical = total
+            logger.info(
+                f"[ACTIVATION_MEM] module={self.module.__class__.__name__}, "
+                f"mode={self.mode}, num_intermediate={len(self.module._intermediate_tensors)}, "
+                f"activation_mem={self._activation_memory_physical / 1e9:.4f}GB"
+            )
 
             return total
 
@@ -405,11 +421,19 @@ class ModuleInstance:
 
         # Apply ZeRO sharding
         if zero_stage == 0:
-            return base_memory
+            self._optimizer_memory_physical = base_memory
         elif zero_stage >= 1:
-            return base_memory // dp_degree
+            self._optimizer_memory_physical = base_memory // dp_degree
         else:
-            return base_memory
+            self._optimizer_memory_physical = base_memory
+
+        logger.info(
+            f"[OPTIMIZER_MEM] params_physical={self.params_count_physical / 1e9:.2f}B, "
+            f"zero_stage={self.ctx.zero_stage}, dp={self.ctx.dp_degree}, "
+            f"optimizer_mem={self._optimizer_memory_physical / 1e9:.4f}GB"
+        )
+
+        return self._optimizer_memory_physical
 
     @property
     def total_comm_ops(self) -> List["CommOp"]:
@@ -483,22 +507,39 @@ class ModuleInstance:
                 input_physical = self._infer_physical_shape(op.input)
                 weight_physical = self._infer_physical_shape(op.weight)
                 result = linear(input_physical, weight_physical, dtype=op.dtype)
-                return result.flops
+                flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
             elif isinstance(op, AttentionOp):
                 q_physical = self._infer_physical_shape(op.query)
                 k_physical = self._infer_physical_shape(op.key)
                 v_physical = self._infer_physical_shape(op.value)
                 result = flash_attention(q_physical, k_physical, v_physical, dtype=op.dtype)
-                return result.flops
+                flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
             elif isinstance(op, RMSNormOp):
                 input_physical = self._infer_physical_shape(op.input)
                 result = rms_norm(input_physical, dtype=op.dtype)
-                return result.flops
+                flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
             elif isinstance(op, ActivationOp):
                 input_physical = self._infer_physical_shape(op.input)
                 if op.activation_type == "silu":
                     result = silu(input_physical, dtype=op.dtype)
-                    return result.flops
+                    flops = result.flops
+                    logger.debug(
+                        f"[OP_FLOPS] op_type={op.__class__.__name__}, "
+                        f"kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                    )
+                    return flops
             elif isinstance(op, EmbeddingOp):
                 from llm_perf.kernels.functional import embedding
 
@@ -507,7 +548,11 @@ class ModuleInstance:
                 embedding_dim = vocab_physical[1]
                 input_shape = self._infer_physical_shape(op.input_ids)
                 result = embedding(vocab_size, embedding_dim, input_shape, dtype=op.dtype)
-                return result.flops
+                flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
         except Exception:
             pass
 
