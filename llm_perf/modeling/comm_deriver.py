@@ -3,8 +3,9 @@
 Systematically derives communication operations from tensor sharding changes.
 """
 
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+import logging
 import math
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from llm_perf.kernels.op import (
     Op,
@@ -19,6 +20,8 @@ from llm_perf.utils.constants import DTYPE_SIZES
 if TYPE_CHECKING:
     from llm_perf.modeling.tensor import ShardedTensor
     from llm_perf.strategy.parallel_context import ParallelContext
+
+logger = logging.getLogger(__name__)
 
 
 class CommPatternDeriver:
@@ -123,7 +126,17 @@ class CommPatternDeriver:
         if need_allreduce and ptype:
             output_physical = physical_shapes.get("output", self._get_physical_shape(op.output))
             comm_bytes = math.prod(output_physical) * dtype_size
-            ops.append(CommOp("allreduce", comm_bytes, ptype, direction="forward"))
+            comm_type = "allreduce"
+            ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
+            logger.info(
+                f"[COMM_DERIVE] op=matmul, "
+                f"weight_shardable={weight_shardable}, "
+                f"output_shardable={output_shardable}, "
+                f"need_allreduce={need_allreduce}, "
+                f"ptype={ptype}, "
+                f"comm_bytes={comm_bytes / 1e6:.2f}MB, "
+                f"comm_type={comm_type}"
+            )
 
         return ops
 
@@ -152,8 +165,17 @@ class CommPatternDeriver:
                 if ptype == "sp":
                     q_physical = physical_shapes.get("query", self._get_physical_shape(op.query))
                     comm_bytes = math.prod(q_physical) * dtype_size
-                    ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
-                    ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
+                    comm_type = "alltoall"
+                    ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
+                    ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
+                    logger.info(
+                        f"[COMM_DERIVE] op=attention, "
+                        f"q_shardable={q_shardable}, "
+                        f"ptype={ptype}, "
+                        f"comm_bytes={comm_bytes / 1e6:.2f}MB, "
+                        f"comm_type={comm_type}, "
+                        f"count=2"
+                    )
 
         return ops
 
@@ -185,7 +207,16 @@ class CommPatternDeriver:
 
                 if output_logical[-1] != output_physical[-1]:
                     comm_bytes = math.prod(output_physical) * dtype_size * tp_degree
-                    ops.append(CommOp("allgather", comm_bytes, ptype, direction="forward"))
+                    comm_type = "allgather"
+                    ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
+                    logger.info(
+                        f"[COMM_DERIVE] op=embedding, "
+                        f"weight_shardable={weight_shardable}, "
+                        f"output_shardable={output_shardable}, "
+                        f"ptype={ptype}, "
+                        f"comm_bytes={comm_bytes / 1e6:.2f}MB, "
+                        f"comm_type={comm_type}"
+                    )
 
         return ops
 
@@ -210,8 +241,17 @@ class CommPatternDeriver:
             if ptype == "ep":
                 hidden_physical = physical_shapes.get("hidden", self._get_physical_shape(op.hidden))
                 comm_bytes = math.prod(hidden_physical) * dtype_size
-                ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
-                ops.append(CommOp("alltoall", comm_bytes, ptype, direction="forward"))
+                comm_type = "alltoall"
+                ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
+                ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
+                logger.info(
+                    f"[COMM_DERIVE] op=moe, "
+                    f"expert_shardable={expert_shardable}, "
+                    f"ptype={ptype}, "
+                    f"comm_bytes={comm_bytes / 1e6:.2f}MB, "
+                    f"comm_type={comm_type}, "
+                    f"count=2"
+                )
 
         return ops
 
@@ -254,7 +294,15 @@ class CommPatternDeriver:
         for dim, ptype in weight.shardable.items():
             if ptype == "dp":
                 weight_bytes = weight.numel() * DTYPE_SIZES.get(weight.dtype, 2)
-                ops.append(CommOp("allreduce", weight_bytes, ptype, direction="backward"))
+                comm_type = "allreduce"
+                ops.append(CommOp(comm_type, weight_bytes, ptype, direction="backward"))
+                logger.info(
+                    f"[COMM_DERIVE] op=matmul_backward, "
+                    f"weight_shardable={weight.shardable}, "
+                    f"ptype={ptype}, "
+                    f"comm_bytes={weight_bytes / 1e6:.2f}MB, "
+                    f"comm_type={comm_type}"
+                )
 
         return ops
 
@@ -277,7 +325,15 @@ class CommPatternDeriver:
                 hidden_physical = physical_shapes.get("hidden", self._get_physical_shape(op.hidden))
                 dtype_size = DTYPE_SIZES.get(op.dtype, 2)
                 comm_bytes = math.prod(hidden_physical) * dtype_size
-                ops.append(CommOp("alltoall", comm_bytes, ptype, direction="backward"))
+                comm_type = "alltoall"
+                ops.append(CommOp(comm_type, comm_bytes, ptype, direction="backward"))
+                logger.info(
+                    f"[COMM_DERIVE] op=moe_backward, "
+                    f"expert_shardable={expert_shardable}, "
+                    f"ptype={ptype}, "
+                    f"comm_bytes={comm_bytes / 1e6:.2f}MB, "
+                    f"comm_type={comm_type}"
+                )
 
         return ops
 
