@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from llm_perf.utils.constants import DTYPE_SIZES
 
 from .comm_deriver import CommPatternDeriver
-from .tensor import ShardedTensor
+from .tensor import ShardedTensor, ShardedParameter
 
 if TYPE_CHECKING:
     from llm_perf.kernels.op import CommOp
@@ -47,13 +47,16 @@ class ShardedModule:
         self._last_forward_output: Optional[ShardedTensor] = None
 
     def __setattr__(self, name: str, value: Any):
-        """Auto-register submodules and weights."""
-        if isinstance(value, ShardedModule):
+        """Auto-register submodules and parameters."""
+        if isinstance(value, ShardedParameter):
+            self._weights[name] = value
+            value._name = name
+        elif isinstance(value, ShardedModule):
             self._submodules[name] = value
             value._name = name
         elif isinstance(value, ShardedTensor):
-            self._weights[name] = value
-        elif isinstance(value, list) and all(isinstance(v, ShardedModule) for v in value):
+            pass
+        elif isinstance(value, list) and value and all(isinstance(v, ShardedModule) for v in value):
             for i, v in enumerate(value):
                 v._name = f"{name}.{i}"
                 self._submodules[f"{name}.{i}"] = v
