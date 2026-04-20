@@ -308,7 +308,15 @@ class ShardedAttention(ShardedModule):
         hidden: ShardedTensor,
         is_causal: bool = True,
     ) -> ShardedTensor:
-        """Attention forward.
+        """Attention forward with Flash Attention optimization.
+
+        Memory optimization: Only save backward-required activations.
+        - q_proj/k_proj/v_proj: projection outputs (needed for gradient)
+        - output: final output (needed for gradient)
+
+        Not saved (can be recomputed in backward):
+        - q/k/v: view tensors from projections
+        - attn_out: Flash Attention output (recomputed in backward)
 
         Args:
             hidden: (batch, seq, hidden_size)
@@ -319,18 +327,23 @@ class ShardedAttention(ShardedModule):
         batch = hidden.shape[0] if len(hidden.shape) >= 1 else 1
         seq = hidden.shape[1] if len(hidden.shape) >= 2 else 1
 
+        # Save projections (needed for backward gradient computation)
         q_proj = self._track_intermediate("q_proj", hidden @ self.q_weight)
         k_proj = self._track_intermediate("k_proj", hidden @ self.k_weight)
         v_proj = self._track_intermediate("v_proj", hidden @ self.v_weight)
 
+        # View tensors - don't save (can be derived from q_proj/k_proj/v_proj)
         q = q_proj.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         k = k_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
+        # Flash Attention output - don't save (recomputed in backward)
         attn_out = flash_attention(q, k, v, is_causal=is_causal)
 
+        # Reshape - don't save (view tensor)
         attn_flat = attn_out.transpose(1, 2).view(batch, seq, self.num_heads * self.head_dim)
 
+        # Save output (needed for backward)
         output = self._track_intermediate("output", attn_flat @ self.o_weight)
 
         self._activations["q_proj"] = q_proj

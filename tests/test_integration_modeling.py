@@ -158,7 +158,16 @@ class TestUnifiedAnalyzerIntegration:
             assert sub_inst.params_count_physical >= 0
 
     def test_intermediate_tensor_tracking_attention(self):
-        """Test intermediate tensors are tracked in ShardedAttention."""
+        """Test intermediate tensors are tracked in ShardedAttention.
+
+        Flash Attention optimization: only backward-required activations are saved.
+        - q_proj/k_proj/v_proj: projection outputs (needed for gradient)
+        - output: final output (needed for gradient)
+
+        Not saved (recomputed in backward):
+        - q/k/v: view tensors from projections
+        - attn_out/attn_flat: Flash Attention internal states
+        """
         from llm_perf.modeling.layers import ShardedAttention
 
         attention = ShardedAttention(
@@ -171,16 +180,19 @@ class TestUnifiedAnalyzerIntegration:
         hidden = ShardedTensor(shape=(1, 512, 4096))
         attention(hidden)
 
+        # Only these should be tracked (backward-required)
         assert len(attention._intermediate_tensors) > 0
         assert "q_proj" in attention._intermediate_tensors
         assert "k_proj" in attention._intermediate_tensors
         assert "v_proj" in attention._intermediate_tensors
-        assert "q" in attention._intermediate_tensors
-        assert "k" in attention._intermediate_tensors
-        assert "v" in attention._intermediate_tensors
-        assert "attn_out" in attention._intermediate_tensors
-        assert "attn_flat" in attention._intermediate_tensors
         assert "output" in attention._intermediate_tensors
+
+        # These should NOT be tracked (Flash Attention optimization)
+        assert "q" not in attention._intermediate_tensors, "q is view of q_proj, should not be saved"
+        assert "k" not in attention._intermediate_tensors, "k is view of k_proj, should not be saved"
+        assert "v" not in attention._intermediate_tensors, "v is view of v_proj, should not be saved"
+        assert "attn_out" not in attention._intermediate_tensors, "Flash Attention output is recomputed in backward"
+        assert "attn_flat" not in attention._intermediate_tensors, "attn_flat is view of attn_out"
 
     def test_intermediate_tensor_tracking_ffn(self):
         """Test intermediate tensors are tracked in ShardedFFN."""

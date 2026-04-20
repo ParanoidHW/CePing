@@ -431,6 +431,7 @@ class DeepSeekModel(ShardedModule):
                         dtype=dtype,
                     )
                 )
+        self.layers = self.layers
 
         self.final_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
         self.lm_head = ShardedLMHead(
