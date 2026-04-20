@@ -6,6 +6,9 @@ Similar to torch.Tensor, but with automatic sharding constraint derivation.
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple, Union, List, Any
 import math
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -266,7 +269,14 @@ class ShardedTensor:
                 shape.append(max(1, size // degree))
             else:
                 shape.append(size)
-        return tuple(shape)
+        physical_shape = tuple(shape)
+        logger.info(
+            f"[PHYSICAL_SHAPE] tensor={self.name or 'unnamed'}, "
+            f"logical={self.shape}, shardable={self.shardable}, "
+            f"parallel_degrees={parallel_degrees}, "
+            f"physical={physical_shape}, dtype={self.dtype}"
+        )
+        return physical_shape
 
     def get_physical_numel(self, parallel_degrees: Dict[str, int]) -> int:
         """Get physical number of elements after sharding."""
