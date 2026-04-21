@@ -785,6 +785,17 @@ ${JSON.stringify(
             ${commRows || '<tr><td colspan="3">无通信数据</td></tr>'}
         </table>
 
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">通信分解 (按通信原语)</h3>
+        <table class="breakdown-table">
+            <tr><th>原语类型</th><th>通信量 (GB)</th><th>时间 (ms)</th></tr>
+            ${Object.entries(detailed.communication?.by_operation || {})
+                .map(([type, data]) => {
+                    const totalGb = (data.total_bytes || 0) / 1e9;
+                    const totalMs = (data.total_time_sec || 0) * 1000;
+                    return `<tr><td>${type}</td><td>${totalGb.toFixed(2)}</td><td>${totalMs.toFixed(2)}</td></tr>`;
+                }).join('') || '<tr><td colspan="3">无数据</td></tr>'}
+        </table>
+
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模型详情</h3>
         ${submodelDetails || '<p>无子模型详情</p>'}
     `;
