@@ -287,12 +287,27 @@ class CommPatternDeriver:
 
         Cases:
         1. DP gradient synchronization: allreduce on weight gradients
+           - DP梯度需要跨DP组同步，不依赖shardable标记
+        2. TP backward comm: 依赖shardable标记
         """
         ops = []
 
+        dp_degree = self.parallel_degrees.get("dp", 1)
+        if dp_degree > 1:
+            weight = op.weight
+            weight_bytes = weight.numel() * DTYPE_SIZES.get(weight.dtype, 2)
+            comm_type = "allreduce"
+            ops.append(CommOp(comm_type, weight_bytes, "dp", direction="backward"))
+            logger.debug(
+                f"[COMM_DERIVE] op=matmul_backward, "
+                f"dp_degree={dp_degree}, "
+                f"comm_bytes={weight_bytes / 1e6:.2f}MB, "
+                f"comm_type={comm_type}"
+            )
+
         weight = op.weight
         for dim, ptype in weight.shardable.items():
-            if ptype == "dp":
+            if ptype == "tp":
                 weight_bytes = weight.numel() * DTYPE_SIZES.get(weight.dtype, 2)
                 comm_type = "allreduce"
                 ops.append(CommOp(comm_type, weight_bytes, ptype, direction="backward"))
