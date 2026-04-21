@@ -99,6 +99,7 @@ class SubmoduleResult:
         submodule_type: 子模块类型 (embedding, attention, ffn, moe, lm_head, rms_norm, conv, resblock)
         time_sec: 执行时间（秒）
         flops: FLOPs
+        count: 调用次数（同一结构子模块的数量，用于计算平均时间）
         params_count: 参数量（物理，每卡）
         weight_memory_gb: 权重内存（GB，每卡）
         gradient_memory_gb: 梯度内存（GB，每卡，训练时）
@@ -113,6 +114,7 @@ class SubmoduleResult:
     submodule_type: str
     time_sec: float
     flops: int
+    count: int = 1
     params_count: int = 0
     weight_memory_gb: float = 0.0
     gradient_memory_gb: float = 0.0
@@ -128,6 +130,9 @@ class SubmoduleResult:
             "submodule_type": self.submodule_type,
             "time_sec": self.time_sec,
             "time_ms": self.time_sec * 1000,
+            "count": self.count,
+            "avg_time_sec": self.time_sec / self.count if self.count > 0 else 0.0,
+            "avg_time_ms": (self.time_sec / self.count) * 1000 if self.count > 0 else 0.0,
             "flops": self.flops,
             "flops_gflops": self.flops / 1e9,
             "params_count": self.params_count,

@@ -477,7 +477,6 @@ class UnifiedAnalyzer:
             latent_channels = getattr(component, "latent_channels", 16)
             input_tensor = ShardedTensor(shape=(batch_size, latent_channels, latent_t, latent_h, latent_w))
         elif hasattr(component, "vocab_size"):
-            vocab_size = getattr(component, "vocab_size", 32000)
             input_tensor = ShardedTensor(shape=(batch_size, seq_len))
         else:
             input_tensor = ShardedTensor(shape=(batch_size, seq_len, hidden_size))
@@ -555,6 +554,7 @@ class UnifiedAnalyzer:
                         submodule_type=cached.submodule_type,
                         time_sec=cached.time_sec,
                         flops=cached.flops,
+                        count=cached.count,
                         params_count=cached.params_count,
                         weight_memory_gb=cached.weight_memory_gb,
                         gradient_memory_gb=cached.gradient_memory_gb,
@@ -691,6 +691,7 @@ class UnifiedAnalyzer:
                 submodule_type=nested_type,
                 time_sec=self._estimate_submodule_time(first_inst),
                 flops=first_inst.flops_forward_physical,
+                count=1,
                 params_count=first_inst.params_count_physical,
                 weight_memory_gb=first_inst.weight_memory_physical / 1e9,
                 gradient_memory_gb=first_inst.gradient_memory_physical / 1e9,
@@ -711,6 +712,7 @@ class UnifiedAnalyzer:
                         submodule_type=cached.submodule_type,
                         time_sec=cached.time_sec,
                         flops=cached.flops,
+                        count=cached.count,
                         params_count=cached.params_count,
                         weight_memory_gb=cached.weight_memory_gb,
                         gradient_memory_gb=cached.gradient_memory_gb,
@@ -1379,10 +1381,16 @@ class UnifiedAnalyzer:
         return type_mapping.get(submodule_type, "all_reduce")
 
     def _extract_communication_breakdown(self, phase_results: List[PhaseResult]) -> CommunicationBreakdown:
-        """从PhaseResult.submodules的comm_ops_detail提取通信分解，按并行方式和原语双层组织."""
+        """从PhaseResult.submodules的comm_ops_detail提取通信分解，按并行方式和原语双层组织.
+
+        包含 bytes 和 time 的双重细分，便于前端展示不同原语类型的通信量和时间。
+        """
         by_parallelism: Dict[str, Dict[str, Any]] = {}
         by_operation: Dict[str, Dict[str, Any]] = {}
         total_bytes = 0
+        total_time_sec = 0.0
+
+        parallel_degrees = self._get_parallel_degrees()
 
         for phase in phase_results:
             for sm in phase.submodules:
@@ -1391,29 +1399,69 @@ class UnifiedAnalyzer:
                     comm_type = op_detail["comm_type"]
                     data_bytes = op_detail["data_bytes"]
 
+                    degree = parallel_degrees.get(ptype, 1)
+                    bandwidth_gbps = self._get_bandwidth_for_ptype(ptype)
+                    comm_time = self._estimate_single_comm_time(comm_type, data_bytes, degree, bandwidth_gbps)
+
                     if ptype not in by_parallelism:
-                        by_parallelism[ptype] = {"total_bytes": 0, "operations": {}}
+                        by_parallelism[ptype] = {"total_bytes": 0, "total_time_sec": 0.0, "operations": {}}
                     by_parallelism[ptype]["total_bytes"] += data_bytes
+                    by_parallelism[ptype]["total_time_sec"] += comm_time
 
                     if comm_type not in by_parallelism[ptype]["operations"]:
-                        by_parallelism[ptype]["operations"][comm_type] = {"total_bytes": 0}
+                        by_parallelism[ptype]["operations"][comm_type] = {"total_bytes": 0, "total_time_sec": 0.0}
                     by_parallelism[ptype]["operations"][comm_type]["total_bytes"] += data_bytes
+                    by_parallelism[ptype]["operations"][comm_type]["total_time_sec"] += comm_time
 
                     if comm_type not in by_operation:
-                        by_operation[comm_type] = {"total_bytes": 0, "by_ptype": {}}
+                        by_operation[comm_type] = {"total_bytes": 0, "total_time_sec": 0.0, "by_ptype": {}}
                     by_operation[comm_type]["total_bytes"] += data_bytes
+                    by_operation[comm_type]["total_time_sec"] += comm_time
 
                     if ptype not in by_operation[comm_type]["by_ptype"]:
-                        by_operation[comm_type]["by_ptype"][ptype] = {"total_bytes": 0}
+                        by_operation[comm_type]["by_ptype"][ptype] = {"total_bytes": 0, "total_time_sec": 0.0}
                     by_operation[comm_type]["by_ptype"][ptype]["total_bytes"] += data_bytes
+                    by_operation[comm_type]["by_ptype"][ptype]["total_time_sec"] += comm_time
 
                     total_bytes += data_bytes
+                    total_time_sec += comm_time
 
         return CommunicationBreakdown(
             by_parallelism=by_parallelism,
             by_operation=by_operation,
             total_bytes=total_bytes,
+            total_time_sec=total_time_sec,
         )
+
+    def _estimate_single_comm_time(
+        self, comm_type: str, data_bytes: int, num_ranks: int, bandwidth_gbps: float
+    ) -> float:
+        """Estimate time for a single communication operation."""
+        import math
+
+        if num_ranks <= 1:
+            return 0.0
+
+        bandwidth_bytes_per_sec = bandwidth_gbps * 1e9
+
+        comm_type_lower = comm_type.lower()
+        if comm_type_lower == "allreduce":
+            steps = math.ceil(math.log2(num_ranks))
+            return steps * data_bytes / bandwidth_bytes_per_sec
+        elif comm_type_lower == "allgather":
+            steps = math.ceil(math.log2(num_ranks))
+            return steps * data_bytes / bandwidth_bytes_per_sec
+        elif comm_type_lower == "alltoall":
+            return data_bytes / bandwidth_bytes_per_sec
+        elif comm_type_lower == "reduce_scatter":
+            return num_ranks * data_bytes / bandwidth_bytes_per_sec / 2
+        elif comm_type_lower == "broadcast":
+            steps = math.ceil(math.log2(num_ranks))
+            return steps * data_bytes / bandwidth_bytes_per_sec
+        elif comm_type_lower == "p2p":
+            return data_bytes / bandwidth_bytes_per_sec
+        else:
+            return data_bytes / bandwidth_bytes_per_sec
 
     def _calculate_throughput(
         self,
@@ -1464,6 +1512,39 @@ class UnifiedAnalyzer:
             "dp": self.strategy.dp_degree,
             "ep": self.strategy.ep_degree,
         }
+
+    def _get_bandwidth_for_ptype(self, ptype: str) -> float:
+        """Get bandwidth for a parallel type.
+
+        Args:
+            ptype: Parallel type (tp, dp, ep, sp, pp)
+
+        Returns:
+            Bandwidth in GB/s
+        """
+        intra_node_bw = 400.0
+        inter_node_bw = 100.0
+
+        if hasattr(self.cluster, "topology"):
+            topology = self.cluster.topology
+            for level in topology.levels:
+                if level.name == "node" or "intra" in level.name.lower():
+                    intra_node_bw = level.bandwidth_gbps
+                elif level.name == "inter_node" or "inter" in level.name.lower():
+                    inter_node_bw = level.bandwidth_gbps
+
+        elif hasattr(self.cluster, "intra_node_bandwidth_gbps"):
+            intra_node_bw = self.cluster.intra_node_bandwidth_gbps
+            if hasattr(self.cluster, "inter_node_bandwidth_gbps"):
+                inter_node_bw = self.cluster.inter_node_bandwidth_gbps
+
+        devices_per_node = getattr(self.cluster, "devices_per_node", 8)
+        degree = self._get_parallel_degrees().get(ptype, 1)
+
+        if degree <= devices_per_node:
+            return intra_node_bw
+        else:
+            return inter_node_bw
 
     def _calculate_mfu(self, total_flops: int, total_time_sec: float) -> float:
         """Calculate Model FLOPs Utilization.

@@ -1,7 +1,7 @@
 """Breakdown classes for performance analysis."""
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 
 @dataclass
@@ -268,6 +268,7 @@ def _merge_norm_submodules(submodules: List[Any]) -> List[Any]:
                     submodule_type=merged_type,
                     time_sec=sm.time_sec + pending_norm.time_sec,
                     flops=sm.flops + pending_norm.flops,
+                    count=sm.count + pending_norm.count,
                     params_count=sm.params_count + pending_norm.params_count,
                     weight_memory_gb=sm.weight_memory_gb + pending_norm.weight_memory_gb,
                     gradient_memory_gb=sm.gradient_memory_gb + pending_norm.gradient_memory_gb,
