@@ -39,6 +39,7 @@ async function init() {
     setupEventListeners();
     updateDeviceModels();
     updateTopologyParams();
+    loadModelPreset();
 }
 
 async function loadData() {
@@ -419,6 +420,8 @@ function collectConfig() {
     
     const config = {
         model: {
+            preset: presetKey,
+            type: preset?.architecture || 'llama',
             ...preset,
             sparse_type: elements.modelType.value,
             hidden_size: parseInt(document.getElementById('hidden-size').value),
@@ -453,6 +456,12 @@ function collectConfig() {
                 config.training[param.name] = value;
             }
         });
+        if (!config.training.batch_size) {
+            const batchSizeInput = document.getElementById('param-batch_size');
+            if (batchSizeInput) {
+                config.training.batch_size = parseInt(batchSizeInput.value) || 32;
+            }
+        }
     } else {
         config.inference = {};
         modeParams.forEach(param => {
