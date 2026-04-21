@@ -260,7 +260,7 @@ class UnifiedAnalyzer:
         if hasattr(self.cluster, "topology") and self.cluster.topology:
             topology_dict = self.cluster.topology.to_dict()
 
-        logger.info(
+        logger.debug(
             f"[UNIFIED_RESULT] weight_gb={detailed_breakdown['memory']['by_type']['weight']:.2f}"
         )
         return UnifiedResult(
@@ -299,7 +299,7 @@ class UnifiedAnalyzer:
         results = []
 
         for phase in workload.phases:
-            logger.info(
+            logger.debug(
                 f"[PHASE_START] phase={phase.name}, "
                 f"component={phase.component}, "
                 f"compute_type={phase.compute_type.value}, "
@@ -341,7 +341,7 @@ class UnifiedAnalyzer:
                     memory_breakdown["gradient_gb"] += sub.gradient_memory_gb
                     memory_breakdown["optimizer_gb"] += sub.optimizer_memory_gb
 
-            logger.info(
+            logger.debug(
                 f"[PHASE_MEMORY] phase={phase.name}, "
                 f"weight_gb={memory_breakdown['weight_gb']:.4f}, "
                 f"num_submodules={len(submodules)}"
@@ -350,7 +350,7 @@ class UnifiedAnalyzer:
             # Calculate total memory
             total_memory_gb = sum(memory_breakdown.values())
 
-            logger.info(
+            logger.debug(
                 f"[PHASE_RESULT] name={phase.name}, "
                 f"memory_gb={total_memory_gb:.4f}, "
                 f"weight_gb={memory_breakdown['weight_gb']:.4f}"
@@ -419,7 +419,7 @@ class UnifiedAnalyzer:
         ctx = self._create_parallel_context(params)
         batch_size = params.get("batch_size", 1)
         seq_len = params.get("seq_len", params.get("prompt_len", 512))
-        logger.info(
+        logger.debug(
             f"[SUBMODULE_ANALYZE] tp={ctx.tp_degree}, pp={ctx.pp_degree}, "
             f"dp={ctx.dp_degree}, ep={ctx.ep_degree}, dtype={ctx.dtype}, "
             f"batch_size={batch_size}, seq_len={seq_len}"
@@ -551,14 +551,14 @@ class UnifiedAnalyzer:
                     nested_submodules=nested_submodules,
                 )
             )
-            logger.info(
+            logger.debug(
                 f"[SUBMODULE] name={sub_name}, type={submodule_type}, "
                 f"params_physical={sub_inst.params_count_physical / 1e9:.4f}B, "
                 f"weight_gb={sub_inst.weight_memory_physical / 1e9:.4f}GB, "
                 f"flops={sub_inst.flops_forward_physical / 1e12:.4f}T"
             )
 
-        logger.info(
+        logger.debug(
             f"[PHASE_ANALYSIS] phase_name={phase.component}, "
             f"compute_type={phase.compute_type.value}, "
             f"total_flops={flops / 1e12:.4f}T, "
@@ -684,7 +684,7 @@ class UnifiedAnalyzer:
                 component, batch_size, params, seq_len_factor, dtype, dtype_bytes, phase.compute_type
             )
 
-        logger.info(
+        logger.debug(
             f"[PHASE] phase={phase.name}, compute_type={phase.compute_type}, "
             f"time_sec={time_sec:.4f}s, memory_gb={memory_gb:.4f}GB, "
             f"flops={flops / 1e12:.4f}T, submodules_count={len(submodules)}"
@@ -1501,7 +1501,7 @@ class UnifiedAnalyzer:
         for phase in phases:
             all_submodules.extend(phase.submodules)
         merged_submodules = _merge_norm_submodules(all_submodules)
-        logger.info(
+        logger.debug(
             f"[MERGE_NORM] original_count={len(all_submodules)}, "
             f"merged_count={len(merged_submodules)}"
         )
@@ -1535,7 +1535,7 @@ class UnifiedAnalyzer:
                 by_submodule_type[block_type]["memory"]["gradient_gb"] = sum(s.gradient_memory_gb for s in peak_sms)
                 by_submodule_type[block_type]["memory"]["optimizer_gb"] = sum(s.optimizer_memory_gb for s in peak_sms)
                 by_submodule_type[block_type]["memory"]["activation_gb"] = sum(s.activation_memory_gb for s in peak_sms)
-                logger.info(
+                logger.debug(
                     f"[BY_TYPE] block_type={block_type}, "
                     f"count={len(peak_sms)}, "
                     f"weight_gb={by_submodule_type[block_type]['memory']['weight_gb']:.4f}GB, "
@@ -1667,7 +1667,7 @@ class UnifiedAnalyzer:
 
         total_compute_flops = sum(data["compute"]["flops"] for data in by_submodule_type.values())
         total_comm_bytes = sum(data["communication"]["bytes"] for data in by_submodule_type.values())
-        logger.info(
+        logger.debug(
             f"[TOTAL] weight_gb={total_memory_breakdown['weight_gb']:.2f}GB, "
             f"gradient_gb={total_memory_breakdown['gradient_gb']:.2f}GB, "
             f"optimizer_gb={total_memory_breakdown['optimizer_gb']:.2f}GB, "

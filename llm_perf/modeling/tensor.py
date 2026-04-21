@@ -270,7 +270,7 @@ class ShardedTensor:
             else:
                 shape.append(size)
         physical_shape = tuple(shape)
-        logger.info(
+        logger.debug(
             f"[PHYSICAL_SHAPE] tensor={self.name or 'unnamed'}, "
             f"logical={self.shape}, shardable={self.shardable}, "
             f"parallel_degrees={parallel_degrees}, "

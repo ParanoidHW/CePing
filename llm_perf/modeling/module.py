@@ -269,7 +269,7 @@ class ModuleInstance:
         for name, activation in module.get_activations().items():
             self._activation_instances[name] = ActivationInstance(activation, ctx)
 
-        logger.info(
+        logger.debug(
             f"[BIND] module={module.__class__.__name__}, "
             f"tp={ctx.tp_degree}, pp={ctx.pp_degree}, dp={ctx.dp_degree}, "
             f"ep={ctx.ep_degree}, sp={ctx.sp_degree}, mode={mode}, "
@@ -307,7 +307,7 @@ class ModuleInstance:
             total_flops += self._infer_physical_flops(op)
 
         self._flops_forward_physical = total_flops
-        logger.info(
+        logger.debug(
             f"[FLOPS] module={self.module.__class__.__name__}, "
             f"op_count={len(op_history)}, "
             f"flops_forward={self._flops_forward_physical / 1e12:.4f}T, "
@@ -363,7 +363,7 @@ class ModuleInstance:
                 total = total // ratio
 
             self._activation_memory_physical = total
-            logger.info(
+            logger.debug(
                 f"[ACTIVATION_MEM] module={self.module.__class__.__name__}, "
                 f"mode={self.mode}, num_intermediate={len(self.module._intermediate_tensors)}, "
                 f"activation_mem={self._activation_memory_physical / 1e9:.4f}GB"
@@ -431,7 +431,7 @@ class ModuleInstance:
         else:
             self._optimizer_memory_physical = base_memory
 
-        logger.info(
+        logger.debug(
             f"[OPTIMIZER_MEM] params_physical={self.params_count_physical / 1e9:.2f}B, "
             f"zero_stage={self.ctx.zero_stage}, dp={self.ctx.dp_degree}, "
             f"optimizer_mem={self._optimizer_memory_physical / 1e9:.4f}GB"
@@ -699,7 +699,7 @@ class ModuleInstance:
                 pass
 
         total_time_sec = compute_time + comm_time
-        logger.info(
+        logger.debug(
             f"[TIME_ESTIMATE] module={self.module.__class__.__name__}, "
             f"compute_time={compute_time * 1000:.2f}ms, "
             f"comm_time={comm_time * 1000:.2f}ms, "

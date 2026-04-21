@@ -128,7 +128,7 @@ class CommPatternDeriver:
             comm_bytes = math.prod(output_physical) * dtype_size
             comm_type = "allreduce"
             ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
-            logger.info(
+            logger.debug(
                 f"[COMM_DERIVE] op=matmul, "
                 f"weight_shardable={weight_shardable}, "
                 f"output_shardable={output_shardable}, "
@@ -168,7 +168,7 @@ class CommPatternDeriver:
                     comm_type = "alltoall"
                     ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
                     ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
-                    logger.info(
+                    logger.debug(
                         f"[COMM_DERIVE] op=attention, "
                         f"q_shardable={q_shardable}, "
                         f"ptype={ptype}, "
@@ -209,7 +209,7 @@ class CommPatternDeriver:
                     comm_bytes = math.prod(output_physical) * dtype_size * tp_degree
                     comm_type = "allgather"
                     ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
-                    logger.info(
+                    logger.debug(
                         f"[COMM_DERIVE] op=embedding, "
                         f"weight_shardable={weight_shardable}, "
                         f"output_shardable={output_shardable}, "
@@ -244,7 +244,7 @@ class CommPatternDeriver:
                 comm_type = "alltoall"
                 ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
                 ops.append(CommOp(comm_type, comm_bytes, ptype, direction="forward"))
-                logger.info(
+                logger.debug(
                     f"[COMM_DERIVE] op=moe, "
                     f"expert_shardable={expert_shardable}, "
                     f"ptype={ptype}, "
@@ -296,7 +296,7 @@ class CommPatternDeriver:
                 weight_bytes = weight.numel() * DTYPE_SIZES.get(weight.dtype, 2)
                 comm_type = "allreduce"
                 ops.append(CommOp(comm_type, weight_bytes, ptype, direction="backward"))
-                logger.info(
+                logger.debug(
                     f"[COMM_DERIVE] op=matmul_backward, "
                     f"weight_shardable={weight.shardable}, "
                     f"ptype={ptype}, "
@@ -327,7 +327,7 @@ class CommPatternDeriver:
                 comm_bytes = math.prod(hidden_physical) * dtype_size
                 comm_type = "alltoall"
                 ops.append(CommOp(comm_type, comm_bytes, ptype, direction="backward"))
-                logger.info(
+                logger.debug(
                     f"[COMM_DERIVE] op=moe_backward, "
                     f"expert_shardable={expert_shardable}, "
                     f"ptype={ptype}, "
