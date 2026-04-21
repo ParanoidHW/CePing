@@ -561,6 +561,7 @@ class UnifiedAnalyzer:
                         optimizer_memory_gb=cached.optimizer_memory_gb,
                         activation_memory_gb=cached.activation_memory_gb,
                         communication_bytes=cached.communication_bytes,
+                        communication_time_sec=cached.communication_time_sec,
                         comm_ops_detail=cached.comm_ops_detail,
                         nested_submodules=cached.nested_submodules,
                     )
@@ -591,6 +592,9 @@ class UnifiedAnalyzer:
         """评估单个子模块实例."""
         delta_comm_bytes = 0
         comm_ops_detail = []
+        comm_time_sec = 0.0
+        parallel_degrees = self._get_parallel_degrees()
+        
         if sub_inst.module._last_forward_output:
             op_history = sub_inst.module._last_forward_output._op_history
             if phase.compute_type != ComputeType.OPTIMIZER:
@@ -606,6 +610,11 @@ class UnifiedAnalyzer:
                             }
                         )
                         delta_comm_bytes += comm_op.data_bytes
+                        degree = parallel_degrees.get(ptype, 1)
+                        bandwidth_gbps = self._get_bandwidth_for_ptype(ptype)
+                        comm_time_sec += self._estimate_single_comm_time(
+                            comm_op.comm_type, comm_op.data_bytes, degree, bandwidth_gbps
+                        )
                     if phase.compute_type == ComputeType.BACKWARD:
                         backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
                         for comm_op in backward_comm_ops:
@@ -618,6 +627,11 @@ class UnifiedAnalyzer:
                                 }
                             )
                             delta_comm_bytes += comm_op.data_bytes
+                            degree = parallel_degrees.get(ptype, 1)
+                            bandwidth_gbps = self._get_bandwidth_for_ptype(ptype)
+                            comm_time_sec += self._estimate_single_comm_time(
+                                comm_op.comm_type, comm_op.data_bytes, degree, bandwidth_gbps
+                            )
 
         submodule_type = self._infer_submodule_type(sub_name, sub_inst)
 
@@ -636,6 +650,7 @@ class UnifiedAnalyzer:
             optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
             activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
             communication_bytes=delta_comm_bytes,
+            communication_time_sec=comm_time_sec,
             comm_ops_detail=comm_ops_detail,
             nested_submodules=nested_submodules,
         )
@@ -1718,7 +1733,7 @@ class UnifiedAnalyzer:
                         "activation_gb": 0.0,
                     },
                     "compute": {"flops": 0, "flops_gflops": 0.0, "time_sec": 0.0},
-                    "communication": {"bytes": 0, "gb": 0.0},
+                    "communication": {"bytes": 0, "gb": 0.0, "time_sec": 0.0},
                     "nested_breakdown": {},
                 }
 
@@ -1743,6 +1758,7 @@ class UnifiedAnalyzer:
             by_submodule_type[block_type]["compute"]["time_sec"] += sm.time_sec
             by_submodule_type[block_type]["communication"]["bytes"] += sm.communication_bytes
             by_submodule_type[block_type]["communication"]["gb"] += sm.communication_bytes / 1e9
+            by_submodule_type[block_type]["communication"]["time_sec"] += sm.communication_time_sec
 
             # Handle nested submodules
             if sm.nested_submodules:
@@ -1764,7 +1780,7 @@ class UnifiedAnalyzer:
                                 "activation_gb": 0.0,
                             },
                             "compute": {"flops": 0, "time_sec": 0.0},
-                            "communication": {"bytes": 0, "gb": 0.0},
+                            "communication": {"bytes": 0, "gb": 0.0, "time_sec": 0.0},
                         }
 
                     peak_nested_sms = [n for n in peak_nested_all if n.submodule_type == nested_type]
@@ -1799,8 +1815,10 @@ class UnifiedAnalyzer:
                     by_submodule_type[block_type]["nested_breakdown"][nested_type]["communication"]["gb"] += (
                         nested.communication_bytes / 1e9
                     )
+                    by_submodule_type[block_type]["nested_breakdown"][nested_type]["communication"]["time_sec"] += (
+                        nested.communication_time_sec
+                    )
 
-                    # by_nested_type
                     if nested_type not in by_nested_type:
                         by_nested_type[nested_type] = {
                             "memory": {
@@ -1811,7 +1829,7 @@ class UnifiedAnalyzer:
                                 "activation_gb": 0.0,
                             },
                             "compute": {"flops": 0, "flops_gflops": 0.0, "time_sec": 0.0},
-                            "communication": {"bytes": 0, "gb": 0.0},
+                            "communication": {"bytes": 0, "gb": 0.0, "time_sec": 0.0},
                             "parent_type": block_type,
                         }
 
@@ -1837,6 +1855,7 @@ class UnifiedAnalyzer:
                     by_nested_type[nested_type]["compute"]["time_sec"] += nested.time_sec
                     by_nested_type[nested_type]["communication"]["bytes"] += nested.communication_bytes
                     by_nested_type[nested_type]["communication"]["gb"] += nested.communication_bytes / 1e9
+                    by_nested_type[nested_type]["communication"]["time_sec"] += nested.communication_time_sec
 
         # Calculate total memory breakdown
         total_params_count = sum(data["memory"]["params_count"] for data in by_submodule_type.values())

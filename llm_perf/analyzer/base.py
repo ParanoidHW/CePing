@@ -121,6 +121,7 @@ class SubmoduleResult:
     optimizer_memory_gb: float = 0.0
     activation_memory_gb: float = 0.0
     communication_bytes: int = 0
+    communication_time_sec: float = 0.0
     comm_ops_detail: List[Dict[str, Any]] = field(default_factory=list)
     nested_submodules: List["SubmoduleResult"] = field(default_factory=list)
 
@@ -149,7 +150,10 @@ class SubmoduleResult:
                     + self.activation_memory_gb
                 ),
             },
-            "communication_gb": self.communication_bytes / 1e9,
+            "communication": {
+                "gb": self.communication_bytes / 1e9,
+                "time_sec": self.communication_time_sec,
+            },
             "nested_submodules": [ns.to_dict() for ns in self.nested_submodules],
         }
         return result
