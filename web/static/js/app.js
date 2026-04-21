@@ -685,23 +685,24 @@ function renderDetailedBreakdown(detailed) {
         const computeTflops = (data.compute?.flops || 0) / 1e12;
         const computeSec = data.compute?.time_sec || 0;
         const commGb = data.communication?.gb || 0;
+        const commTimeMs = (data.communication?.time_sec || 0) * 1000;
         
-        // Main row for submodule type
         submoduleBreakdownRows += `<tr>
             <td style="font-weight: bold;">${submoduleType}</td>
             <td>${memGb.toFixed(2)} GB</td>
             <td>${computeTflops.toFixed(2)} T</td>
             <td>${computeSec.toFixed(3)} s</td>
             <td>${commGb.toFixed(2)} GB</td>
+            <td>${commTimeMs.toFixed(2)} ms</td>
         </tr>`;
         
-        // Nested rows (attention, ffn) for transformer_block
         if (data.nested_breakdown) {
             for (const [nestedType, nestedData] of Object.entries(data.nested_breakdown)) {
                 const nestedMemGb = nestedData.memory?.activations_gb || 0;
                 const nestedComputeTflops = (nestedData.compute?.flops || 0) / 1e12;
                 const nestedComputeSec = nestedData.compute?.time_sec || 0;
                 const nestedCommGb = nestedData.communication?.gb || 0;
+                const nestedCommTimeMs = (nestedData.communication?.time_sec || 0) * 1000;
                 
                 submoduleBreakdownRows += `<tr style="background: var(--gray-50);">
                     <td style="padding-left: 1.5rem;">${nestedType}</td>
@@ -709,6 +710,7 @@ function renderDetailedBreakdown(detailed) {
                     <td>${nestedComputeTflops.toFixed(2)} T</td>
                     <td>${nestedComputeSec.toFixed(3)} s</td>
                     <td>${nestedCommGb.toFixed(2)} GB</td>
+                    <td>${nestedCommTimeMs.toFixed(2)} ms</td>
                 </tr>`;
             }
         }
@@ -769,8 +771,8 @@ ${JSON.stringify(
 
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模块分解 (按类型)</h3>
         <table class="breakdown-table">
-            <tr><th>子模块类型</th><th>内存</th><th>计算量</th><th>计算时间</th><th>通信量</th></tr>
-            ${submoduleBreakdownRows || '<tr><td colspan="5">无数据</td></tr>'}
+            <tr><th>子模块类型</th><th>内存</th><th>计算量</th><th>计算时间</th><th>通信量</th><th>通信时间</th></tr>
+            ${submoduleBreakdownRows || '<tr><td colspan="6">无数据</td></tr>'}
         </table>
 
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>
@@ -792,7 +794,15 @@ ${JSON.stringify(
                 .map(([type, data]) => {
                     const totalGb = (data.total_bytes || 0) / 1e9;
                     const totalMs = (data.total_time_sec || 0) * 1000;
-                    return `<tr><td>${type}</td><td>${totalGb.toFixed(2)}</td><td>${totalMs.toFixed(2)}</td></tr>`;
+                    let rows = `<tr><td><b>${type}</b></td><td>${totalGb.toFixed(2)}</td><td>${totalMs.toFixed(2)}</td></tr>`;
+                    if (data.by_ptype) {
+                        for (const [ptype, pdata] of Object.entries(data.by_ptype)) {
+                            const pGb = (pdata.total_bytes || 0) / 1e9;
+                            const pMs = (pdata.total_time_sec || 0) * 1000;
+                            rows += `<tr style="background-color: #f5f5f5;"><td>${type} (${ptype.toUpperCase()})</td><td>${pGb.toFixed(2)}</td><td>${pMs.toFixed(2)}</td></tr>`;
+                        }
+                    }
+                    return rows;
                 }).join('') || '<tr><td colspan="3">无数据</td></tr>'}
         </table>
 
@@ -816,6 +826,16 @@ function renderBreakdown(breakdown) {
                 <td>Compute</td>
                 <td>${(breakdown.time_breakdown?.compute_sec * 1000 || 0).toFixed(1)} ms</td>
                 <td>${(breakdown.time_breakdown?.compute_percent || 0).toFixed(1)}%</td>
+            </tr>
+            <tr>
+                <td>Backward</td>
+                <td>${(breakdown.time_breakdown?.backward_sec * 1000 || 0).toFixed(1)} ms</td>
+                <td>${(breakdown.time_breakdown?.backward_percent || 0).toFixed(1)}%</td>
+            </tr>
+            <tr>
+                <td>Optimizer</td>
+                <td>${(breakdown.time_breakdown?.optimizer_sec * 1000 || 0).toFixed(1)} ms</td>
+                <td>${(breakdown.time_breakdown?.optimizer_percent || 0).toFixed(1)}%</td>
             </tr>
             <tr>
                 <td>Communication</td>
