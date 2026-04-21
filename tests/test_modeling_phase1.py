@@ -3,6 +3,7 @@
 import pytest
 from llm_perf.modeling import (
     ShardedTensor,
+    ShardedParameter,
     ShardedModule,
     ParallelContext,
     SPType,
@@ -220,7 +221,7 @@ class TestShardedModule:
         class SimpleModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.weight = ShardedTensor(
+                self.weight = ShardedParameter(
                     shape=(4096, 4096),
                     shardable={0: "tp"},
                 )
@@ -236,8 +237,8 @@ class TestShardedModule:
         class TestModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.w1 = ShardedTensor(shape=(4096, 4096))
-                self.w2 = ShardedTensor(shape=(4096, 11008))
+                self.w1 = ShardedParameter(shape=(4096, 4096))
+                self.w2 = ShardedParameter(shape=(4096, 11008))
 
         module = TestModule()
 
@@ -249,8 +250,8 @@ class TestShardedModule:
         class TestModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.w1 = ShardedTensor(shape=(100, 100))
-                self.w2 = ShardedTensor(shape=(100, 200))
+                self.w1 = ShardedParameter(shape=(100, 100))
+                self.w2 = ShardedParameter(shape=(100, 200))
 
         module = TestModule()
         breakdown = module.params_count_breakdown()
@@ -264,7 +265,7 @@ class TestShardedModule:
         class SubModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.weight = ShardedTensor(shape=(100, 100))
+                self.weight = ShardedParameter(shape=(100, 100))
 
         class ParentModule(ShardedModule):
             def __init__(self):
@@ -294,7 +295,7 @@ class TestModuleInstance:
         class SimpleModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.weight = ShardedTensor(
+                self.weight = ShardedParameter(
                     shape=(4096, 4096),
                     shardable={0: "tp"},
                 )
@@ -316,7 +317,7 @@ class TestModuleInstance:
         class TestModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.weight = ShardedTensor(
+                self.weight = ShardedParameter(
                     shape=(4096, 11008),
                     shardable={1: "tp"},
                 )
@@ -335,7 +336,7 @@ class TestModuleInstance:
         class SimpleModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.w = ShardedTensor(shape=(100, 100))
+                self.w = ShardedParameter(shape=(100, 100))
 
         module = SimpleModule()
         ctx = ParallelContext()
@@ -350,7 +351,7 @@ class TestModuleInstance:
         class SimpleModule(ShardedModule):
             def __init__(self):
                 super().__init__()
-                self.weight = ShardedTensor(
+                self.weight = ShardedParameter(
                     shape=(100, 100),
                     shardable={0: "tp"},
                 )
