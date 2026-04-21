@@ -470,12 +470,13 @@ class ModuleInstance:
     def own_comm_ops(self) -> List["CommOp"]:
         """Own communication operations (excluding submodules).
 
-        Note: Due to op_history structure, this currently returns
-        ops from this module's direct operations. For modules with
-        submodules, some ops may be double-counted.
+        Uses caching to avoid recomputation of op_history traversal.
         """
-        ops = []
+        cache_key = f"_cached_own_ops_{self.mode}"
+        if hasattr(self, cache_key):
+            return getattr(self, cache_key)
 
+        ops = []
         if self.module._last_forward_output:
             for op in self.module._last_forward_output._op_history:
                 comm_ops = self._infer_comm_ops(op)
@@ -485,6 +486,7 @@ class ModuleInstance:
                     backward_comm_ops = self._infer_backward_comm_ops(op)
                     ops.extend(backward_comm_ops)
 
+        setattr(self, cache_key, ops)
         return ops
 
     @property
