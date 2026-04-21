@@ -247,7 +247,7 @@ class UnifiedAnalyzer:
 
         comm_breakdown = self._extract_communication_breakdown(phase_results)
 
-        breakdown = self._generate_breakdown(phase_results, workload, total_time, throughput)
+        breakdown = self._generate_breakdown(phase_results, workload, total_time, throughput, comm_breakdown)
         detailed_breakdown = self._generate_detailed_breakdown(phase_results, workload, comm_breakdown)
 
         global_comm_bytes = 0
@@ -1586,11 +1586,20 @@ class UnifiedAnalyzer:
         workload: WorkloadConfig,
         total_time: float,
         throughput: Dict[str, float],
+        comm_breakdown: Optional[CommunicationBreakdown] = None,
     ) -> Dict[str, Any]:
         """Generate legacy breakdown format for frontend compatibility."""
         compute_time = sum(p.total_time_sec for p in phases if p.compute_type == ComputeType.FORWARD)
         backward_time = sum(p.total_time_sec for p in phases if p.compute_type == ComputeType.BACKWARD)
         optimizer_time = sum(p.total_time_sec for p in phases if p.compute_type == ComputeType.OPTIMIZER)
+        communication_time = comm_breakdown.total_time_sec if comm_breakdown else 0.0
+        effective_total_time = total_time + communication_time
+        memory_time = max(0, effective_total_time - compute_time - backward_time - optimizer_time - communication_time)
+        compute_percent = compute_time / effective_total_time * 100 if effective_total_time > 0 else 0
+        backward_percent = backward_time / effective_total_time * 100 if effective_total_time > 0 else 0
+        optimizer_percent = optimizer_time / effective_total_time * 100 if effective_total_time > 0 else 0
+        communication_percent = communication_time / effective_total_time * 100 if effective_total_time > 0 else 0
+        memory_percent = memory_time / effective_total_time * 100 if effective_total_time > 0 else 0
 
         layers = []
         for phase in phases:
@@ -1650,9 +1659,13 @@ class UnifiedAnalyzer:
                 "compute_sec": compute_time,
                 "backward_sec": backward_time,
                 "optimizer_sec": optimizer_time,
-                "communication_sec": 0,
-                "memory_sec": 0,
-                "compute_percent": compute_time / total_time * 100 if total_time > 0 else 0,
+                "communication_sec": communication_time,
+                "memory_sec": memory_time,
+                "compute_percent": compute_percent,
+                "backward_percent": backward_percent,
+                "optimizer_percent": optimizer_percent,
+                "communication_percent": communication_percent,
+                "memory_percent": memory_percent,
             },
             "layers": layers,
             "submodules": submodule_breakdown,
