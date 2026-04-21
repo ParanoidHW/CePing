@@ -444,7 +444,12 @@ class ModuleInstance:
         """Total communication operations (forward + backward).
 
         Includes both own ops and submodule ops.
+        Uses caching to avoid recomputation.
         """
+        cache_key = f"_cached_comm_ops_{self.mode}"
+        if hasattr(self, cache_key):
+            return getattr(self, cache_key)
+
         ops = []
         for inst in self._submodule_instances.values():
             ops.extend(inst.total_comm_ops)
@@ -458,6 +463,7 @@ class ModuleInstance:
                     backward_comm_ops = self._infer_backward_comm_ops(op)
                     ops.extend(backward_comm_ops)
 
+        setattr(self, cache_key, ops)
         return ops
 
     @property
@@ -513,7 +519,7 @@ class ModuleInstance:
                 result = linear(input_physical, weight_physical, dtype=op.dtype)
                 flops = result.flops
                 logger.debug(
-                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
                 )
                 return flops
             elif isinstance(op, AttentionOp):
@@ -523,7 +529,7 @@ class ModuleInstance:
                 result = flash_attention(q_physical, k_physical, v_physical, dtype=op.dtype)
                 flops = result.flops
                 logger.debug(
-                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
                 )
                 return flops
             elif isinstance(op, RMSNormOp):
@@ -531,7 +537,7 @@ class ModuleInstance:
                 result = rms_norm(input_physical, dtype=op.dtype)
                 flops = result.flops
                 logger.debug(
-                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
                 )
                 return flops
             elif isinstance(op, ActivationOp):
@@ -540,8 +546,7 @@ class ModuleInstance:
                     result = silu(input_physical, dtype=op.dtype)
                     flops = result.flops
                     logger.debug(
-                        f"[OP_FLOPS] op_type={op.__class__.__name__}, "
-                        f"kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                        f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
                     )
                     return flops
             elif isinstance(op, EmbeddingOp):
@@ -554,7 +559,7 @@ class ModuleInstance:
                 result = embedding(vocab_size, embedding_dim, input_shape, dtype=op.dtype)
                 flops = result.flops
                 logger.debug(
-                    f"[OP_FLOPS] op_type={op.__class__.__name__}, kernel={result.kernel_name}, flops={flops / 1e9:.2f}G"
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
                 )
                 return flops
         except Exception:
