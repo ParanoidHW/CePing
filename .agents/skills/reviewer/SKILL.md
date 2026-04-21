@@ -60,7 +60,7 @@ ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 ### 2.1 测试通过率
 ```bash
 python -m pytest tests/test_models.py tests/test_deepseek.py \
-    tests/test_resnet.py tests/test_vae.py tests/test_wan_video.py -v
+    tests/test_resnet.py tests/test_vae.py tests/test_wan_video.py -v -n 4
 ```
 - [ ] 所有测试通过（无 Error 或 Failure）
 
@@ -116,7 +116,7 @@ ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 
 # 2. 运行测试
 python -m pytest tests/test_models.py tests/test_deepseek.py \
-    tests/test_resnet.py tests/test_vae.py tests/test_wan_video.py -v --tb=short
+    tests/test_resnet.py tests/test_vae.py tests/test_wan_video.py -v -n 4 --tb=short
 
 # 3. 验证模型
 python -c "

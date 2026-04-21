@@ -129,9 +129,10 @@ grep -rn "activation_bytes=" llm_perf/modeling/*.py | grep -v "kernel_result_to_
 
 ### 4.3 验证步骤
 1. **代码检查**：`ruff check llm_perf/modeling/*.py --select=F401,F841,E741`
-2. **单元测试**：`python -m pytest tests/test_models.py -v`
+2. **单元测试**：`python -m pytest tests/test_models.py -v -n 4`
+
 3. **集成测试**：运行相关模型测试
-4. **全量测试**：`python -m pytest tests/ -v`
+4. **全量测试**：`python -m pytest tests/ -v -n 4`
 
 ### 4.4 提交规范
 ```bash
@@ -180,13 +181,13 @@ class TestLlamaModel:
 ### 5.3 测试命令
 ```bash
 # 模型测试
-python -m pytest tests/test_models.py -v
+python -m pytest tests/test_models.py -v -n 4
 
 # 特定模型测试
-python -m pytest tests/test_deepseek.py -v
+python -m pytest tests/test_deepseek.py -v -n 4
 
 # 全量测试
-python -m pytest tests/ -v
+python -m pytest tests/ -v -n 4
 ```
 
 ### 5.4 额外测试要求
@@ -274,7 +275,7 @@ git commit -m "test: add bind mechanism tests"
 # 开发流程
 1. 编写代码
 2. 编写测试用例
-3. 运行测试: python -m pytest tests/ -v
+3. 运行测试: python -m pytest tests/ -v -n 4
 4. 提交commit
 ```
 
@@ -349,10 +350,10 @@ ruff check llm_perf/modeling/*.py --select=F401,F841,E741
 grep -n "activation_bytes=" llm_perf/modeling/*.py | grep -v "kernel_result_to_layer" | grep -v "# NOTE"
 
 # 运行测试
-python -m pytest tests/test_models.py -v --tb=short
+python -m pytest tests/test_models.py -v -n 4 --tb=short
 
 # 全量测试
-python -m pytest tests/ --tb=no -q
+python -m pytest tests/ -v -n 4 --tb=short
 
 # 验证模型
 python -c "from llm_perf.modeling import LlamaModel; m = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=32, num_heads=32); print(f'{len(m.layers)} layers')"
