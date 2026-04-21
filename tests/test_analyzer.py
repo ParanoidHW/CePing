@@ -404,10 +404,11 @@ class TestResultDimensions:
 
             assert "by_submodule_type" in memory
             for block_type, metrics in memory.get("by_submodule_type", {}).items():
-                assert "weight_gb" in metrics
-                assert "activation_gb" in metrics
-                assert metrics["weight_gb"] >= 0
-                assert metrics["activation_gb"] >= 0
+                assert "memory" in metrics
+                assert "weight_gb" in metrics["memory"]
+                assert "activation_gb" in metrics["memory"]
+                assert metrics["memory"]["weight_gb"] >= 0
+                assert metrics["memory"]["activation_gb"] >= 0
 
             # Backward compatibility: by_type field
             assert "by_type" in memory or "summary" in memory

@@ -1034,3 +1034,131 @@ class TestMultipleModelsHTTPAPI:
 
         result = data["result"]
         self._verify_all_checks(result, "wan-dit")
+
+
+class TestFirstEvaluateDeepSeekV3:
+    """Test first evaluation parameter passing for DeepSeek V3."""
+
+    def test_first_evaluate_deepseek_v3_params(self):
+        """Test first evaluation of deepseek-v3 has correct parameters."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate/training",
+            json={
+                "model": {
+                    "preset": "deepseek-v3",
+                    "type": "deepseek",
+                    "sparse_type": "deepseek_moe",
+                    "hidden_size": 7168,
+                    "num_layers": 61,
+                    "num_heads": 128,
+                    "num_kv_heads": 128,
+                    "intermediate_size": 18432,
+                    "vocab_size": 129280,
+                    "max_seq_len": 163840,
+                    "dtype": "fp16",
+                    "first_k_dense_layers": 1,
+                    "num_experts": 256,
+                    "num_experts_per_token": 8,
+                },
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "training": {
+                    "batch_size": 32,
+                    "seq_len": 4096,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+        assert detailed is not None
+
+        mem = detailed.get("memory", {})
+        by_type = mem.get("by_type", {})
+
+        assert by_type["weight"] > 150, f"weight memory should be > 150GB for DSv3, got {by_type['weight']}"
+
+        metadata = result.get("metadata", {})
+        assert metadata.get("tp_degree") == 8
+
+    def test_deepseek_v3_preset_config(self):
+        """Test deepseek-v3 preset has correct config."""
+        client = app.test_client()
+        response = client.get("/api/model/presets")
+        assert response.status_code == 200
+
+        data = response.get_json()
+        presets = data["presets"]
+
+        assert "deepseek-v3" in presets
+        dsv3 = presets["deepseek-v3"]
+        assert dsv3["num_layers"] == 61, f"num_layers should be 61, got {dsv3.get('num_layers')}"
+        assert dsv3["architecture"] == "deepseek", f"architecture should be 'deepseek', got {dsv3.get('architecture')}"
+
+    def test_first_evaluate_with_preset_field(self):
+        """Test evaluation with preset field correctly resolves to deepseek architecture."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate/training",
+            json={
+                "model": {
+                    "preset": "deepseek-v3",
+                    "type": "deepseek",
+                },
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "training": {
+                    "batch_size": 1,
+                    "seq_len": 2048,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        assert result.get("peak_memory_gb") > 0
+
+        detailed = result.get("detailed_breakdown")
+        if detailed:
+            by_submodule_type = detailed.get("memory", {}).get("by_submodule_type", {})
+            assert "transformer_block" in by_submodule_type
+
+    def test_batch_size_fallback_to_training_params(self):
+        """Test that batch_size from training params is used correctly."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate/training",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "training": {
+                    "batch_size": 64,
+                    "seq_len": 2048,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        assert result.get("peak_memory_gb") > 0

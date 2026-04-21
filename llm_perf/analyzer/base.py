@@ -1,8 +1,11 @@
 """Unified Analyzer base classes and data structures."""
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 
 class ComputeType(str, Enum):
@@ -276,6 +279,9 @@ class UnifiedResult:
             result["breakdown"] = self.breakdown
         if self.detailed_breakdown:
             result["detailed_breakdown"] = self.detailed_breakdown
+            logger.info(
+                f"[OUTPUT] weight_gb={self.detailed_breakdown['memory']['by_type']['weight']:.2f}"
+            )
         if self.communication_breakdown:
             result["communication_breakdown"] = self.communication_breakdown.to_dict()
         if self.module_breakdown:
