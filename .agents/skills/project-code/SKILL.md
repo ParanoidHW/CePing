@@ -90,6 +90,10 @@ module.py -> instance.py
 instance.py -> module.py  # 循环！
 ```
 
+### 4. 禁止参考旧架构内容
+
+legacy下为旧架构，禁止参考其中实现或内容
+
 ---
 
 ## 数据结构设计规范

@@ -79,3 +79,9 @@ class ModelName(BaseModel):
 # Cross-attention 无调制（model.py line 310 确认）
 num_modulation = 6 * cfg.hidden_size
 ```
+
+### 2.4 特别注意事项
+
+1. FFN/MoE intermediate size和其激活函数有关，如果是带gated的激活函数，intermediate size需要乘以2，否则不用乘；
+2. 确定FFN激活函数是否带gate，不能只看huggingface官方config.json，也得看实际代码实现；如果没有调用带gated的融合算子，或者没有在down前进行act * gate，就可以认为不是带gate的；
+2. Norm类的评估数据合并到其后续的模块中，不单独呈现
