@@ -223,6 +223,12 @@ class UnifiedAnalyzer:
             workload = get_workload(workload)
 
         resolved_params = {**workload.default_params, **kwargs}
+        logger.info(
+            f"[ANALYZE_START] workload={workload.name}, "
+            f"phases=[{[p.name for p in workload.phases]}], "
+            f"batch_size={resolved_params.get('batch_size')}, "
+            f"seq_len={resolved_params.get('seq_len')}"
+        )
 
         phase_results = self._analyze_phases(workload, resolved_params)
 
@@ -254,6 +260,9 @@ class UnifiedAnalyzer:
         if hasattr(self.cluster, "topology") and self.cluster.topology:
             topology_dict = self.cluster.topology.to_dict()
 
+        logger.info(
+            f"[UNIFIED_RESULT] weight_gb={detailed_breakdown['memory']['by_type']['weight']:.2f}"
+        )
         return UnifiedResult(
             workload_name=workload.name,
             workload_type=workload.workload_type,
@@ -290,6 +299,12 @@ class UnifiedAnalyzer:
         results = []
 
         for phase in workload.phases:
+            logger.info(
+                f"[PHASE_START] phase={phase.name}, "
+                f"component={phase.component}, "
+                f"compute_type={phase.compute_type.value}, "
+                f"repeat={phase.repeat}"
+            )
             user_component_name = workload.resolve_component(phase.component)
             component = self._get_component(user_component_name)
 
@@ -326,9 +341,20 @@ class UnifiedAnalyzer:
                     memory_breakdown["gradient_gb"] += sub.gradient_memory_gb
                     memory_breakdown["optimizer_gb"] += sub.optimizer_memory_gb
 
+            logger.info(
+                f"[PHASE_MEMORY] phase={phase.name}, "
+                f"weight_gb={memory_breakdown['weight_gb']:.4f}, "
+                f"num_submodules={len(submodules)}"
+            )
+
             # Calculate total memory
             total_memory_gb = sum(memory_breakdown.values())
 
+            logger.info(
+                f"[PHASE_RESULT] name={phase.name}, "
+                f"memory_gb={total_memory_gb:.4f}, "
+                f"weight_gb={memory_breakdown['weight_gb']:.4f}"
+            )
             results.append(
                 PhaseResult(
                     name=phase.name,
@@ -391,9 +417,14 @@ class UnifiedAnalyzer:
         支持嵌套子模块分析：transformer_block 内部分解为 attention 和 ffn。
         """
         ctx = self._create_parallel_context(params)
-
         batch_size = params.get("batch_size", 1)
         seq_len = params.get("seq_len", params.get("prompt_len", 512))
+        logger.info(
+            f"[SUBMODULE_ANALYZE] tp={ctx.tp_degree}, pp={ctx.pp_degree}, "
+            f"dp={ctx.dp_degree}, ep={ctx.ep_degree}, dtype={ctx.dtype}, "
+            f"batch_size={batch_size}, seq_len={seq_len}"
+        )
+
         hidden_size = getattr(component, "hidden_size", 4096)
 
         compute_pattern = phase.compute_pattern or self._infer_compute_pattern(component)
@@ -1470,6 +1501,10 @@ class UnifiedAnalyzer:
         for phase in phases:
             all_submodules.extend(phase.submodules)
         merged_submodules = _merge_norm_submodules(all_submodules)
+        logger.info(
+            f"[MERGE_NORM] original_count={len(all_submodules)}, "
+            f"merged_count={len(merged_submodules)}"
+        )
 
         peak_submodules = _merge_norm_submodules(peak_phase.submodules) if peak_phase else []
 

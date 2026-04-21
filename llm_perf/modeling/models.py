@@ -5,7 +5,10 @@ Includes:
 - LlamaModel: Complete Llama model
 """
 
+import logging
 from typing import Optional, Union, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 from llm_perf.modeling.module import ShardedModule, ModuleInstance
 from llm_perf.modeling.tensor import ShardedTensor
 from llm_perf.modeling.layers import (
@@ -353,6 +356,7 @@ class DeepSeekModel(ShardedModule):
         dtype: str = "fp16",
     ):
         super().__init__()
+        logger.debug(f"[DEEPSEEK_INIT_START] num_layers={num_layers}, first_k_dense={first_k_dense_layers}, num_experts={num_experts}")
 
         if num_kv_heads is None:
             num_kv_heads = num_heads
@@ -394,10 +398,6 @@ class DeepSeekModel(ShardedModule):
             num_experts_per_token=num_experts_per_token,
         )
 
-        from llm_perf.modeling.layers import ShardedMoE
-
-        ShardedMoE
-
         self.embedding = ShardedEmbedding(
             num_embeddings=vocab_size,
             embedding_dim=hidden_size,
@@ -431,7 +431,9 @@ class DeepSeekModel(ShardedModule):
                         dtype=dtype,
                     )
                 )
+        logger.debug(f"[DEEPSEEK_LAYERS_CREATED] len(self.layers)={len(self.layers)}, type={type(self.layers).__name__}")
         self.layers = self.layers
+        logger.debug(f"[DEEPSEEK_INIT] layers={len(self.layers)}, _submodules={len(self._submodules)}, _weights={len(self._weights)}")
 
         self.final_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
         self.lm_head = ShardedLMHead(

@@ -60,6 +60,7 @@ class ShardedModule:
             for i, v in enumerate(value):
                 v._name = f"{name}.{i}"
                 self._submodules[f"{name}.{i}"] = v
+            logger.debug(f"[SETATTR_LIST] {self.__class__.__name__}.{name} registered {len(value)} submodules, total={len(self._submodules)}")
         super().__setattr__(name, value)
 
     def forward(self, *args, **kwargs) -> ShardedTensor:
