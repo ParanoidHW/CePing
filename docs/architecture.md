@@ -1,4 +1,4 @@
-# 架构设计（v5.0）
+# 架构设计（v5.1）
 
 ## 整体架构
 
@@ -248,6 +248,74 @@ SubmoduleInstance.total_comm_ops
 | `ShardedMLA` | KV压缩 | AllToAll |
 | `ShardedConv3d` | channels切分 | AllReduce |
 
+**类型系统**:
+
+| 类型 | 继承 | 用途 | 注册位置 |
+|------|------|------|----------|
+| `ShardedTensor` | - | 通用切分张量 | - |
+| `ShardedParameter` | ShardedTensor | 模型权重（不可切分逻辑） | `_weights` |
+| `ShardedModule` | - | 可绑定模块 | `_submodules` |
+
+**`__setattr__` 自动注册机制**:
+
+```python
+def __setattr__(self, name: str, value: Any):
+    if isinstance(value, ShardedParameter):
+        self._weights[name] = value      # 权重 → _weights
+    elif isinstance(value, ShardedModule):
+        self._submodules[name] = value   # 子模块 → _submodules
+    elif isinstance(value, ShardedTensor):
+        pass                              # 普通张量 → 不注册
+```
+
+**权重/激活内存统计分离**:
+
+```python
+class ShardedModule:
+    _weights: Dict[str, ShardedTensor]      # 权重张量
+    _activations: Dict[str, ShardedTensor]  # 激活张量
+    _intermediate_tensors: Dict[str, ShardedTensor]  # 中间张量
+    
+    def get_weights(self) -> Dict[str, ShardedTensor]:
+        """递归获取所有权重"""
+        
+    def get_activations(self) -> Dict[str, ShardedTensor]:
+        """递归获取所有激活（含中间张量）"""
+```
+
+**ShardedFFN 激活类型**:
+
+```python
+class FFNActType(str, Enum):
+    SWIGLU = "swiglu"  # gated, 3权重
+    GELU = "gelu"      # non-gated, 2权重
+    RELU = "relu"      # non-gated, 2权重
+    SILU = "silu"      # non-gated, 2权重
+```
+
+| ffn_act_type | 权重数量 | 权重列表 | 计算路径 |
+|--------------|----------|----------|----------|
+| `swiglu` | 3 | gate_weight, up_weight, down_weight | `silu(x @ gate) * (x @ up) @ down` |
+| `gelu` | 2 | up_weight, down_weight | `gelu(x @ up) @ down` |
+| `relu` | 2 | up_weight, down_weight | `relu(x @ up) @ down` |
+| `silu` | 2 | up_weight, down_weight | `silu(x @ up) @ down` |
+
+**gated vs non-gated 差异**:
+
+```python
+# Gated FFN (SWIGLU)
+gate_proj = hidden @ gate_weight    # (batch, seq, intermediate)
+gate_silu = silu(gate_proj)         # 门控激活
+up_proj = hidden @ up_weight        # (batch, seq, intermediate)
+intermediate = gate_silu * up_proj  # 元素级乘法
+output = intermediate @ down_weight
+
+# Non-gated FFN (GELU/RELU/SILU)
+up_proj = hidden @ up_weight        # (batch, seq, intermediate)
+intermediate = act_fn(up_proj)      # 单一激活
+output = intermediate @ down_weight
+```
+
 **完整模型**:
 
 | 模型 | 结构 | layers |
@@ -459,6 +527,45 @@ class ShardedAttention(ShardedModule):
 
 **网络拓扑**:
 
+**TopologyLevel 结构**:
+
+```python
+@dataclass
+class TopologyLevel:
+    name: str                    # 层级名称: "node", "rack", "cluster"
+    level: int                   # 层级编号: 0=最近设备
+    bandwidth_gbps: float       # 该层级带宽
+    latency_us: float = 1.0     # 延迟 (μs)
+    oversubscription_ratio: float = 1.0  # 超额订阅比
+    devices_per_group: int = 1   # 该层设备组大小
+```
+
+**拓扑工厂方法**:
+
+| 方法 | 用途 | 层级结构 |
+|------|------|----------|
+| `create_clos_3tier()` | 3层Clos拓扑 | node → rack → cluster |
+| `create_fat_tree()` | 数据中心胖树 | edge → aggregation → core |
+| `create_2tier_simple()` | 简单2层拓扑 | node → inter_node |
+| `create_cloudmatrix_supernode()` | 华为超节点 | ub_plane → rdma_plane |
+
+**使用示例**:
+
+```python
+# 3层Clos拓扑
+topology = NetworkTopology.create_clos_3tier(
+    node_bw_gbps=900,      # NVLink
+    rack_bw_gbps=200,      # Leaf switch
+    cluster_bw_gbps=100,   # Spine switch
+)
+
+# 华为CloudMatrix 384 NPU超节点
+topology = NetworkTopology.create_cloudmatrix_supernode(
+    num_npus=384,
+    ub_bw_gbps=3136,       # ~392GB/s x 8
+)
+```
+
 | 拓扑 | 描述 |
 |------|------|
 | 2-Tier Simple | 机内NVLink + 机间IB |
@@ -620,7 +727,15 @@ default_params:
 
 ## 版本历史
 
-### v5.0 (当前)
+### v5.1 (当前)
+- **类型系统**: ShardedParameter vs ShardedTensor 区分，__setattr__ 自动注册机制
+- **内存统计分离**: get_weights() / get_activations() 独立追踪
+- **ShardedFFN**: ffn_act_type 参数支持 SWIGLU/GELU/RELU/SILU
+- **FFN权重差异**: gated(3权重) vs non-gated(2权重)
+- **TopologyLevel**: 层级结构定义，levels 列表替代 legacy 属性
+- **拓扑工厂**: create_clos_3tier/create_fat_tree/create_cloudmatrix_supernode
+
+### v5.0
 - **Workload Layer**: YAML配置工作负载，与模型解耦
 - **ComputePattern**: 按负载特征分类（transformer_block/conv_encoder等）
 - **Analyzer**: UnifiedAnalyzer统一分析器
