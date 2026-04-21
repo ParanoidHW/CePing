@@ -5,12 +5,21 @@ A local HTTPS web interface for interactive performance evaluation.
 """
 
 import ipaddress
+import logging
+import os
 import ssl
 import sys
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -180,6 +189,11 @@ def evaluate():
     """Unified evaluation endpoint."""
     try:
         data = request.json
+        logger.info(
+            f"[REQUEST] model={data.get('model')}, device={data.get('device')}, "
+            f"strategy={data.get('strategy')}, workload={data.get('workload')}, "
+            f"batch_size={data.get('batch_size')}, seq_len={data.get('seq_len')}"
+        )
 
         model_config = data.get("model", {})
         model_type = model_config.get("type", "llama")
@@ -208,6 +222,12 @@ def evaluate():
         if not workload:
             mode = data.get("mode", "inference")
             workload = infer_workload(model_type, mode)
+
+        logger.info(
+            f"[PARSED_PARAMS] model_type={model_type}, device={device.config.name}, "
+            f"tp={strategy.tp_degree}, pp={strategy.pp_degree}, "
+            f"dp={strategy.dp_degree}, ep={strategy.ep_degree}"
+        )
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
 
