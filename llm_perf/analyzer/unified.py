@@ -405,6 +405,41 @@ class UnifiedAnalyzer:
         """
         return ComputePattern.TRANSFORMER_BLOCK
 
+    def _compute_structure_signature(self, sub_inst: ModuleInstance) -> str:
+        """计算子模块结构签名（类名+关键配置参数）.
+
+        相同签名的子模块具有相同的计算特征，评估一次即可复用结果。
+        """
+        module = sub_inst.module
+        class_name = type(module).__name__
+
+        config_attrs = [
+            "hidden_size",
+            "num_heads",
+            "head_dim",
+            "intermediate_size",
+            "num_experts",
+            "num_experts_per_token",
+            "vocab_size",
+            "embedding_dim",
+            "dtype",
+            "num_key_value_heads",
+            "num_experts_per_tok",
+            "moe_intermediate_size",
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_rope_head_dim",
+            "qk_nope_head_dim",
+            "v_head_dim",
+        ]
+        config_values = []
+        for attr in config_attrs:
+            if hasattr(module, attr):
+                val = getattr(module, attr)
+                config_values.append(f"{attr}={val}")
+
+        return f"{class_name}:{','.join(config_values)}"
+
     def _analyze_phase_with_submodules(
         self,
         component: ShardedModule,
@@ -489,74 +524,53 @@ class UnifiedAnalyzer:
 
         memory = module_instance.activation_memory_physical / 1e9
 
-        submodules = []
-        prev_op_count = 0
+        signature_groups: Dict[str, List[Tuple[str, ModuleInstance]]] = {}
         for sub_name, sub_inst in module_instance._submodule_instances.items():
-            current_op_count = 0
-            if sub_inst.module._last_forward_output:
-                current_op_count = len(sub_inst.module._last_forward_output._op_history)
+            sig = self._compute_structure_signature(sub_inst)
+            if sig not in signature_groups:
+                signature_groups[sig] = []
+            signature_groups[sig].append((sub_name, sub_inst))
 
-            delta_comm_bytes = 0
-            comm_ops_detail = []
-            if sub_inst.module._last_forward_output and current_op_count > prev_op_count:
-                delta_ops = sub_inst.module._last_forward_output._op_history[prev_op_count:current_op_count]
-                if phase.compute_type != ComputeType.OPTIMIZER:
-                    for op in delta_ops:
-                        comm_ops = sub_inst._infer_comm_ops(op)
-                        for comm_op in comm_ops:
-                            ptype = getattr(comm_op, "ptype", "unknown")
-                            comm_ops_detail.append(
-                                {
-                                    "comm_type": comm_op.comm_type,
-                                    "ptype": ptype,
-                                    "data_bytes": comm_op.data_bytes,
-                                }
-                            )
-                            delta_comm_bytes += comm_op.data_bytes
-                        if phase.compute_type == ComputeType.BACKWARD:
-                            backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
-                            for comm_op in backward_comm_ops:
-                                ptype = getattr(comm_op, "ptype", "unknown")
-                                comm_ops_detail.append(
-                                    {
-                                        "comm_type": comm_op.comm_type,
-                                        "ptype": ptype,
-                                        "data_bytes": comm_op.data_bytes,
-                                    }
-                                )
-                                delta_comm_bytes += comm_op.data_bytes
+        logger.debug(
+            f"[STRUCTURE_GROUPS] {len(signature_groups)} unique structures, "
+            f"total {len(module_instance._submodule_instances)} submodules"
+        )
 
-            prev_op_count = current_op_count
-
-            submodule_type = self._infer_submodule_type(sub_name, sub_inst)
-
-            # Analyze nested submodules for transformer_block
-            nested_submodules = []
-            if submodule_type == "transformer_block":
-                nested_submodules = self._analyze_nested_submodules(sub_inst, phase)
-
-            submodules.append(
-                SubmoduleResult(
-                    name=sub_name,
-                    submodule_type=submodule_type,
-                    time_sec=self._estimate_submodule_time(sub_inst),
-                    flops=sub_inst.flops_forward_physical,
-                    params_count=sub_inst.params_count_physical,
-                    weight_memory_gb=sub_inst.weight_memory_physical / 1e9,
-                    gradient_memory_gb=sub_inst.gradient_memory_physical / 1e9,
-                    optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
-                    activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
-                    communication_bytes=delta_comm_bytes,
-                    comm_ops_detail=comm_ops_detail,
-                    nested_submodules=nested_submodules,
-                )
-            )
+        signature_cache: Dict[str, SubmoduleResult] = {}
+        for sig, instances in signature_groups.items():
+            first_name, first_inst = instances[0]
+            cached = self._evaluate_single_submodule(first_name, first_inst, phase)
+            signature_cache[sig] = cached
             logger.debug(
-                f"[SUBMODULE] name={sub_name}, type={submodule_type}, "
-                f"params_physical={sub_inst.params_count_physical / 1e9:.4f}B, "
-                f"weight_gb={sub_inst.weight_memory_physical / 1e9:.4f}GB, "
-                f"flops={sub_inst.flops_forward_physical / 1e12:.4f}T"
+                f"[STRUCTURE_CACHE] signature={sig}, instances={len(instances)}, first={first_name}"
             )
+
+        submodules = []
+        for sig, instances in signature_groups.items():
+            cached = signature_cache[sig]
+            for sub_name, sub_inst in instances:
+                submodules.append(
+                    SubmoduleResult(
+                        name=sub_name,
+                        submodule_type=cached.submodule_type,
+                        time_sec=cached.time_sec,
+                        flops=cached.flops,
+                        params_count=cached.params_count,
+                        weight_memory_gb=cached.weight_memory_gb,
+                        gradient_memory_gb=cached.gradient_memory_gb,
+                        optimizer_memory_gb=cached.optimizer_memory_gb,
+                        activation_memory_gb=cached.activation_memory_gb,
+                        communication_bytes=cached.communication_bytes,
+                        comm_ops_detail=cached.comm_ops_detail,
+                        nested_submodules=cached.nested_submodules,
+                    )
+                )
+                logger.debug(
+                    f"[SUBMODULE] name={sub_name}, type={cached.submodule_type}, "
+                    f"params_physical={cached.params_count / 1e9:.4f}B, "
+                    f"weight_gb={cached.weight_memory_gb:.4f}GB, "
+                    f"flops={cached.flops / 1e12:.4f}T"
+                )
 
         logger.debug(
             f"[PHASE_ANALYSIS] phase_name={phase.component}, "
@@ -568,6 +582,64 @@ class UnifiedAnalyzer:
         )
         return time_sec, memory, flops, submodules
 
+    def _evaluate_single_submodule(
+        self,
+        sub_name: str,
+        sub_inst: ModuleInstance,
+        phase: Phase,
+    ) -> SubmoduleResult:
+        """评估单个子模块实例."""
+        delta_comm_bytes = 0
+        comm_ops_detail = []
+        if sub_inst.module._last_forward_output:
+            op_history = sub_inst.module._last_forward_output._op_history
+            if phase.compute_type != ComputeType.OPTIMIZER:
+                for op in op_history:
+                    comm_ops = sub_inst._infer_comm_ops(op)
+                    for comm_op in comm_ops:
+                        ptype = getattr(comm_op, "ptype", "unknown")
+                        comm_ops_detail.append(
+                            {
+                                "comm_type": comm_op.comm_type,
+                                "ptype": ptype,
+                                "data_bytes": comm_op.data_bytes,
+                            }
+                        )
+                        delta_comm_bytes += comm_op.data_bytes
+                    if phase.compute_type == ComputeType.BACKWARD:
+                        backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
+                        for comm_op in backward_comm_ops:
+                            ptype = getattr(comm_op, "ptype", "unknown")
+                            comm_ops_detail.append(
+                                {
+                                    "comm_type": comm_op.comm_type,
+                                    "ptype": ptype,
+                                    "data_bytes": comm_op.data_bytes,
+                                }
+                            )
+                            delta_comm_bytes += comm_op.data_bytes
+
+        submodule_type = self._infer_submodule_type(sub_name, sub_inst)
+
+        nested_submodules = []
+        if submodule_type == "transformer_block":
+            nested_submodules = self._analyze_nested_submodules(sub_inst, phase)
+
+        return SubmoduleResult(
+            name=sub_name,
+            submodule_type=submodule_type,
+            time_sec=self._estimate_submodule_time(sub_inst),
+            flops=sub_inst.flops_forward_physical,
+            params_count=sub_inst.params_count_physical,
+            weight_memory_gb=sub_inst.weight_memory_physical / 1e9,
+            gradient_memory_gb=sub_inst.gradient_memory_physical / 1e9,
+            optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
+            activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
+            communication_bytes=delta_comm_bytes,
+            comm_ops_detail=comm_ops_detail,
+            nested_submodules=nested_submodules,
+        )
+
     def _analyze_nested_submodules(
         self,
         parent_inst: ModuleInstance,
@@ -576,49 +648,78 @@ class UnifiedAnalyzer:
         """分析嵌套子模块（如 transformer_block 内部的 attention, ffn）."""
         from .base import SubmoduleResult
 
-        nested = []
-        prev_op_count = 0
+        nested_items = [
+            (sub_name, sub_inst)
+            for sub_name, sub_inst in parent_inst._submodule_instances.items()
+            if type(sub_inst.module).__name__ in NESTED_MODULE_CLASSES
+        ]
 
-        for sub_name, sub_inst in parent_inst._submodule_instances.items():
-            sub_type = type(sub_inst.module).__name__
+        if not nested_items:
+            return []
 
-            if sub_type not in NESTED_MODULE_CLASSES:
-                continue
+        signature_groups: Dict[str, List[Tuple[str, ModuleInstance]]] = {}
+        for sub_name, sub_inst in nested_items:
+            sig = self._compute_structure_signature(sub_inst)
+            if sig not in signature_groups:
+                signature_groups[sig] = []
+            signature_groups[sig].append((sub_name, sub_inst))
 
-            current_op_count = 0
-            if sub_inst.module._last_forward_output:
-                current_op_count = len(sub_inst.module._last_forward_output._op_history)
+        logger.debug(
+            f"[NESTED_GROUPS] {len(signature_groups)} unique structures, "
+            f"total {len(nested_items)} nested submodules"
+        )
 
+        signature_cache: Dict[str, SubmoduleResult] = {}
+        for sig, instances in signature_groups.items():
+            first_name, first_inst = instances[0]
             delta_comm_bytes = 0
-            if sub_inst.module._last_forward_output and current_op_count > prev_op_count:
-                delta_ops = sub_inst.module._last_forward_output._op_history[prev_op_count:current_op_count]
+            if first_inst.module._last_forward_output:
                 if phase.compute_type != ComputeType.OPTIMIZER:
-                    for op in delta_ops:
-                        comm_ops = sub_inst._infer_comm_ops(op)
+                    for op in first_inst.module._last_forward_output._op_history:
+                        comm_ops = first_inst._infer_comm_ops(op)
                         delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
                         if phase.compute_type == ComputeType.BACKWARD:
-                            backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
+                            backward_comm_ops = first_inst._infer_backward_comm_ops(op)
                             delta_comm_bytes += sum(op.data_bytes for op in backward_comm_ops)
 
-            prev_op_count = current_op_count
+            nested_type = MODULE_CLASS_TO_TYPE.get(
+                type(first_inst.module).__name__, SubmoduleType.FFN
+            ).value
 
-            nested_type = MODULE_CLASS_TO_TYPE.get(sub_type, SubmoduleType.FFN).value
-
-            nested.append(
-                SubmoduleResult(
-                    name=sub_name,
-                    submodule_type=nested_type,
-                    time_sec=self._estimate_submodule_time(sub_inst),
-                    flops=sub_inst.flops_forward_physical,
-                    params_count=sub_inst.params_count_physical,
-                    weight_memory_gb=sub_inst.weight_memory_physical / 1e9,
-                    gradient_memory_gb=sub_inst.gradient_memory_physical / 1e9,
-                    optimizer_memory_gb=sub_inst.optimizer_memory_physical / 1e9,
-                    activation_memory_gb=sub_inst.activation_memory_physical / 1e9,
-                    communication_bytes=delta_comm_bytes,
-                    nested_submodules=[],
-                )
+            signature_cache[sig] = SubmoduleResult(
+                name=first_name,
+                submodule_type=nested_type,
+                time_sec=self._estimate_submodule_time(first_inst),
+                flops=first_inst.flops_forward_physical,
+                params_count=first_inst.params_count_physical,
+                weight_memory_gb=first_inst.weight_memory_physical / 1e9,
+                gradient_memory_gb=first_inst.gradient_memory_physical / 1e9,
+                optimizer_memory_gb=first_inst.optimizer_memory_physical / 1e9,
+                activation_memory_gb=first_inst.activation_memory_physical / 1e9,
+                communication_bytes=delta_comm_bytes,
+                nested_submodules=[],
             )
+            logger.debug(f"[NESTED_CACHE] signature={sig}, instances={len(instances)}, first={first_name}")
+
+        nested = []
+        for sig, instances in signature_groups.items():
+            cached = signature_cache[sig]
+            for sub_name, sub_inst in instances:
+                nested.append(
+                    SubmoduleResult(
+                        name=sub_name,
+                        submodule_type=cached.submodule_type,
+                        time_sec=cached.time_sec,
+                        flops=cached.flops,
+                        params_count=cached.params_count,
+                        weight_memory_gb=cached.weight_memory_gb,
+                        gradient_memory_gb=cached.gradient_memory_gb,
+                        optimizer_memory_gb=cached.optimizer_memory_gb,
+                        activation_memory_gb=cached.activation_memory_gb,
+                        communication_bytes=cached.communication_bytes,
+                        nested_submodules=[],
+                    )
+                )
 
         return nested
 
