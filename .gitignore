@@ -211,3 +211,7 @@ __marimo__/
 training_result.json
 review.log
 inference_result.html
+tmp/
+session.log
+.coverage
+logs/
