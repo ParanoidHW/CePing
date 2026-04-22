@@ -22,6 +22,10 @@ def validate_sequence(
     
     Returns:
         ValidationErrors containing any validation errors
+    
+    Note:
+        seq_len divisible checks are soft constraints (WARNING level).
+        They can be handled by padding in the algorithm.
     """
     errors = ValidationErrors()
     
@@ -39,6 +43,8 @@ def validate_sequence(
     if ctx.sp_type.value == "unified_2d" or (ctx.ulysses_degree > 1 and ctx.ring_degree > 1):
         errors.merge(_validate_unified_2d_sp(ctx, seq_len, num_heads))
     
+    errors.merge(_validate_ulysses_tp_compatibility(ctx, num_heads))
+    
     return errors
 
 
@@ -48,8 +54,8 @@ def _validate_sp_degree(
 ) -> ValidationErrors:
     """Validate SP degree constraints.
     
-    Rule: sp_degree <= tp_degree (SP is extension of TP)
-    Rule: seq_len % sp_degree == 0
+    Rule: sp_degree <= tp_degree (SP is extension of TP) - HARD constraint
+    Rule: seq_len % sp_degree == 0 - SOFT constraint (WARNING)
     """
     errors = ValidationErrors()
     
@@ -68,15 +74,16 @@ def _validate_sp_degree(
     
     if ctx.sp_degree > 1 and seq_len % ctx.sp_degree != 0:
         errors.add_error(ValidationError(
-            level=ValidationLevel.ERROR,
+            level=ValidationLevel.WARNING,
             category=ValidationCategory.SEQUENCE,
             code="SEQ_LEN_NOT_DIVISIBLE_BY_SP",
-            message=f"seq_len ({seq_len}) is not divisible by SP degree ({ctx.sp_degree})",
-            suggestion=f"Adjust seq_len or SP degree so seq_len % SP == 0",
+            message=f"seq_len ({seq_len}) is not divisible by SP degree ({ctx.sp_degree}), can be padded",
+            suggestion=f"Padding seq_len to {((seq_len // ctx.sp_degree) + 1) * ctx.sp_degree} for even split",
             details={
                 "seq_len": seq_len,
                 "sp_degree": ctx.sp_degree,
                 "remainder": seq_len % ctx.sp_degree,
+                "padded_seq_len": ((seq_len // ctx.sp_degree) + 1) * ctx.sp_degree,
             },
         ))
     
@@ -92,10 +99,10 @@ def _validate_ulysses_sp(
     """Validate Ulysses Sequence Parallelism.
     
     Rules:
-    - ulysses_degree >= 1
-    - seq_len % ulysses_degree == 0
-    - ulysses_degree * tp_degree <= num_heads (when combined with TP)
-    - num_heads % (ulysses_degree * tp_degree) == 0
+    - ulysses_degree >= 1 (HARD)
+    - seq_len % ulysses_degree == 0 (SOFT - WARNING)
+    - ulysses_degree * tp_degree <= num_heads (HARD)
+    - num_heads % (ulysses_degree * tp_degree) == 0 (HARD)
     
     Reference: DeepSpeed Ulysses (arXiv:2309.14509)
     """
@@ -114,15 +121,16 @@ def _validate_ulysses_sp(
     
     if seq_len % ctx.ulysses_degree != 0:
         errors.add_error(ValidationError(
-            level=ValidationLevel.ERROR,
+            level=ValidationLevel.WARNING,
             category=ValidationCategory.SEQUENCE,
             code="SEQ_LEN_NOT_DIVISIBLE_BY_ULYSSES",
-            message=f"seq_len ({seq_len}) is not divisible by ulysses_degree ({ctx.ulysses_degree})",
-            suggestion=f"Adjust seq_len or ulysses_degree so seq_len % ulysses_degree == 0",
+            message=f"seq_len ({seq_len}) is not divisible by ulysses_degree ({ctx.ulysses_degree}), can be padded",
+            suggestion=f"Padding seq_len to {((seq_len // ctx.ulysses_degree) + 1) * ctx.ulysses_degree}",
             details={
                 "seq_len": seq_len,
                 "ulysses_degree": ctx.ulysses_degree,
                 "remainder": seq_len % ctx.ulysses_degree,
+                "padded_seq_len": ((seq_len // ctx.ulysses_degree) + 1) * ctx.ulysses_degree,
             },
         ))
     
@@ -169,8 +177,8 @@ def _validate_ring_attention(
     """Validate Ring Attention configuration.
     
     Rules:
-    - ring_degree >= 1
-    - seq_len % ring_degree == 0 (if ring_degree > 1)
+    - ring_degree >= 1 (HARD)
+    - seq_len % ring_degree == 0 (SOFT - WARNING)
     
     Reference: Ring Attention (arXiv:2309.14509)
     """
@@ -189,15 +197,16 @@ def _validate_ring_attention(
     
     if ctx.ring_degree > 1 and seq_len % ctx.ring_degree != 0:
         errors.add_error(ValidationError(
-            level=ValidationLevel.ERROR,
+            level=ValidationLevel.WARNING,
             category=ValidationCategory.SEQUENCE,
             code="SEQ_LEN_NOT_DIVISIBLE_BY_RING",
-            message=f"seq_len ({seq_len}) is not divisible by ring_degree ({ctx.ring_degree})",
-            suggestion=f"Adjust seq_len or ring_degree so seq_len % ring_degree == 0",
+            message=f"seq_len ({seq_len}) is not divisible by ring_degree ({ctx.ring_degree}), can be padded",
+            suggestion=f"Padding seq_len to {((seq_len // ctx.ring_degree) + 1) * ctx.ring_degree}",
             details={
                 "seq_len": seq_len,
                 "ring_degree": ctx.ring_degree,
                 "remainder": seq_len % ctx.ring_degree,
+                "padded_seq_len": ((seq_len // ctx.ring_degree) + 1) * ctx.ring_degree,
             },
         ))
     
@@ -211,9 +220,13 @@ def _validate_megatron_sp(
 ) -> ValidationErrors:
     """Validate Megatron-SP configuration.
     
+    Megatron-SP is a boolean switch that changes TP communication pattern:
+    - Enabled: TP uses allgather + reducescatter (seq_len dimension split)
+    - Disabled: TP uses allreduce (standard TP)
+    
     Rules:
-    - sp_degree must equal tp_degree
-    - seq_len % tp_degree == 0
+    - sp_degree must equal tp_degree (HARD - when megatron_sp enabled)
+    - seq_len % tp_degree == 0 (SOFT - WARNING, can be padded)
     
     Reference: Megatron-LM SP (2022)
     """
@@ -234,15 +247,16 @@ def _validate_megatron_sp(
     
     if seq_len % ctx.tp_degree != 0:
         errors.add_error(ValidationError(
-            level=ValidationLevel.ERROR,
+            level=ValidationLevel.WARNING,
             category=ValidationCategory.SEQUENCE,
             code="SEQ_LEN_NOT_DIVISIBLE_BY_TP",
-            message=f"seq_len ({seq_len}) is not divisible by tp_degree ({ctx.tp_degree}) for Megatron-SP",
-            suggestion=f"Adjust seq_len or tp_degree so seq_len % tp_degree == 0",
+            message=f"seq_len ({seq_len}) is not divisible by tp_degree ({ctx.tp_degree}) for Megatron-SP, can be padded",
+            suggestion=f"Padding seq_len to {((seq_len // ctx.tp_degree) + 1) * ctx.tp_degree}",
             details={
                 "seq_len": seq_len,
                 "tp_degree": ctx.tp_degree,
                 "remainder": seq_len % ctx.tp_degree,
+                "padded_seq_len": ((seq_len // ctx.tp_degree) + 1) * ctx.tp_degree,
             },
         ))
     
@@ -258,10 +272,10 @@ def _validate_unified_2d_sp(
     """Validate Unified 2D-SP (Ulysses + Ring) configuration.
     
     Rules:
-    - sp_degree = ulysses_degree * ring_degree
-    - seq_len % sp_degree == 0
-    - ulysses_degree * tp_degree <= num_heads
-    - num_heads % (ulysses_degree * tp_degree) == 0
+    - sp_degree = ulysses_degree * ring_degree (HARD)
+    - seq_len % sp_degree == 0 (SOFT - WARNING)
+    - ulysses_degree * tp_degree <= num_heads (HARD)
+    - num_heads % (ulysses_degree * tp_degree) == 0 (HARD)
     
     Reference: USP (arXiv:2405.07719)
     """
@@ -285,15 +299,16 @@ def _validate_unified_2d_sp(
     
     if seq_len % ctx.sp_degree != 0:
         errors.add_error(ValidationError(
-            level=ValidationLevel.ERROR,
+            level=ValidationLevel.WARNING,
             category=ValidationCategory.SEQUENCE,
             code="SEQ_LEN_NOT_DIVISIBLE_BY_UNIFIED_SP",
-            message=f"seq_len ({seq_len}) is not divisible by unified SP degree ({ctx.sp_degree})",
-            suggestion=f"Adjust seq_len or SP degrees so seq_len % sp_degree == 0",
+            message=f"seq_len ({seq_len}) is not divisible by unified SP degree ({ctx.sp_degree}), can be padded",
+            suggestion=f"Padding seq_len to {((seq_len // ctx.sp_degree) + 1) * ctx.sp_degree}",
             details={
                 "seq_len": seq_len,
                 "sp_degree": ctx.sp_degree,
                 "remainder": seq_len % ctx.sp_degree,
+                "padded_seq_len": ((seq_len // ctx.sp_degree) + 1) * ctx.sp_degree,
             },
         ))
     
@@ -329,4 +344,57 @@ def _validate_unified_2d_sp(
             ))
     
     logger.info(f"[SequenceValidator] Unified 2D-SP check: ulysses={ctx.ulysses_degree}, ring={ctx.ring_degree}, SP={ctx.sp_degree}")
+    return errors
+
+
+def _validate_ulysses_tp_compatibility(
+    ctx: "ParallelContext",
+    num_heads: Optional[int],
+) -> ValidationErrors:
+    """Validate Ulysses + TP compatibility with Megatron-SP.
+    
+    When Ulysses + TP is combined:
+    - Megatron-SP is disabled (mutual exclusion)
+    - TP splits on head dimension (not within head)
+    - Validation: num_heads % (ulysses_degree * tp_degree) == 0
+    
+    Reference: DeepSpeed Ulysses + 360-LLaMA-Factory (arXiv:2505.22296)
+    """
+    errors = ValidationErrors()
+    
+    has_ulysses_tp = ctx.ulysses_degree > 1 and ctx.tp_degree > 1
+    
+    if has_ulysses_tp and ctx.sp_type.value == "megatron":
+        errors.add_error(ValidationError(
+            level=ValidationLevel.WARNING,
+            category=ValidationCategory.SEQUENCE,
+            code="MEGATRON_SP_DISABLED_BY_ULYSSES_TP",
+            message="Megatron-SP is disabled when Ulysses + TP combination is used",
+            suggestion="Use Ulysses SP type instead of Megatron-SP for Ulysses + TP combination",
+            details={
+                "ulysses_degree": ctx.ulysses_degree,
+                "tp_degree": ctx.tp_degree,
+                "sp_type": ctx.sp_type.value,
+            },
+        ))
+    
+    if has_ulysses_tp and num_heads is not None:
+        total_degree = ctx.ulysses_degree * ctx.tp_degree
+        if total_degree > num_heads:
+            errors.add_error(ValidationError(
+                level=ValidationLevel.ERROR,
+                category=ValidationCategory.SEQUENCE,
+                code="ULYSSES_TP_HEADS_EXCEEDED",
+                message=f"ulysses_degree * tp_degree ({total_degree}) exceeds num_heads ({num_heads})",
+                suggestion=f"Reduce ulysses_degree or tp_degree, or use Dummy-Head technique (arXiv:2505.22296)",
+                details={
+                    "ulysses_degree": ctx.ulysses_degree,
+                    "tp_degree": ctx.tp_degree,
+                    "total_degree": total_degree,
+                    "num_heads": num_heads,
+                    "tp_mode": "head_dimension_split",
+                },
+            ))
+    
+    logger.info(f"[SequenceValidator] Ulysses+TP compatibility: ulysses={ctx.ulysses_degree}, TP={ctx.tp_degree}, Megatron-SP disabled={has_ulysses_tp}")
     return errors

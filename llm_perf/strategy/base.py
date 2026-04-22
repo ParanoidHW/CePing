@@ -52,6 +52,13 @@ class StrategyConfig:
     - Attention part: tp_degree × dp_degree × pp_degree × sp_degree = world_size
     - MoE part: expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = world_size
     - If expert_tp_degree is not set, defaults to tp_degree (uniform TP)
+    
+    Soft Constraints (WARNING level):
+    - seq_len divisible checks can be handled by padding
+    - num_layers divisible for PP can be non-uniform (controlled by uniform_pp_stages)
+    
+    Mutual Exclusion:
+    - Megatron-SP is disabled when Ulysses + TP combination is used
     """
 
     model_name: str = ""
@@ -77,6 +84,9 @@ class StrategyConfig:
     activation_checkpointing: bool = False
     sequence_parallel: bool = False
     use_megatron: bool = True
+    
+    megatron_sp_enabled: bool = False
+    uniform_pp_stages: bool = True
 
     zero_stage: int = 0
 
@@ -129,10 +139,12 @@ class StrategyConfig:
                 "ulysses_degree": self.ulysses_degree,
                 "ring_degree": self.ring_degree,
                 "kv_separate_allgather": self.kv_separate_allgather,
+                "megatron_sp_enabled": self.megatron_sp_enabled,
             },
             "scheduling": {
                 "pipeline_schedule": self.pipeline_schedule,
                 "micro_batch_size": self.micro_batch_size,
+                "uniform_pp_stages": self.uniform_pp_stages,
             },
             "optimization": {
                 "activation_checkpointing": self.activation_checkpointing,
@@ -172,8 +184,10 @@ class StrategyConfig:
             ulysses_degree=sp_config.get("ulysses_degree", 1),
             ring_degree=sp_config.get("ring_degree", 1),
             kv_separate_allgather=sp_config.get("kv_separate_allgather", False),
+            megatron_sp_enabled=sp_config.get("megatron_sp_enabled", False),
             pipeline_schedule=scheduling.get("pipeline_schedule", "1f1b"),
             micro_batch_size=scheduling.get("micro_batch_size", 1),
+            uniform_pp_stages=scheduling.get("uniform_pp_stages", True),
             activation_checkpointing=optimization.get("activation_checkpointing", False),
             sequence_parallel=optimization.get("sequence_parallel", False),
             use_megatron=optimization.get("use_megatron", True),

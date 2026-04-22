@@ -189,13 +189,19 @@
 - SP degree 不能超过 TP degree
 
 **验证条件**：
-- sp_degree ≤ tp_degree
-- seq_len % sp_degree == 0
+- sp_degree ≤ tp_degree（硬约束）
+- seq_len % sp_degree == 0（软约束，WARNING）
+
+**说明**：
+- seq_len 不整除时可通过 padding 处理
+- 算法层面可上取整，不影响切分可行性
+- 仅作为 WARNING 提示，不阻塞评估
 
 **示例**：
 - seq_len=4096, TP=8, SP=8 → 每卡 512 tokens ✅
 - seq_len=8192, TP=8, SP=4 → 每卡 2048 tokens ✅
-- seq_len=4096, TP=4, SP=8 → SP 超出 TP ❌
+- seq_len=4096, TP=4, SP=8 → SP 超出 TP ❌（硬约束）
+- seq_len=4097, TP=8, SP=8 → 4097%8=1 ⚠️（可 padding 到 4098）
 
 **内存影响**：
 - SP 启用时激活内存减少：activation_memory /= sp_degree
@@ -207,18 +213,27 @@
 - SP_degree = TP_degree 的特殊配置
 
 **原理**：
-- Megatron-SP 是 SP 的默认配置
-- 所有 TP 卡参与序列切分
-- 通信效率最优
+- Megatron-SP 是一个布尔开关（`megatron_sp_enabled: bool`）
+- 仅在 TP 使能时判断是否开启
+- 开启时：TP 通信转为 allgather + reducescatter
+- 不开启时：TP 通信为 allreduce
+- 所有 TP 卡参与序列切分，通信效率最优
 
 **验证条件**：
 - megatron_sp_enabled = True 时：
   - sp_degree = tp_degree（强制）
-  - seq_len % tp_degree == 0
+  - seq_len % tp_degree == 0（软约束，WARNING）
+
+**说明**：
+- seq_len 不整除时可 padding
+- 仅作为 WARNING 提示，不阻塞评估
+- 与 Ulysses+TP 组合时，Megatron-SP 不生效（互斥）
 
 **示例**：
 - TP=8, SP=8, megatron_sp=True → ✅
 - TP=8, SP=4, megatron_sp=True → ❌（SP 应等于 TP）
+- seq_len=4097, TP=8, megatron_sp=True → ⚠️（可 padding）
+- Ulysses=4, TP=8, megatron_sp=True → Megatron-SP 失效
 
 #### 2.3.3 Ring Attention
 
@@ -282,10 +297,14 @@
 - 每层 Transformer block 的 Attention 层包含 **4 次 all-to-all** (Q/K/V pre-attention + O post-attention)
 
 **验证条件**：
-- ulysses_degree ≥ 1
-- seq_len % ulysses_degree == 0
+- ulysses_degree ≥ 1（硬约束）
+- seq_len % ulysses_degree == 0（软约束，WARNING）
 - 独立使用时（无 TP）：`ulysses_degree <= num_heads`
-- 与 TP 组合时：`ulysses_degree * tp_degree <= num_heads` 且 `num_heads % (ulysses_degree * tp_degree) == 0`
+- 与 TP 组合时：见 2.3.8 章节
+
+**说明**：
+- seq_len 不整除时可 padding
+- 仅作为 WARNING 提示
 
 **通信开销**：
 - 单次 all-to-all 通信量：`batch_size * seq_len * hidden_size * dtype_size`（与设备数无关的常数体积）
@@ -299,12 +318,12 @@
 | 与 TP 关系 | 可独立使用 | sp_degree = tp_degree（强制绑定） |
 | 通信量与 seq_len | 常数（seq_len 增加时不增） | 线性增加 |
 | 并行度限制 | 受 num_heads 限制 | 无特殊限制 |
+| 与 TP 组合时 | Megatron-SP 失效 | 不适用 |
 
 **示例**：
 - seq_len=64K, Ulysses=8, num_heads=32 → 每卡 8K tokens，每卡 4 heads ✅
-- seq_len=128K, Ulysses=8, TP=4, num_heads=64 → Ulysses×TP=32 ≤ 64 heads ✅
+- seq_len=64K+1, Ulysses=8 → ⚠️（可 padding）
 - seq_len=64K, Ulysses=16, num_heads=32 → 16 > 32 ❌（Ulysses 超过 head 数）
-- seq_len=64K, Ulysses=4, TP=16, num_heads=32 → 4×16=64 > 32 ❌（Ulysses×TP 超过 head 数）
 
 **局限性**：
 - 并行度受限于 attention heads 数量（可通过 Dummy-Head 技术扩展，参考 arXiv:2505.22296）
@@ -404,20 +423,27 @@ Hidden 切分：
 **原理**：
 - Ulysses 与 TP 可以组合，两者正交但共享 head 切分约束
 - Ulysses 按序列维度切分，通过 all-to-all 在 head 维度重组
-- TP 按 hidden 维度切分，每个 head 内部再切分权重
+- **TP 在 head 维度切分**（而非 head 内切分权重）
 - Head 分配：`num_heads = ulysses_heads * tp_heads`
+- **Megatron-SP 失效**：存在 Ulysses + TP 组合时，Megatron-SP 不生效
 
 **验证条件**：
-- `ulysses_degree * tp_degree <= num_heads`
-- `num_heads % (ulysses_degree * tp_degree) == 0`
-- `seq_len % ulysses_degree == 0`
-- `hidden_size % tp_degree == 0`
-- `vocab_size % tp_degree == 0`
-- `intermediate_size % tp_degree == 0`
+- `ulysses_degree * tp_degree <= num_heads`（硬约束）
+- `num_heads % (ulysses_degree * tp_degree) == 0`（硬约束）
+- `seq_len % ulysses_degree == 0`（软约束，WARNING）
+- `hidden_size % tp_degree == 0`（硬约束）
+- `vocab_size % tp_degree == 0`（硬约束）
+- `intermediate_size % tp_degree == 0`（硬约束）
+- Megatron-SP 与 Ulysses+TP 互斥检查
 
 **与独立 Ulysses 的区别**：
 - 独立 Ulysses：`ulysses_degree <= num_heads`，无 hidden 切分
-- Ulysses + TP：`ulysses_degree * tp_degree <= num_heads`，同时切分 hidden
+- Ulysses + TP：`ulysses_degree * tp_degree <= num_heads`，TP 在 head 维度切分
+
+**Megatron-SP 失效说明**：
+- 当使用 Ulysses + TP 时，TP 通信模式改变
+- Megatron-SP 的 allgather+reducescatter 不适用
+- 自动禁用 Megatron-SP 功能
 
 **Dummy-Head 技术**（当 heads 不足时）：
 - 通过创建虚拟 head 来扩展并行度
@@ -426,10 +452,10 @@ Hidden 切分：
 
 **示例**：
 - num_heads=64, hidden=4096, Ulysses=4, TP=8, seq_len=256K →
-  - Ulysses×TP=32 ≤ 64 ✅
-  - 每卡 heads: 64/32=2
-  - seq_len 切分: 256K/4=64K per Ulysses rank
+  - Ulysses×TP=32 ≤ 64 ✅（head 分配：每卡 64/32=2 heads）
+  - seq_len 切分: 256K/4=64K per Ulysses rank ✅
   - hidden 切分: 4096/8=512 per TP rank ✅
+  - Megatron-SP 自动失效
 - num_heads=32, Ulysses=8, TP=8 → Ulysses×TP=64 > 32 ❌
   - 可用 Dummy-Head 扩展到 64 heads
 - num_heads=128, hidden=8192, Ulysses=2, TP=64 →
@@ -457,14 +483,21 @@ Hidden 切分：
 - bubble_ratio = (pp_degree - 1) / (pp_degree × vpp_degree)
 
 **验证条件**：
-- vpp_degree ≥ 1
-- num_layers % (pp_degree × vpp_degree) == 0
+- vpp_degree ≥ 1（硬约束）
+- num_layers % (pp_degree × vpp_degree) == 0（可选验证）
 - num_micro_batches ≥ pp_degree × vpp_degree × 2（推荐）
+- **uniform_pp_stages = True** 时才验证层数整除
+
+**说明**：
+- num_layers 整除仅在要求均匀划分时需要
+- 不均匀划分也是可行的（不同 stage 不同层数）
+- 验证由 `uniform_pp_stages` 参数控制
 
 **示例**：
-- num_layers=32, PP=4, VPP=2 → 32/(4×2)=4 layers/virtual-stage ✅
-- num_layers=80, PP=8, VPP=2 → 80/(8×2)=5 layers/virtual-stage ✅（Llama-70B）
-- num_layers=61, PP=2, VPP=2 → 61/(2×2)=15.25 ❌（DSv3 不整除）
+- num_layers=32, PP=4, VPP=2, uniform=True → 32/(4×2)=4 layers/virtual-stage ✅
+- num_layers=80, PP=8, VPP=2, uniform=True → 80/(8×2)=5 layers/virtual-stage ✅（Llama-70B）
+- num_layers=61, PP=2, VPP=2, uniform=False → 不验证 ⚠️（DSv3 不均匀划分）
+- num_layers=61, PP=2, VPP=2, uniform=True → 61/(2×2)=15.25 ❌（不整除）
 
 **配置建议**：
 - VPP=2 时 bubble ratio 减少到 25%（相比 PP=4 的 75%）

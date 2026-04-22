@@ -287,18 +287,29 @@ class TestSequenceValidator(unittest.TestCase):
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "SP_EXCEEDS_TP")
 
-    def test_seq_len_not_divisible(self):
-        """Test seq_len not divisible by SP."""
+    def test_seq_len_not_divisible_by_sp_is_warning(self):
+        """Test seq_len not divisible by SP produces WARNING (soft constraint)."""
         ctx = ParallelContext(tp_degree=8, sp_degree=4)
         errors = validate_sequence(ctx, seq_len=4095)
-        self.assertTrue(errors.has_errors())
-        self.assertEqual(errors.errors[0].code, "SEQ_LEN_NOT_DIVISIBLE_BY_SP")
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
+        self.assertEqual(errors.warnings[0].code, "SEQ_LEN_NOT_DIVISIBLE_BY_SP")
+        self.assertIn("padded_seq_len", errors.warnings[0].details)
 
     def test_ulysses_valid(self):
         """Test valid Ulysses SP."""
         ctx = ParallelContext(tp_degree=4, ulysses_degree=2, sp_degree=2)
         errors = validate_sequence(ctx, seq_len=4096, num_heads=32)
         self.assertFalse(errors.has_errors())
+
+    def test_ulysses_seq_len_not_divisible_is_warning(self):
+        """Test Ulysses seq_len not divisible produces WARNING (soft constraint)."""
+        ctx = ParallelContext(tp_degree=4, ulysses_degree=2, sp_degree=2)
+        errors = validate_sequence(ctx, seq_len=4097, num_heads=32)
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
+        warning_codes = [w.code for w in errors.warnings]
+        self.assertIn("SEQ_LEN_NOT_DIVISIBLE_BY_ULYSSES", warning_codes)
 
     def test_ulysses_exceeds_heads(self):
         """Test Ulysses exceeding heads."""
@@ -319,6 +330,32 @@ class TestSequenceValidator(unittest.TestCase):
         errors = validate_sequence(ctx, seq_len=4096)
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "MEGATRON_SP_MISMATCH")
+
+    def test_megatron_sp_seq_len_not_divisible_is_warning(self):
+        """Test Megatron-SP seq_len not divisible produces WARNING (soft constraint)."""
+        ctx = ParallelContext(tp_degree=8, sp_degree=8, sp_type=SPType.MEGATRON)
+        errors = validate_sequence(ctx, seq_len=4097)
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
+        warning_codes = [w.code for w in errors.warnings]
+        self.assertIn("SEQ_LEN_NOT_DIVISIBLE_BY_TP", warning_codes)
+
+    def test_ulysses_tp_megatron_sp_disabled(self):
+        """Test Megatron-SP disabled when Ulysses + TP combination."""
+        ctx = ParallelContext(tp_degree=8, ulysses_degree=4, sp_degree=4, sp_type=SPType.MEGATRON)
+        errors = validate_sequence(ctx, seq_len=4096, num_heads=64)
+        self.assertTrue(errors.has_warnings())
+        warning_codes = [w.code for w in errors.warnings]
+        self.assertIn("MEGATRON_SP_DISABLED_BY_ULYSSES_TP", warning_codes)
+
+    def test_ring_seq_len_not_divisible_is_warning(self):
+        """Test Ring seq_len not divisible produces WARNING (soft constraint)."""
+        ctx = ParallelContext(tp_degree=8, ring_degree=4, sp_degree=4, sp_type=SPType.RING_P2P)
+        errors = validate_sequence(ctx, seq_len=4097)
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
+        warning_codes = [w.code for w in errors.warnings]
+        self.assertIn("SEQ_LEN_NOT_DIVISIBLE_BY_RING", warning_codes)
 
 
 class TestMemoryValidator(unittest.TestCase):
@@ -431,6 +468,21 @@ class TestSpecialValidator(unittest.TestCase):
         errors = validate_vpp(ctx, num_layers=30, vpp_degree=2)
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "LAYERS_NOT_DIVISIBLE_BY_VPP")
+
+    def test_vpp_non_uniform_distribution(self):
+        """Test VPP with non-uniform distribution (uniform_pp_stages=False)."""
+        ctx = ParallelContext(pp_degree=4)
+        errors = validate_vpp(ctx, num_layers=30, vpp_degree=2, uniform_pp_stages=False)
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
+        self.assertEqual(errors.warnings[0].code, "VPP_NON_UNIFORM_DISTRIBUTION")
+
+    def test_vpp_uniform_false_layers_not_divisible_no_error(self):
+        """Test VPP with uniform_pp_stages=False allows non-divisible layers."""
+        ctx = ParallelContext(pp_degree=2)
+        errors = validate_vpp(ctx, num_layers=61, vpp_degree=2, uniform_pp_stages=False)
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
 
 
 class TestValidateAll(unittest.TestCase):

@@ -192,15 +192,25 @@ def validate_vpp(
     vpp_degree: int,
     num_micro_batches: Optional[int] = None,
     pipeline_schedule: Optional[str] = None,
+    uniform_pp_stages: bool = True,
 ) -> ValidationErrors:
     """Validate Virtual Pipeline Parallelism (VPP) configuration.
     
     Rules:
-    - vpp_degree >= 1
-    - num_layers % (pp_degree * vpp_degree) == 0
-    - num_micro_batches >= pp_degree * vpp_degree * 2 (for interleaved)
+    - vpp_degree >= 1 (HARD)
+    - num_layers % (pp_degree * vpp_degree) == 0 (OPTIONAL, controlled by uniform_pp_stages)
+    - num_micro_batches >= pp_degree * vpp_degree * 2 (for interleaved) (WARNING)
     
     Reference: Megatron-LM Interleaved Pipeline Schedule
+    
+    Args:
+        ctx: ParallelContext
+        num_layers: Number of transformer layers
+        vpp_degree: Virtual pipeline parallelism degree
+        num_micro_batches: Number of micro batches for pipeline schedule
+        pipeline_schedule: Pipeline schedule type ("1f1b", "gpipe", "interleaved")
+        uniform_pp_stages: If True, validate num_layers divisibility (default True)
+            When False, allows non-uniform stage distribution (different layers per stage)
     """
     errors = ValidationErrors()
     
@@ -216,19 +226,37 @@ def validate_vpp(
         return errors
     
     total_stages = ctx.pp_degree * vpp_degree
-    if num_layers % total_stages != 0:
+    if uniform_pp_stages and num_layers % total_stages != 0:
         errors.add_error(ValidationError(
             level=ValidationLevel.ERROR,
             category=ValidationCategory.SPECIAL,
             code="LAYERS_NOT_DIVISIBLE_BY_VPP",
             message=f"num_layers ({num_layers}) is not divisible by pp_degree * vpp_degree ({total_stages})",
-            suggestion=f"Adjust num_layers or VPP degrees so num_layers % (pp * vpp) == 0",
+            suggestion=f"Adjust num_layers or VPP degrees, or set uniform_pp_stages=False for non-uniform distribution",
             details={
                 "num_layers": num_layers,
                 "pp_degree": ctx.pp_degree,
                 "vpp_degree": vpp_degree,
                 "total_stages": total_stages,
                 "remainder": num_layers % total_stages,
+                "uniform_pp_stages": uniform_pp_stages,
+            },
+        ))
+    
+    if not uniform_pp_stages and num_layers % total_stages != 0:
+        errors.add_error(ValidationError(
+            level=ValidationLevel.WARNING,
+            category=ValidationCategory.SPECIAL,
+            code="VPP_NON_UNIFORM_DISTRIBUTION",
+            message=f"num_layers ({num_layers}) will have non-uniform distribution across VPP stages ({total_stages})",
+            suggestion=f"Stage distribution: {num_layers // total_stages} base layers + {num_layers % total_stages} extra layers",
+            details={
+                "num_layers": num_layers,
+                "pp_degree": ctx.pp_degree,
+                "vpp_degree": vpp_degree,
+                "total_stages": total_stages,
+                "base_layers_per_stage": num_layers // total_stages,
+                "extra_layers": num_layers % total_stages,
             },
         ))
     
@@ -249,5 +277,5 @@ def validate_vpp(
                 },
             ))
     
-    logger.info(f"[SpecialValidator] VPP check: layers={num_layers}, PP={ctx.pp_degree}, VPP={vpp_degree}")
+    logger.info(f"[SpecialValidator] VPP check: layers={num_layers}, PP={ctx.pp_degree}, VPP={vpp_degree}, uniform={uniform_pp_stages}")
     return errors
