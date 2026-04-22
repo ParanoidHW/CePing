@@ -28,17 +28,16 @@ const elements = {
     deviceVendor: document.getElementById('device-vendor'),
     deviceModel: document.getElementById('device-model'),
     numNodes: document.getElementById('num-nodes'),
-    devicesPerNode: document.getElementById('devices-per-node'),
-    totalDevicesDisplay: document.getElementById('total-devices-display'),
     totalDevices: document.getElementById('total-devices'),
     topologyType: document.getElementById('topology-type'),
     topologyParams: document.getElementById('topology-params'),
     tpDegree: document.getElementById('tp-degree'),
     ppDegree: document.getElementById('pp-degree'),
+    vppDegree: document.getElementById('vpp-degree'),
+    pipelineSchedule: document.getElementById('pipeline-schedule'),
     epDegree: document.getElementById('ep-degree'),
     dpDegreeDisplay: document.getElementById('dp-degree-display'),
     dpDegree: document.getElementById('dp-degree'),
-    spDegree: document.getElementById('sp-degree'),
     ulyssesDegree: document.getElementById('ulysses-degree'),
     ringDegree: document.getElementById('ring-degree'),
     cpDegree: document.getElementById('cp-degree'),
@@ -47,9 +46,7 @@ const elements = {
     evaluateBtn: document.getElementById('evaluate-btn'),
     results: document.getElementById('results'),
     resultsContent: document.getElementById('results-content'),
-    trainingParams: document.getElementById('training-params'),
-    inferenceParams: document.getElementById('inference-params'),
-    workloadTitle: document.getElementById('workload-title')
+    workloadScenario: document.getElementById('workload-scenario'),
 };
 
 async function init() {
@@ -58,8 +55,8 @@ async function init() {
     updateDeviceModels();
     updateTopologyParams();
     loadModelPreset();
-    calculateTotalDevices();
     calculateDP();
+    switchWorkloadScenario('training');
 }
 
 async function loadData() {
@@ -119,18 +116,18 @@ function setupEventListeners() {
     elements.topologyType.addEventListener('change', updateTopologyParams);
     elements.evaluateBtn.addEventListener('click', evaluate);
     
-    elements.numNodes.addEventListener('input', () => {
-        calculateTotalDevices();
-        calculateDP();
-    });
-    elements.devicesPerNode.addEventListener('input', () => {
-        calculateTotalDevices();
-        calculateDP();
-    });
+    elements.numNodes.addEventListener('input', calculateDP);
+    elements.totalDevices.addEventListener('input', calculateDP);
+    
+    if (elements.workloadScenario) {
+        elements.workloadScenario.addEventListener('change', (e) => {
+            switchWorkloadScenario(e.target.value);
+        });
+    }
     
     const parallelismInputs = [
-        elements.tpDegree, elements.ppDegree, elements.epDegree,
-        elements.spDegree, elements.ulyssesDegree, elements.ringDegree, elements.cpDegree
+        elements.tpDegree, elements.ppDegree, elements.vppDegree,
+        elements.epDegree, elements.ulyssesDegree, elements.ringDegree, elements.cpDegree
     ];
     parallelismInputs.forEach(input => {
         if (input) {
@@ -139,28 +136,16 @@ function setupEventListeners() {
     });
 }
 
-function calculateTotalDevices() {
-    const numNodes = parseInt(elements.numNodes.value) || 1;
-    const devicesPerNode = parseInt(elements.devicesPerNode.value) || 1;
-    const totalDevices = numNodes * devicesPerNode;
-    
-    elements.totalDevicesDisplay.textContent = totalDevices;
-    elements.totalDevices.value = totalDevices;
-    
-    return totalDevices;
-}
-
 function calculateDP() {
     const tp = parseInt(elements.tpDegree.value) || 1;
     const pp = parseInt(elements.ppDegree.value) || 1;
     const ep = parseInt(elements.epDegree.value) || 1;
-    const sp = parseInt(elements.spDegree.value) || 1;
     const ulysses = parseInt(elements.ulyssesDegree.value) || 1;
     const ring = parseInt(elements.ringDegree.value) || 1;
     const cp = parseInt(elements.cpDegree.value) || 1;
     const totalDevices = parseInt(elements.totalDevices.value) || 64;
     
-    const product = tp * pp * ep * sp * ulysses * ring * cp;
+    const product = tp * pp * ep * ulysses * ring * cp;
     const dp = totalDevices / product;
     
     elements.dpValidationError.style.display = 'none';
@@ -191,71 +176,22 @@ function calculateDP() {
     return dpInt;
 }
 
-function updateModeUI() {
-    if (state.mode === 'training') {
-        elements.trainingParams.style.display = 'block';
-        elements.inferenceParams.style.display = 'none';
-        elements.workloadTitle.textContent = 'Workload 配置';
-    } else {
-        elements.trainingParams.style.display = 'none';
-        elements.inferenceParams.style.display = 'block';
-        elements.workloadTitle.textContent = 'Workload 配置';
+function switchWorkloadScenario(scenario) {
+    const allParams = document.querySelectorAll('.workload-params');
+    allParams.forEach(el => el.style.display = 'none');
+    
+    const targetParams = document.getElementById(`workload-params-${scenario}`);
+    if (targetParams) {
+        targetParams.style.display = 'block';
     }
+}
+
+function updateModeUI() {
     elements.results.style.display = 'none';
     renderParamInputs();
 }
 
 function renderParamInputs() {
-    const preset = state.currentPreset;
-    const schema = preset?.param_schema;
-    const defaultLLMSchema = {
-        training: [
-            {name: 'batch_size', label: 'Batch Size', type: 'number', default: 32},
-            {name: 'seq_len', label: 'Sequence Length', type: 'number', default: 4096},
-        ],
-        inference: [
-            {name: 'batch_size', label: 'Batch Size', type: 'number', default: 8},
-            {name: 'prompt_len', label: 'Prompt Length', type: 'number', default: 1024},
-            {name: 'generation_len', label: 'Generation Length', type: 'number', default: 128},
-        ]
-    };
-    
-    const currentSchema = schema || defaultLLMSchema;
-    const modeSchema = currentSchema[state.mode] || [];
-    
-    const container = state.mode === 'training' ? elements.trainingParams : elements.inferenceParams;
-    
-    let html = '<div class="section-hint">计算特征参数</div>';
-    const paramsPerRow = 2;
-    
-    for (let i = 0; i < modeSchema.length; i += paramsPerRow) {
-        html += '<div class="form-row">';
-        for (let j = i; j < Math.min(i + paramsPerRow, modeSchema.length); j++) {
-            const param = modeSchema[j];
-            html += `<div class="form-group">
-                <label>${param.label}</label>
-                ${renderParamInput(param)}
-            </div>`;
-        }
-        html += '</div>';
-    }
-    
-    container.innerHTML = html;
-}
-
-function renderParamInput(param) {
-    const inputId = `param-${param.name}`;
-    
-    if (param.type === 'select') {
-        const options = (param.options || []).map(opt => 
-            `<option value="${opt}" ${opt === param.default ? 'selected' : ''}>${opt}</option>`
-        ).join('');
-        return `<select id="${inputId}">${options}</select>`;
-    }
-    
-    const minAttr = param.min ? ` min="${param.min}"` : '';
-    const maxAttr = param.max ? ` max="${param.max}"` : '';
-    return `<input type="number" id="${inputId}" value="${param.default}"${minAttr}${maxAttr}>`;
 }
 
 function loadModelPreset() {
@@ -436,7 +372,6 @@ function validateConfigBeforeSubmit() {
     const pp = parseInt(elements.ppDegree.value) || 1;
     const dp = parseInt(elements.dpDegree.value) || 1;
     const ep = parseInt(elements.epDegree.value) || 1;
-    const sp = parseInt(elements.spDegree.value) || 1;
     const ulysses = parseInt(elements.ulyssesDegree.value) || 1;
     const ring = parseInt(elements.ringDegree.value) || 1;
     const cp = parseInt(elements.cpDegree.value) || 1;
@@ -444,13 +379,13 @@ function validateConfigBeforeSubmit() {
     
     const errors = [];
     
-    const product = tp * pp * dp * ep * sp * ulysses * ring * cp;
+    const product = tp * pp * dp * ep * ulysses * ring * cp;
     if (product !== totalDevices) {
         errors.push({
             level: 'error',
             category: 'strategy',
             message: `并行度乘积 (${product}) ≠ 总设备数 (${totalDevices})`,
-            suggestion: `调整并行度使 TP×PP×DP×EP×SP×Ulysses×Ring×CP = ${totalDevices}`,
+            suggestion: `调整并行度使 TP×PP×DP×EP×Ulysses×Ring×CP = ${totalDevices}`,
         });
     }
     
@@ -501,16 +436,20 @@ async function evaluate() {
         const config = collectConfig();
         
         let endpoint;
+        const scenario = config.workload?.scenario || 'training';
+        
         if (state.currentPipeline === 'diffusion-video') {
-            if (state.mode === 'training') {
-                endpoint = '/api/evaluate/training';
-            } else {
-                endpoint = '/api/evaluate/pipeline/diffusion-video';
-            }
+            endpoint = '/api/evaluate/pipeline/diffusion-video';
         } else {
-            endpoint = state.mode === 'training' 
-                ? '/api/evaluate/training' 
-                : '/api/evaluate/inference';
+            const endpointMap = {
+                'training': '/api/evaluate/training',
+                'inference_prefill': '/api/evaluate/inference',
+                'inference_decode': '/api/evaluate/inference',
+                'pd_disagg': '/api/evaluate/inference',
+                'rl_training': '/api/evaluate/training',
+                'diffusion': '/api/evaluate/inference',
+            };
+            endpoint = endpointMap[scenario] || '/api/evaluate/training';
         }
         
         const response = await fetch(endpoint, {
@@ -584,7 +523,14 @@ function collectConfig() {
     const presets = state.modelPresets.presets || state.modelPresets;
     const preset = presets[presetKey] || {};
     
+    const scenario = elements.workloadScenario ? elements.workloadScenario.value : 'training';
+    
     const config = {
+        cluster: {
+            topology: topologyType,
+            num_nodes: parseInt(elements.numNodes.value),
+            total_devices: parseInt(elements.totalDevices.value),
+        },
         model: {
             preset: presetKey,
             type: preset?.architecture || 'llama',
@@ -597,54 +543,67 @@ function collectConfig() {
         },
         device: elements.deviceModel.value,
         num_devices: parseInt(elements.totalDevices.value),
-        devices_per_node: parseInt(elements.devicesPerNode.value),
-        num_nodes: parseInt(elements.numNodes.value),
         topology: topology,
         strategy: {
             tp: parseInt(elements.tpDegree.value),
             pp: parseInt(elements.ppDegree.value),
+            vpp: parseInt(elements.vppDegree?.value || 1),
+            pipeline_schedule: elements.pipelineSchedule?.value || '1f1b',
             dp: parseInt(elements.dpDegree.value),
             ep: parseInt(elements.epDegree.value),
-            sp: parseInt(elements.spDegree.value),
             ulysses_degree: parseInt(elements.ulyssesDegree.value),
             ring_degree: parseInt(elements.ringDegree.value),
             cp_degree: parseInt(elements.cpDegree.value),
             megatron_sp_enabled: elements.megatronSpEnabled.checked,
             activation_checkpointing: document.getElementById('activation-checkpointing').checked,
             zero_stage: parseInt(document.getElementById('zero-stage').value)
-        }
+        },
+        workload: collectWorkloadConfig(scenario),
     };
     
-    const schema = preset.param_schema;
-    const modeParams = schema?.[state.mode] || [];
+    return config;
+}
+
+function collectWorkloadConfig(scenario) {
+    const workload = { scenario };
     
-    if (state.mode === 'training') {
-        config.training = { num_steps: 1000 };
-        modeParams.forEach(param => {
-            const inputEl = document.getElementById(`param-${param.name}`);
-            if (inputEl) {
-                const value = param.type === 'select' ? inputEl.value : parseInt(inputEl.value);
-                config.training[param.name] = value;
-            }
-        });
-        if (!config.training.batch_size) {
-            const batchSizeInput = document.getElementById('param-batch_size');
-            if (batchSizeInput) {
-                config.training.batch_size = parseInt(batchSizeInput.value) || 32;
-            }
-        }
-    } else {
-        config.inference = {};
-        modeParams.forEach(param => {
-            const inputEl = document.getElementById(`param-${param.name}`);
-            if (inputEl) {
-                const value = param.type === 'select' ? inputEl.value === 'true' : parseInt(inputEl.value);
-                config.inference[param.name] = value;
-            }
-        });
+    switch(scenario) {
+        case 'training':
+            workload.global_batch_size = parseInt(document.getElementById('global-batch-size')?.value || 32);
+            workload.micro_batch_size = parseInt(document.getElementById('micro-batch-size')?.value || 1);
+            workload.seq_len = parseInt(document.getElementById('train-seq-len')?.value || 4096);
+            workload.num_steps = parseInt(document.getElementById('num-steps')?.value || 1000);
+            break;
+        case 'inference_prefill':
+            workload.num_prompts = parseInt(document.getElementById('num-prompts')?.value || 1000);
+            workload.seq_len = parseInt(document.getElementById('prefill-seq-len')?.value || 4096);
+            workload.kv_cache_tokens = parseInt(document.getElementById('prefill-kv-cache')?.value || 0);
+            break;
+        case 'inference_decode':
+            workload.batch_size = parseInt(document.getElementById('decode-batch-size')?.value || 8);
+            workload.seq_len = parseInt(document.getElementById('decode-seq-len')?.value || 4096);
+            workload.kv_cache_tokens = parseInt(document.getElementById('decode-kv-cache')?.value || 0);
+            break;
+        case 'pd_disagg':
+            workload.prefill_nodes = parseInt(document.getElementById('prefill-nodes')?.value || 4);
+            workload.decode_nodes = parseInt(document.getElementById('decode-nodes')?.value || 4);
+            workload.seq_len = parseInt(document.getElementById('pd-seq-len')?.value || 4096);
+            workload.batch_size = parseInt(document.getElementById('pd-batch-size')?.value || 32);
+            break;
+        case 'rl_training':
+            workload.batch_size = parseInt(document.getElementById('rl-batch-size')?.value || 32);
+            workload.seq_len = parseInt(document.getElementById('rl-seq-len')?.value || 4096);
+            workload.num_rollouts = parseInt(document.getElementById('num-rollouts')?.value || 100);
+            workload.ppo_epochs = parseInt(document.getElementById('ppo-epochs')?.value || 4);
+            break;
+        case 'diffusion':
+            workload.image_size = parseInt(document.getElementById('image-size')?.value || 1024);
+            workload.diffusion_steps = parseInt(document.getElementById('diffusion-steps')?.value || 50);
+            workload.batch_size = parseInt(document.getElementById('diffusion-batch-size')?.value || 1);
+            break;
     }
     
-    return config;
+    return workload;
 }
 
 function displayResults(result) {
