@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 def validate_strategy(
     ctx: "ParallelContext",
     num_gpus: int,
+    num_experts: int = None,
+    global_batch_size: int = None,
+    micro_batch_size: int = None,
 ) -> ValidationErrors:
     """Validate parallel strategy configuration.
     
@@ -27,6 +30,9 @@ def validate_strategy(
     Args:
         ctx: ParallelContext with parallel strategy configuration
         num_gpus: Total number of GPUs in the cluster
+        num_experts: Number of routed experts (for EP divisibility check)
+        global_batch_size: Global batch size (for batch divisibility check)
+        micro_batch_size: Micro batch size (for mini/micro divisibility check)
     
     Returns:
         ValidationErrors containing any validation errors
@@ -36,6 +42,8 @@ def validate_strategy(
     errors.merge(_validate_layered_parallelism(ctx, num_gpus))
     errors.merge(_validate_ep_performance_suggestion(ctx))
     errors.merge(_validate_parallel_degrees(ctx))
+    errors.merge(_validate_ep_expert_divisibility(ctx, num_experts))
+    errors.merge(_validate_batch_size_divisibility(ctx, global_batch_size, micro_batch_size))
     
     return errors
 
@@ -192,4 +200,125 @@ def _validate_parallel_degrees(ctx: "ParallelContext") -> ValidationErrors:
             ))
     
     logger.info(f"[StrategyValidator] Parallel degrees check: {degrees}")
+    return errors
+
+
+def _validate_ep_expert_divisibility(
+    ctx: "ParallelContext",
+    num_experts: int,
+) -> ValidationErrors:
+    """Validate EP divides num_experts evenly.
+    
+    Rule: num_experts % ep_degree == 0 (ERROR)
+    
+    Reason:
+    - MoE models require experts to be evenly distributed across EP ranks
+    - Partial expert assignment is not possible
+    
+    Reference: DeepSeek-V3, Mixtral expert parallelism
+    """
+    errors = ValidationErrors()
+    
+    if num_experts is None or ctx.ep_degree <= 1:
+        return errors
+    
+    if num_experts % ctx.ep_degree != 0:
+        errors.add_error(ValidationError(
+            level=ValidationLevel.ERROR,
+            category=ValidationCategory.STRATEGY,
+            code="EP_EXPERT_DIVISIBILITY",
+            message=f"num_experts ({num_experts}) is not divisible by EP ({ctx.ep_degree})",
+            suggestion=f"EP should be a divisor of {num_experts} (e.g., {[d for d in range(1, num_experts+1) if num_experts % d == 0]})",
+            details={
+                "num_experts": num_experts,
+                "ep_degree": ctx.ep_degree,
+                "remainder": num_experts % ctx.ep_degree,
+            },
+        ))
+        logger.warning(
+            f"[StrategyValidator] EP divisibility check failed: "
+            f"{num_experts} % {ctx.ep_degree} = {num_experts % ctx.ep_degree}"
+        )
+    else:
+        logger.info(
+            f"[StrategyValidator] EP divisibility check passed: "
+            f"{num_experts} / {ctx.ep_degree} = {num_experts // ctx.ep_degree} experts/GPU"
+        )
+    
+    return errors
+
+
+def _validate_batch_size_divisibility(
+    ctx: "ParallelContext",
+    global_batch_size: int,
+    micro_batch_size: int,
+) -> ValidationErrors:
+    """Validate batch size divisibility constraints.
+    
+    Rules:
+    1. global_batch_size % dp_degree == 0 (ERROR)
+    2. mini_batch_size = global_batch_size / dp_degree
+    3. mini_batch_size % micro_batch_size == 0 (ERROR)
+    
+    Reason:
+    - Global batch is split across DP ranks
+    - Mini batch is further split into micro batches for gradient accumulation
+    
+    Reference: DeepSpeed, Megatron-LM batch size handling
+    """
+    errors = ValidationErrors()
+    
+    if global_batch_size is None:
+        return errors
+    
+    if ctx.dp_degree <= 1:
+        return errors
+    
+    if global_batch_size % ctx.dp_degree != 0:
+        errors.add_error(ValidationError(
+            level=ValidationLevel.ERROR,
+            category=ValidationCategory.STRATEGY,
+            code="GLOBAL_BATCH_DP_DIVISIBILITY",
+            message=f"global_batch_size ({global_batch_size}) is not divisible by DP ({ctx.dp_degree})",
+            suggestion=f"global_batch_size should be a multiple of {ctx.dp_degree}",
+            details={
+                "global_batch_size": global_batch_size,
+                "dp_degree": ctx.dp_degree,
+                "remainder": global_batch_size % ctx.dp_degree,
+            },
+        ))
+        logger.warning(
+            f"[StrategyValidator] Global batch divisibility check failed: "
+            f"{global_batch_size} % {ctx.dp_degree} = {global_batch_size % ctx.dp_degree}"
+        )
+        return errors
+    
+    mini_batch_size = global_batch_size // ctx.dp_degree
+    
+    if micro_batch_size is not None and mini_batch_size % micro_batch_size != 0:
+        errors.add_error(ValidationError(
+            level=ValidationLevel.ERROR,
+            category=ValidationCategory.STRATEGY,
+            code="MINI_BATCH_MICRO_DIVISIBILITY",
+            message=f"mini_batch_size ({mini_batch_size}) is not divisible by micro_batch_size ({micro_batch_size})",
+            suggestion=f"micro_batch_size should be a divisor of {mini_batch_size}",
+            details={
+                "global_batch_size": global_batch_size,
+                "dp_degree": ctx.dp_degree,
+                "mini_batch_size": mini_batch_size,
+                "micro_batch_size": micro_batch_size,
+                "remainder": mini_batch_size % micro_batch_size,
+            },
+        ))
+        logger.warning(
+            f"[StrategyValidator] Mini/micro batch divisibility check failed: "
+            f"{mini_batch_size} % {micro_batch_size} = {mini_batch_size % micro_batch_size}"
+        )
+    else:
+        logger.info(
+            f"[StrategyValidator] Batch size divisibility check passed: "
+            f"global_batch={global_batch_size}, mini_batch={mini_batch_size}, "
+            f"micro_batch={micro_batch_size}"
+        )
+    
     return errors

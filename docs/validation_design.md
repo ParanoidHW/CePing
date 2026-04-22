@@ -105,6 +105,48 @@
 - sp_degree ≥ 1
 - expert_tp_degree ≥ 1
 
+#### 2.1.5 EP 整除专家数
+
+**来源**：
+- MoE 模型中，路由专家数（num_routed_experts）需要能被 EP 整除
+- 参考：DeepSeek-V3（256专家，EP=32 → 256/32=8 expert/GPU）
+
+**验证条件**：
+- `num_routed_experts % ep_degree == 0`
+- 这是硬约束（ERROR），因为专家无法部分分配
+
+**示例**：
+- DSv3: num_routed_experts=256, EP=32 → 256/32=8 ✅
+- Mixtral: num_routed_experts=8, EP=8 → 8/8=1 ✅
+- num_routed_experts=10, EP=8 → 10/8=1.25 ❌
+
+**说明**：
+- 仅在 EP > 1 且模型有专家时验证
+- 支持字段名：`num_experts` 或 `num_routed_experts`
+
+#### 2.1.6 Batch Size 切分验证
+
+**来源**：
+- DeepSpeed/Megatron-LM batch size 切分逻辑
+- global_batch_size: 全局批次大小
+- mini_batch_size: 单 DP 组批次大小 = global_batch_size / dp_degree
+- micro_batch_size: 单次前向批次大小
+
+**验证条件**：
+1. `global_batch_size % dp_degree == 0`（硬约束，ERROR）
+2. `mini_batch_size = global_batch_size / dp_degree`（定义）
+3. `mini_batch_size % micro_batch_size == 0`（硬约束，ERROR）
+
+**示例**：
+- global_batch_size=32, DP=8 → mini_batch_size=32/8=4 ✅
+- mini_batch_size=4, micro_batch_size=1 → 4/1=4 micro-batches ✅
+- mini_batch_size=4, micro_batch_size=3 → 4/3≈1.33 ❌
+- global_batch_size=10, DP=8 → 10/8=1.25 ❌
+
+**说明**：
+- 仅在 DP > 1 且配置了 batch size 时验证
+- micro_batch_size 未配置时跳过第三个验证
+
 ### 2.2 模型规格验证
 
 #### 2.2.1 vocab_size 可被 TP 整除

@@ -46,6 +46,9 @@ def validate_all(
     vpp_degree: int = 1,
     num_micro_batches: Optional[int] = None,
     pipeline_schedule: Optional[str] = None,
+    num_experts: Optional[int] = None,
+    global_batch_size: Optional[int] = None,
+    micro_batch_size: Optional[int] = None,
 ) -> ValidationErrors:
     """Run all validators and return combined results.
     
@@ -73,6 +76,9 @@ def validate_all(
         vpp_degree: VPP degree
         num_micro_batches: Number of micro batches
         pipeline_schedule: Pipeline schedule type
+        num_experts: Number of routed experts (for EP divisibility)
+        global_batch_size: Global batch size (for batch divisibility)
+        micro_batch_size: Micro batch size (for mini/micro divisibility)
     
     Returns:
         ValidationErrors containing all validation results
@@ -81,7 +87,9 @@ def validate_all(
     
     logger.info(f"[Validation] Starting validation for mode={mode}, num_gpus={num_gpus}")
     
-    errors.merge(validate_strategy(ctx, num_gpus))
+    errors.merge(validate_strategy(
+        ctx, num_gpus, num_experts, global_batch_size, micro_batch_size
+    ))
     
     errors.merge(validate_model(
         ctx,

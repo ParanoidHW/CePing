@@ -223,6 +223,66 @@ class TestStrategyValidator(unittest.TestCase):
         ctx = ParallelContext(tp_degree=8, ep_degree=1)
         self.assertEqual(ctx.expert_tp_degree, 8)
 
+    def test_ep_divisible_by_num_experts(self):
+        """Test EP divisible by num_experts."""
+        ctx = ParallelContext(
+            tp_degree=8, expert_tp_degree=2, ep_degree=4, dp_degree=1, pp_degree=1, sp_degree=1
+        )
+        errors = validate_strategy(ctx, num_gpus=8, num_experts=8)
+        self.assertFalse(errors.has_errors())
+    
+    def test_ep_not_divisible_by_num_experts(self):
+        """Test EP not divisible by num_experts produces ERROR."""
+        ctx = ParallelContext(
+            tp_degree=8, expert_tp_degree=1, ep_degree=8, dp_degree=1, pp_degree=1, sp_degree=1
+        )
+        errors = validate_strategy(ctx, num_gpus=8, num_experts=10)
+        self.assertTrue(errors.has_errors())
+        error_codes = [e.code for e in errors.errors]
+        self.assertIn("EP_EXPERT_DIVISIBILITY", error_codes)
+    
+    def test_ep_skip_when_ep_is_one(self):
+        """Test EP divisibility skipped when EP=1."""
+        ctx = ParallelContext(tp_degree=8, ep_degree=1, dp_degree=1, pp_degree=1, sp_degree=1)
+        errors = validate_strategy(ctx, num_gpus=8, num_experts=256)
+        self.assertFalse(errors.has_errors())
+    
+    def test_global_batch_divisible_by_dp(self):
+        """Test global_batch_size divisible by DP."""
+        ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
+        errors = validate_strategy(ctx, num_gpus=32, global_batch_size=32)
+        self.assertFalse(errors.has_errors())
+    
+    def test_global_batch_not_divisible_by_dp(self):
+        """Test global_batch_size not divisible by DP produces ERROR."""
+        ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
+        errors = validate_strategy(ctx, num_gpus=32, global_batch_size=10)
+        self.assertTrue(errors.has_errors())
+        self.assertEqual(errors.errors[0].code, "GLOBAL_BATCH_DP_DIVISIBILITY")
+    
+    def test_mini_batch_divisible_by_micro_batch(self):
+        """Test mini_batch_size divisible by micro_batch_size."""
+        ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
+        errors = validate_strategy(
+            ctx, num_gpus=32, global_batch_size=32, micro_batch_size=1
+        )
+        self.assertFalse(errors.has_errors())
+    
+    def test_mini_batch_not_divisible_by_micro_batch(self):
+        """Test mini_batch_size not divisible by micro_batch_size produces ERROR."""
+        ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
+        errors = validate_strategy(
+            ctx, num_gpus=32, global_batch_size=32, micro_batch_size=3
+        )
+        self.assertTrue(errors.has_errors())
+        self.assertEqual(errors.errors[0].code, "MINI_BATCH_MICRO_DIVISIBILITY")
+    
+    def test_batch_size_skip_when_dp_is_one(self):
+        """Test batch size divisibility skipped when DP=1."""
+        ctx = ParallelContext(tp_degree=8, dp_degree=1, pp_degree=1, sp_degree=1)
+        errors = validate_strategy(ctx, num_gpus=8, global_batch_size=10)
+        self.assertFalse(errors.has_errors())
+
 
 class TestModelValidator(unittest.TestCase):
     """Test ModelValidator."""
