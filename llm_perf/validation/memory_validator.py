@@ -24,11 +24,11 @@ def validate_memory(
     
     Args:
         ctx: ParallelContext with parallel strategy configuration
-        weight_memory_gb: Weight memory per GPU in GB
-        activation_memory_gb: Activation memory per GPU in GB
+        weight_memory_gb: Weight memory per device in GB
+        activation_memory_gb: Activation memory per device in GB
         device_memory_gb: Device memory capacity in GB
-        gradient_memory_gb: Gradient memory per GPU in GB (training only)
-        optimizer_memory_gb: Optimizer state memory per GPU in GB (training only)
+        gradient_memory_gb: Gradient memory per device in GB (training only)
+        optimizer_memory_gb: Optimizer state memory per device in GB (training only)
         mode: Mode ("training" or "inference")
     
     Returns:
@@ -78,7 +78,7 @@ def _validate_weight_memory(
             category=ValidationCategory.MEMORY,
             code="WEIGHT_MEMORY_EXCEEDED",
             message=f"Weight memory ({weight_memory_gb:.2f} GB) exceeds device memory ({device_memory_gb:.2f} GB)",
-            suggestion=f"Increase TP/PP degree to reduce weight memory per GPU, or enable ZeRO-3/offload",
+            suggestion=f"Increase TP/PP degree to reduce weight memory per device, or enable ZeRO-3/offload",
             details={
                 "weight_memory_gb": weight_memory_gb,
                 "device_memory_gb": device_memory_gb,

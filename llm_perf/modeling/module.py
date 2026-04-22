@@ -282,7 +282,7 @@ class ModuleInstance:
 
     @property
     def params_count_physical(self) -> int:
-        """Physical parameters (sharded) - per GPU."""
+        """Physical parameters (sharded) - per device."""
         return sum(w.physical_numel for w in self._weight_instances.values())
 
     @property
@@ -407,7 +407,7 @@ class ModuleInstance:
         Total: params_count × 8 bytes
 
         ZeRO stage affects optimizer memory:
-        - ZeRO-0: Full optimizer states on each GPU
+        - ZeRO-0: Full optimizer states on each device
         - ZeRO-1: Optimizer states sharded across DP
         - ZeRO-2: Optimizer + gradients sharded
         - ZeRO-3: Optimizer + gradients + weights sharded

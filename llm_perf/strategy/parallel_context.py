@@ -120,21 +120,21 @@ class ParallelContext:
         """Get communication domain for a parallel strategy."""
         return self.comm_domains.get(ptype)
 
-    def get_total_gpus(self) -> int:
-        """Total number of GPUs for Attention part.
+    def get_total_devices(self) -> int:
+        """Total number of devices for Attention part.
         
         Uses tp_degree for Attention layers.
         Formula: tp_degree × pp_degree × sp_degree × dp_degree
         """
         return self.tp_degree * self.pp_degree * self.sp_degree * self.dp_degree
 
-    def get_moe_total_gpus(self) -> int:
-        """Total number of GPUs for MoE part.
+    def get_moe_total_devices(self) -> int:
+        """Total number of devices for MoE part.
         
         Uses expert_tp_degree for MoE/FFN layers.
         Formula: expert_tp_degree × ep_degree × pp_degree × sp_degree × dp_degree
         
-        If expert_tp_degree == tp_degree (uniform TP), this equals get_total_gpus().
+        If expert_tp_degree == tp_degree (uniform TP), this equals get_total_devices().
         """
         effective_expert_tp = self.expert_tp_degree or self.tp_degree
         return effective_expert_tp * self.ep_degree * self.pp_degree * self.sp_degree * self.dp_degree
@@ -248,8 +248,8 @@ class ParallelContext:
             "ulysses_degree": self.ulysses_degree,
             "ring_degree": self.ring_degree,
             "dtype": self.dtype,
-            "total_gpus": self.get_total_gpus(),
-            "moe_total_gpus": self.get_moe_total_gpus(),
+            "total_devices": self.get_total_devices(),
+            "moe_total_devices": self.get_moe_total_devices(),
             "activation_checkpointing": self.activation_checkpointing,
             "zero_stage": self.zero_stage,
             "comm_domains": {ptype: domain.to_dict() for ptype, domain in self.comm_domains.items()},

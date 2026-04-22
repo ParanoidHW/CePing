@@ -225,7 +225,7 @@ class TestLLMTrainingScenario:
         assert result.samples_per_sec > 0
         assert result.tokens_per_sec > 0
         assert result.time_per_step_sec > 0
-        assert result.memory_per_gpu_gb > 0
+        assert result.memory_per_device_gb > 0
 
     def test_training_scenario_get_analyzer(self):
         """Test getting analyzer."""
@@ -375,7 +375,7 @@ class TestLLMInferenceScenario:
         assert result.decode_time_per_step_sec > 0
         assert result.prefill_tokens_per_sec > 0
         assert result.decode_tokens_per_sec > 0
-        assert result.memory_per_gpu_gb > 0
+        assert result.memory_per_device_gb > 0
 
     def test_inference_estimate_latency(self):
         """Test latency estimation."""

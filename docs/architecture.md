@@ -93,7 +93,7 @@ LLM Performance Evaluator 采用分层架构设计，将应用接口、工作负
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Hardware Layer                               │
 │  ┌────────────────────┐  ┌──────────────────────────────────────┐  │
-│  │    Device (GPU)    │  │    Cluster (Network Topology)        │  │
+│  │    Device        │  │    Cluster (Network Topology)        │  │
 │  │  - Compute TFLOPS  │  │  - 2-Tier / 3-Tier Clos             │  │
 │  │  - Memory BW       │  │  - Fat-Tree / CloudMatrix           │  │
 │  │  - Memory Capacity │  │  - Bandwidth Hierarchy              │  │

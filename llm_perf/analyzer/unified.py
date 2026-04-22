@@ -1124,8 +1124,8 @@ class UnifiedAnalyzer:
         component: ShardedModule,
     ) -> float:
         """Estimate forward pass memory."""
-        params_per_gpu = self._count_params(component) // tp // dp
-        params_memory = params_per_gpu * dtype_bytes
+        params_per_device = self._count_params(component) // tp // dp
+        params_memory = params_per_device * dtype_bytes
 
         activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 2 // tp
 
@@ -1143,11 +1143,11 @@ class UnifiedAnalyzer:
         component: ShardedModule,
     ) -> float:
         """Estimate backward pass memory."""
-        params_per_gpu = self._count_params(component) // tp // dp
-        params_memory = params_per_gpu * dtype_bytes
+        params_per_device = self._count_params(component) // tp // dp
+        params_memory = params_per_device * dtype_bytes
 
         activations = batch_size * seq_len * hidden_size * dtype_bytes * num_layers * 4 // tp
-        gradients = params_per_gpu * dtype_bytes
+        gradients = params_per_device * dtype_bytes
 
         return (params_memory + activations + gradients) / 1e9
 
@@ -1159,10 +1159,10 @@ class UnifiedAnalyzer:
         component: ShardedModule,
     ) -> float:
         """Estimate optimizer memory."""
-        params_per_gpu = self._count_params(component) // tp // dp
-        params_memory = params_per_gpu * dtype_bytes
+        params_per_device = self._count_params(component) // tp // dp
+        params_memory = params_per_device * dtype_bytes
 
-        optimizer_states = params_per_gpu * dtype_bytes * 2
+        optimizer_states = params_per_device * dtype_bytes * 2
 
         return (params_memory + optimizer_states) / 1e9
 
@@ -1694,7 +1694,7 @@ class UnifiedAnalyzer:
     ) -> Dict[str, Any]:
         """Generate detailed breakdown format for frontend compatibility.
 
-        All memory metrics are per-GPU.
+        All memory metrics are per-device.
 
         Structure:
         - by_submodule_type: aggregated by module type (embedding, transformer_block, lm_head, etc.)

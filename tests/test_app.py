@@ -364,8 +364,8 @@ class TestDataClasses:
     def test_strategy_constraints(self):
         c1 = StrategyConstraints()
         assert c1.max_memory_gb is None
-        assert c1.max_gpus is None
-        assert c1.min_gpus == 1
+        assert c1.max_devices is None
+        assert c1.min_devices == 1
 
         c2 = StrategyConstraints(
             max_memory_gb=80.0,

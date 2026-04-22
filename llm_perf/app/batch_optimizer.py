@@ -63,7 +63,7 @@ class BatchOptimizer:
             strategy: Strategy specification
             workload: Workload preset name (auto-inferred if None)
             latency_budget: Latency budget
-            memory_budget_gb: Maximum memory per GPU
+            memory_budget_gb: Maximum memory per device
             target_tps: Minimum throughput requirement
             batch_step: Step size for batch iteration
             max_batch: Maximum batch size to search

@@ -21,7 +21,7 @@ class ShardedKernelResult:
     """Result of sharded kernel evaluation.
 
     Attributes:
-        sharded_shape: Shape after sharding (on single GPU)
+        sharded_shape: Shape after sharding (on single device)
         sharded_flops: FLOPs after sharding
         sharded_time: Execution time after sharding
         comm_time: Communication time associated with this kernel
@@ -297,7 +297,7 @@ class KernelBackend(ABC):
             strategy: Parallelism strategy
 
         Returns:
-            Sharded shape (on single GPU)
+            Sharded shape (on single device)
         """
         if not sharding_info or not original_shape:
             return original_shape

@@ -188,8 +188,8 @@ class TestParallelContext:
         assert ctx.get_degree("sp") == 4
         assert ctx.get_degree("pp") == 1
 
-    def test_get_total_gpus(self):
-        """Test total GPU count."""
+    def test_get_total_devices(self):
+        """Test total device count."""
         ctx = ParallelContext(
             tp_degree=8,
             pp_degree=4,
@@ -198,7 +198,7 @@ class TestParallelContext:
             dp_degree=16,
         )
 
-        total = ctx.get_total_gpus()
+        total = ctx.get_total_devices()
         assert total == 8 * 4 * 2 * 1 * 16
 
     def test_to_dict(self):
@@ -209,7 +209,7 @@ class TestParallelContext:
 
         assert result["tp_degree"] == 8
         assert result["dtype"] == "fp16"
-        assert "total_gpus" in result
+        assert "total_devices" in result
 
 
 class TestShardedModule:

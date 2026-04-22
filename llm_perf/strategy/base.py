@@ -34,7 +34,7 @@ class ParallelConfig:
     """Configuration for a specific parallelism type."""
 
     enabled: bool = False
-    degree: int = 1  # Parallelism degree (e.g., TP=4 means 4 GPUs)
+    degree: int = 1  # Parallelism degree (e.g., TP=4 means 4 devices)
 
     # Additional options
     options: Dict[str, Any] = field(default_factory=dict)
@@ -105,7 +105,7 @@ class StrategyConfig:
 
     @property
     def world_size(self) -> int:
-        """Total number of GPUs needed for Attention part.
+        """Total number of devices needed for Attention part.
         
         Uses tp_degree for Attention layers.
         """
@@ -113,7 +113,7 @@ class StrategyConfig:
 
     @property
     def moe_world_size(self) -> int:
-        """Total number of GPUs needed for MoE part.
+        """Total number of devices needed for MoE part.
         
         Uses expert_tp_degree for MoE/FFN layers.
         If expert_tp_degree == tp_degree, this equals world_size (uniform TP).

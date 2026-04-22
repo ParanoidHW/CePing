@@ -35,8 +35,8 @@ class StrategyConstraints:
     """Constraints for strategy search."""
 
     max_memory_gb: Optional[float] = None
-    max_gpus: Optional[int] = None
-    min_gpus: int = 1
+    max_devices: Optional[int] = None
+    min_devices: int = 1
     max_tp: Optional[int] = None
     max_pp: Optional[int] = None
     max_dp: Optional[int] = None
@@ -240,7 +240,7 @@ class StrategyOptimizer:
                 for dp in dp_range:
                     if tp * pp * dp > num_devices:
                         continue
-                    if tp * pp * dp < constraints.min_gpus:
+                    if tp * pp * dp < constraints.min_devices:
                         continue
                     if constraints.require_tp and tp < 2:
                         continue

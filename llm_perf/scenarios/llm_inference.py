@@ -46,7 +46,7 @@ class LLMInferenceResult(ScenarioResult):
     decode_time_per_step_sec: float = 0.0
     prefill_tokens_per_sec: float = 0.0
     decode_tokens_per_sec: float = 0.0
-    memory_per_gpu_gb: float = 0.0
+    memory_per_device_gb: float = 0.0
     unified_result: UnifiedResult = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -63,7 +63,7 @@ class LLMInferenceResult(ScenarioResult):
                     "time_per_step_ms": self.decode_time_per_step_sec * 1000,
                     "tokens_per_sec": self.decode_tokens_per_sec,
                 },
-                "memory_per_gpu_gb": self.memory_per_gpu_gb,
+                "memory_per_device_gb": self.memory_per_device_gb,
                 "unified_result": self.unified_result.to_dict() if self.unified_result else None,
             }
         )
@@ -137,7 +137,7 @@ class LLMInferenceScenario(Scenario):
             decode_time_per_step_sec=decode_time_per_step,
             prefill_tokens_per_sec=prefill_tps,
             decode_tokens_per_sec=decode_tps,
-            memory_per_gpu_gb=unified_result.peak_memory_gb,
+            memory_per_device_gb=unified_result.peak_memory_gb,
             unified_result=unified_result,
             breakdown=unified_result.to_dict(),
             metadata={

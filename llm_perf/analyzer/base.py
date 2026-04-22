@@ -261,8 +261,8 @@ class UnifiedResult:
         """Convert to dictionary with frontend compatibility fields.
 
         Dimension convention:
-        - Memory metrics: per-GPU (each GPU's memory usage)
-        - Compute metrics: per-GPU (each GPU's FLOPs)
+        - Memory metrics: per-device (each device's memory usage)
+        - Compute metrics: per-device (each device's FLOPs)
         - Throughput metrics: global (system-wide throughput)
         - Latency metrics: global (request-level latency)
         """
@@ -305,13 +305,13 @@ class UnifiedResult:
         }
 
     def _build_memory_dict(self) -> Dict[str, float]:
-        """Build memory dictionary - per GPU memory."""
+        """Build memory dictionary - per device memory."""
         kv_cache_gb = 0.0
         if self.workload_type == WorkloadType.INFERENCE:
             kv_cache_gb = self.metadata.get("kv_cache_gb", 0.0)
 
         return {
-            "memory_per_gpu_gb": self.peak_memory_gb,
+            "memory_per_device_gb": self.peak_memory_gb,
             "peak_memory_gb": self.peak_memory_gb,
             "kv_cache_gb": kv_cache_gb,
         }

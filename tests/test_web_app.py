@@ -363,20 +363,20 @@ class TestWebAppAPI:
         assert "time" in result_dict
         assert "time_per_step_sec" in result_dict["time"]
         assert "memory" in result_dict
-        assert "memory_per_gpu_gb" in result_dict["memory"]
+        assert "memory_per_device_gb" in result_dict["memory"]
         assert "prefill" in result_dict
         assert "decode" in result_dict
         assert "end_to_end" in result_dict
 
-    def test_memory_is_per_gpu(self):
-        """Test that memory metrics are per-GPU."""
+    def test_memory_is_per_device(self):
+        """Test that memory metrics are per-device."""
         evaluator = Evaluator()
         result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
 
         result_dict = result.to_dict()
 
         assert result_dict["peak_memory_gb"] > 0
-        assert result_dict["memory"]["memory_per_gpu_gb"] == result_dict["peak_memory_gb"]
+        assert result_dict["memory"]["memory_per_device_gb"] == result_dict["peak_memory_gb"]
 
         if result_dict["detailed_breakdown"]:
             memory = result_dict["detailed_breakdown"]["memory"]
@@ -462,8 +462,8 @@ class TestWebAppAPI:
                 assert "flops" in data["compute"]
                 assert "gb" in data["communication"]
 
-    def test_communication_breakdown_per_gpu(self):
-        """Test that communication breakdown is per-GPU."""
+    def test_communication_breakdown_per_device(self):
+        """Test that communication breakdown is per-device."""
         evaluator = Evaluator()
         result = evaluator.evaluate("llama-7b", "H100-SXM-80GB", "training", "tp8", batch_size=32)
 

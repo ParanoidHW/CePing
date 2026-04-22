@@ -16,7 +16,7 @@ class PPStrategy:
 
     Attributes:
         num_stages: Number of PP stages (physical division)
-        num_virtual_stages: Number of virtual stages per GPU (vpp)
+        num_virtual_stages: Number of virtual stages per device (vpp)
         schedule: Schedule type ("1f1b", "gpipe", "interleaved")
         num_micro_batches: Number of micro-batches
         micro_batch_size: Size of each micro-batch
@@ -248,35 +248,35 @@ class PPSchedule:
     ) -> List[List[str]]:
         """Generate Interleaved 1F1B schedule for VPP.
 
-        Interleaved schedule: One GPU handles multiple stages in interleaved manner.
+        Interleaved schedule: One device handles multiple stages in interleaved manner.
 
         Example (8 stages, vpp=2, 16 micro-batches):
-            GPU 0 (Stage 0, 4): [F0_s0, F0_s4, F1_s0, F1_s4, ...]
+            device 0 (Stage 0, 4): [F0_s0, F0_s4, F1_s0, F1_s4, ...]
 
         Returns:
-            List of operation sequences per GPU
+            List of operation sequences per device
         """
-        num_gpus = num_stages // num_virtual_stages
+        num_devices = num_stages // num_virtual_stages
         schedules = []
 
-        for gpu in range(num_gpus):
+        for device in range(num_devices):
             ops = []
-            stages_for_gpu = [gpu * num_virtual_stages + v for v in range(num_virtual_stages)]
+            stages_for_device = [device * num_virtual_stages + v for v in range(num_virtual_stages)]
 
             warmup_count = min(num_stages * num_virtual_stages, num_micro_batches)
             for mb in range(warmup_count):
-                for stage in stages_for_gpu:
+                for stage in stages_for_device:
                     ops.append(f"F{mb}_s{stage}")
 
             steady_start = num_stages * num_virtual_stages
             for mb in range(steady_start, num_micro_batches):
-                for stage in stages_for_gpu:
+                for stage in stages_for_device:
                     ops.append(f"F{mb}_s{stage}")
                     ops.append(f"B{mb - num_stages}_s{stage}")
 
             cooldown_start = num_micro_batches - num_stages
             for mb in range(cooldown_start, num_micro_batches):
-                for stage in stages_for_gpu:
+                for stage in stages_for_device:
                     ops.append(f"B{mb}_s{stage}")
 
             schedules.append(ops)

@@ -11,7 +11,7 @@ will require detailed hardware microarchitecture knowledge and
 simulation models.
 
 Future implementation will support:
-- GPU/NPU pipeline simulation
+- device/NPU pipeline simulation
 - L1/L2 cache hit/miss analysis
 - Memory coalescing efficiency
 - Warp/wavefront scheduling

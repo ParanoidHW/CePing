@@ -44,7 +44,7 @@ class LLMTrainingResult(ScenarioResult):
     samples_per_sec: float = 0.0
     tokens_per_sec: float = 0.0
     time_per_step_sec: float = 0.0
-    memory_per_gpu_gb: float = 0.0
+    memory_per_device_gb: float = 0.0
     unified_result: UnifiedResult = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -54,7 +54,7 @@ class LLMTrainingResult(ScenarioResult):
                 "samples_per_sec": self.samples_per_sec,
                 "tokens_per_sec": self.tokens_per_sec,
                 "time_per_step_sec": self.time_per_step_sec,
-                "memory_per_gpu_gb": self.memory_per_gpu_gb,
+                "memory_per_device_gb": self.memory_per_device_gb,
                 "unified_result": self.unified_result.to_dict() if self.unified_result else None,
             }
         )
@@ -114,7 +114,7 @@ class LLMTrainingScenario(Scenario):
             samples_per_sec=throughput.get("samples_per_sec", 0),
             tokens_per_sec=throughput.get("tokens_per_sec", 0),
             time_per_step_sec=unified_result.total_time_sec,
-            memory_per_gpu_gb=unified_result.peak_memory_gb,
+            memory_per_device_gb=unified_result.peak_memory_gb,
             unified_result=unified_result,
             breakdown=unified_result.to_dict(),
             metadata={

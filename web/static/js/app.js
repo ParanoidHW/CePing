@@ -583,8 +583,8 @@ function displayResults(result) {
                     <div class="result-label">Time/Step</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.memory?.memory_per_gpu_gb || 0).toFixed(1)}GB</div>
-                    <div class="result-label">Memory/GPU</div>
+                    <div class="result-value">${(result.memory?.memory_per_device_gb || 0).toFixed(1)}GB</div>
+                    <div class="result-label">Memory/device</div>
                 </div>
             </div>
             ${renderBreakdown(result.breakdown)}
@@ -619,8 +619,8 @@ function displayResults(result) {
                     <div class="result-label">Total Time</div>
                 </div>
                 <div class="result-card">
-                    <div class="result-value">${(result.memory?.memory_per_gpu_gb || 0).toFixed(1)}GB</div>
-                    <div class="result-label">Memory/GPU</div>
+                    <div class="result-value">${(result.memory?.memory_per_device_gb || 0).toFixed(1)}GB</div>
+                    <div class="result-label">Memory/device</div>
                 </div>
                 <div class="result-card">
                     <div class="result-value">${(result.memory?.kv_cache_gb || 0).toFixed(1)}GB</div>

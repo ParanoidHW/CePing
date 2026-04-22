@@ -258,8 +258,8 @@ class TestWorkloadLoader:
 class TestResultDimensions:
     """Tests for result dimension correctness."""
 
-    def test_memory_dimension_per_gpu(self):
-        """Test memory metrics are per-GPU."""
+    def test_memory_dimension_per_device(self):
+        """Test memory metrics are per-device."""
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         topology = NetworkTopology(
@@ -278,7 +278,7 @@ class TestResultDimensions:
         result_dict = result.to_dict()
 
         assert result_dict["peak_memory_gb"] > 0
-        assert result_dict["memory"]["memory_per_gpu_gb"] == result_dict["peak_memory_gb"]
+        assert result_dict["memory"]["memory_per_device_gb"] == result_dict["peak_memory_gb"]
 
     def test_throughput_dimension_global(self):
         """Test throughput metrics are global."""
@@ -371,7 +371,7 @@ class TestResultDimensions:
         assert result_dict["metadata"]["ep_degree"] == 1
 
     def test_detailed_breakdown_memory_dimensions(self):
-        """Test detailed_breakdown memory metrics are per-GPU."""
+        """Test detailed_breakdown memory metrics are per-device."""
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         topology = NetworkTopology(
@@ -1035,8 +1035,8 @@ class TestModuleBreakdown:
         assert summary["total_compute_time_sec"] > 0
         assert summary["total_memory_gb"] > 0
 
-    def test_module_breakdown_memory_per_gpu(self):
-        """Verify memory in module_breakdown is per-GPU dimension."""
+    def test_module_breakdown_memory_per_device(self):
+        """Verify memory in module_breakdown is per-device dimension."""
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=4, num_heads=32)
         device = Device.from_preset("H100-SXM-80GB")
         cluster = make_cluster(device, 8)
@@ -1047,7 +1047,7 @@ class TestModuleBreakdown:
 
         for module_data in result.module_breakdown["by_module"].values():
             memory_gb = module_data["memory"]["activations_gb"]
-            assert memory_gb < 100, f"Memory per GPU should be < 100GB, got {memory_gb}GB"
+            assert memory_gb < 100, f"Memory per device should be < 100GB, got {memory_gb}GB"
 
     def test_module_breakdown_communication_non_zero(self):
         """Verify transformer_block modules have non-zero communication."""
@@ -1126,11 +1126,11 @@ class TestEvaluationAccuracy:
 
         # Training memory includes: weight + gradient + optimizer + activation
         # For 4-layer LLaMA with TP=8:
-        # - weight: ~1.7GB (per GPU)
+        # - weight: ~1.7GB (per device)
         # - gradient: ~1.7GB
         # - optimizer: ~6.8GB (Adam: 2 × FP32 states)
         # - activation: ~7GB
-        # Total: ~16GB per GPU
+        # Total: ~16GB per device
         assert 10 < memory_gb < 200, f"Memory should be in reasonable range, got {memory_gb}GB"
 
         # Verify memory breakdown exists

@@ -219,9 +219,9 @@ class TestPPSchedule:
 
         assert len(schedules) == 4
 
-        for gpu_ops in schedules:
-            forward_ops = [op for op in gpu_ops if op.startswith("F")]
-            backward_ops = [op for op in gpu_ops if op.startswith("B")]
+        for device_ops in schedules:
+            forward_ops = [op for op in device_ops if op.startswith("F")]
+            backward_ops = [op for op in device_ops if op.startswith("B")]
 
             assert len(forward_ops) > 0
             assert len(backward_ops) > 0

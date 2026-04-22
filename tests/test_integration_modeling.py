@@ -657,11 +657,11 @@ class TestCommunicationBreakdown:
         assert total_tp8 >= total_tp1
 
 
-class TestMultiGPUCluster:
-    """Tests for multi-GPU cluster scenarios."""
+class TestMultiDeviceCluster:
+    """Tests for multi-device cluster scenarios."""
 
-    def test_single_node_8_gpu(self):
-        """Test single node 8 GPU scenario."""
+    def test_single_node_8_device(self):
+        """Test single node 8 device scenario."""
         model = LlamaModel(
             vocab_size=32000,
             hidden_size=4096,
@@ -678,8 +678,8 @@ class TestMultiGPUCluster:
 
         assert result is not None
 
-    def test_multi_node_16_gpu(self):
-        """Test multi-node 16 GPU scenario."""
+    def test_multi_node_16_device(self):
+        """Test multi-node 16 device scenario."""
         model = LlamaModel(
             vocab_size=32000,
             hidden_size=4096,

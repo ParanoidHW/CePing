@@ -150,7 +150,7 @@ class TestStrategyConfig(unittest.TestCase):
 
     def test_get_communication_domain_mapping_large_tp(self):
         """Test communication domain mapping when TP exceeds node size."""
-        config = StrategyConfig(tp_degree=16)  # 16 GPUs in TP, exceeds 8/node
+        config = StrategyConfig(tp_degree=16)  # 16 devices in TP, exceeds 8/node
         mapping = config.get_communication_domain_mapping(devices_per_node=8)
 
         # TP should be intra_rack (level 1) when > devices_per_node
