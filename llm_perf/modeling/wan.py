@@ -16,10 +16,10 @@ from llm_perf.modeling.layers import (
     ShardedEmbedding,
     ShardedAttention,
     ShardedFFN,
-    ShardedRMSNorm,
     silu,
     flash_attention,
 )
+from llm_perf.modeling.tensor import ShardedParameter
 from llm_perf.modeling.vision import ShardedConv3d
 from llm_perf.utils.constants import FFNActType
 
@@ -234,8 +234,18 @@ class ShardedWanDiTBlock(ShardedModule):
             shape=(hidden_size, hidden_size), shardable={0: "tp"}, dtype=dtype, name="o_weight"
         )
 
-        self.self_attn_q_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
-        self.self_attn_k_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.self_attn_q_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="q_norm_weight",
+        )
+        self.self_attn_k_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="k_norm_weight",
+        )
 
         self.norm2 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
@@ -268,8 +278,8 @@ class ShardedWanDiTBlock(ShardedModule):
         k = norm_hidden @ self.self_attn_qkv.k_weight
         v = norm_hidden @ self.self_attn_qkv.v_weight
 
-        q = self.self_attn_q_norm(q)
-        k = self.self_attn_k_norm(k)
+        q = self._rms_norm(q, self.self_attn_q_norm_weight)
+        k = self._rms_norm(k, self.self_attn_k_norm_weight)
 
         batch = hidden.shape[0] if len(hidden.shape) >= 1 else 1
         seq = hidden.shape[-2] if len(hidden.shape) >= 2 else 1
@@ -298,6 +308,25 @@ class ShardedWanDiTBlock(ShardedModule):
         self._activations["ffn_out"] = ffn_out
 
         return hidden
+
+    def _rms_norm(self, input_tensor: ShardedTensor, weight: ShardedParameter) -> ShardedTensor:
+        """RMS normalization."""
+        from llm_perf.kernels.op import RMSNormOp
+        output = ShardedTensor(
+            shape=input_tensor.shape,
+            shardable=input_tensor.shardable,
+            dtype=input_tensor.dtype,
+            name="rmsnorm_output",
+        )
+        output._op_history = input_tensor._op_history + [
+            RMSNormOp(
+                dtype=input_tensor.dtype,
+                input=input_tensor,
+                weight=weight,
+                output=output,
+            )
+        ]
+        return output
 
 
 class ShardedWanDiT(ShardedModule):

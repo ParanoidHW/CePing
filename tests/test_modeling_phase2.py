@@ -6,7 +6,6 @@ from llm_perf.modeling import (
     ShardedModule,
     ParallelContext,
     ShardedEmbedding,
-    ShardedRMSNorm,
     ShardedAttention,
     ShardedFFN,
     ShardedLMHead,
@@ -14,6 +13,7 @@ from llm_perf.modeling import (
     gelu,
     flash_attention,
 )
+from llm_perf.modeling.layers import ShardedRMSNorm
 
 
 class TestShardedEmbedding:

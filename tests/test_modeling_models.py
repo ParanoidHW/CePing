@@ -37,10 +37,10 @@ class TestShardedTransformerBlock:
         """Test block has correct submodules."""
         block = ShardedTransformerBlock(4096, 32, 8, 11008)
 
-        assert "input_norm" in block._submodules
         assert "attention" in block._submodules
-        assert "post_attn_norm" in block._submodules
         assert "ffn" in block._submodules
+        assert "input_norm_weight" in block._weights
+        assert "post_attn_norm_weight" in block._weights
 
     def test_block_params_count(self):
         """Test block params count."""
@@ -101,8 +101,8 @@ class TestLlamaModel:
 
         assert len(model.layers) == 4
         assert "embedding" in model._submodules
-        assert "final_norm" in model._submodules
         assert "lm_head" in model._submodules
+        assert "final_norm_weight" in model._weights
 
         for i in range(4):
             assert f"layers.{i}" in model._submodules
@@ -343,10 +343,10 @@ class TestShardedMoEBlock:
         """Test MoE block has correct submodules."""
         block = ShardedMoEBlock(4096, 32, 8, 2048, 64, 8)
 
-        assert "input_norm" in block._submodules
         assert "attention" in block._submodules
-        assert "post_attn_norm" in block._submodules
         assert "moe" in block._submodules
+        assert "input_norm_weight" in block._weights
+        assert "post_attn_norm_weight" in block._weights
 
     def test_moe_block_forward(self):
         """Test MoE block forward."""
@@ -752,10 +752,8 @@ class TestShardedParameterWeightRegistration:
         model = LlamaModel(vocab_size=32000, hidden_size=4096, num_layers=2, num_heads=32)
 
         expected_weights = 1 + 2 * 9 + 1 + 1
-        assert len(model._weights) == 0
-
-        total_weights = len(model.get_weights())
-        assert total_weights == expected_weights
+        assert len(model._weights) == 1  # final_norm_weight
+        assert len(model.get_weights()) == expected_weights
 
     def test_forward_does_not_add_weights(self):
         """Test forward pass does not add activation tensors to _weights."""
@@ -764,7 +762,7 @@ class TestShardedParameterWeightRegistration:
         input_ids = ShardedTensor(shape=(1, 512))
         logits = model(input_ids)
 
-        assert len(model._weights) == 0
+        assert len(model._weights) == 1  # final_norm_weight
         assert "_last_forward_input" not in model._weights
         assert "_last_forward_output" not in model._weights
 

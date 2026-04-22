@@ -24,7 +24,6 @@ from llm_perf.kernels.op import (
 
 from .layers import (
     ShardedEmbedding,
-    ShardedRMSNorm,
     ShardedAttention,
     ShardedFFN,
     ShardedLMHead,
@@ -108,7 +107,6 @@ __all__ = [
     "Conv3dOp",
     "GroupNormOp",
     "ShardedEmbedding",
-    "ShardedRMSNorm",
     "ShardedAttention",
     "ShardedFFN",
     "ShardedLMHead",

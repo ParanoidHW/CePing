@@ -6,25 +6,21 @@ Includes:
 """
 
 import logging
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional
 
 logger = logging.getLogger(__name__)
-from llm_perf.modeling.module import ShardedModule, ModuleInstance
+from llm_perf.modeling.module import ShardedModule
 from llm_perf.modeling.tensor import ShardedTensor
 from llm_perf.modeling.layers import (
     ShardedEmbedding,
-    ShardedRMSNorm,
     ShardedAttention,
     ShardedFFN,
     ShardedLMHead,
     ShardedMoE,
 )
+from llm_perf.modeling.tensor import ShardedParameter
+from llm_perf.kernels.op import RMSNormOp
 from llm_perf.modeling.config_compat import SimpleModelConfig
-
-if TYPE_CHECKING:
-    from llm_perf.strategy.parallel_context import ParallelContext
-    from llm_perf.strategy.pp_strategy import PPStrategy
-    from llm_perf.strategy.pp_model import PPModel
 
 
 class ShardedTransformerBlock(ShardedModule):
@@ -66,7 +62,12 @@ class ShardedTransformerBlock(ShardedModule):
         self.intermediate_size = intermediate_size
         self.dtype = dtype
 
-        self.input_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.input_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="input_norm_weight",
+        )
         self.attention = ShardedAttention(
             hidden_size=hidden_size,
             num_heads=num_heads,
@@ -74,7 +75,12 @@ class ShardedTransformerBlock(ShardedModule):
             head_dim=head_dim,
             dtype=dtype,
         )
-        self.post_attn_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.post_attn_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="post_attn_norm_weight",
+        )
         self.ffn = ShardedFFN(
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
@@ -90,17 +96,36 @@ class ShardedTransformerBlock(ShardedModule):
         Returns:
             output: (batch, seq, hidden_size)
         """
-        norm_out = self.input_norm(hidden)
+        norm_out = self._rms_norm(hidden, self.input_norm_weight)
         attn_out = self.attention(norm_out)
         hidden = hidden + attn_out
 
-        norm_out = self.post_attn_norm(hidden)
+        norm_out = self._rms_norm(hidden, self.post_attn_norm_weight)
         ffn_out = self.ffn(norm_out)
         output = hidden + ffn_out
 
         self._activations["attn_out"] = attn_out
         self._activations["ffn_out"] = ffn_out
 
+        return output
+
+    def _rms_norm(self, input_tensor: ShardedTensor, weight: ShardedParameter) -> ShardedTensor:
+        """RMS normalization."""
+        output = ShardedTensor(
+            shape=input_tensor.shape,
+            shardable=input_tensor.shardable,
+            dtype=input_tensor.dtype,
+            name="rmsnorm_output",
+        )
+        output._op_history = input_tensor._op_history + [
+            RMSNormOp(
+                dtype=input_tensor.dtype,
+                input=input_tensor,
+                weight=weight,
+                output=output,
+            )
+        ]
+        self._track_intermediate("rmsnorm_output", output)
         return output
 
 
@@ -186,7 +211,12 @@ class LlamaModel(ShardedModule):
             for _ in range(num_layers)
         ]
 
-        self.final_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.final_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="final_norm_weight",
+        )
         self.lm_head = ShardedLMHead(
             hidden_size=hidden_size,
             vocab_size=vocab_size,
@@ -209,13 +239,32 @@ class LlamaModel(ShardedModule):
             hidden = layer(hidden)
             self._activations[f"layer_{i}_output"] = hidden
 
-        hidden = self.final_norm(hidden)
+        hidden = self._rms_norm(hidden, self.final_norm_weight)
         self._activations["final_norm_output"] = hidden
 
         logits = self.lm_head(hidden)
         self._activations["lm_head_output"] = logits
 
         return logits
+
+    def _rms_norm(self, input_tensor: ShardedTensor, weight: ShardedParameter) -> ShardedTensor:
+        """RMS normalization."""
+        output = ShardedTensor(
+            shape=input_tensor.shape,
+            shardable=input_tensor.shardable,
+            dtype=input_tensor.dtype,
+            name="rmsnorm_output",
+        )
+        output._op_history = input_tensor._op_history + [
+            RMSNormOp(
+                dtype=input_tensor.dtype,
+                input=input_tensor,
+                weight=weight,
+                output=output,
+            )
+        ]
+        self._track_intermediate("rmsnorm_output", output)
+        return output
 
 
 class ShardedMoEBlock(ShardedModule):
@@ -266,7 +315,12 @@ class ShardedMoEBlock(ShardedModule):
         self.shared_expert_intermediate = shared_expert_intermediate
         self.dtype = dtype
 
-        self.input_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.input_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="input_norm_weight",
+        )
         self.attention = ShardedAttention(
             hidden_size=hidden_size,
             num_heads=num_heads,
@@ -274,7 +328,12 @@ class ShardedMoEBlock(ShardedModule):
             head_dim=head_dim,
             dtype=dtype,
         )
-        self.post_attn_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.post_attn_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="post_attn_norm_weight",
+        )
         self.moe = ShardedMoE(
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
@@ -293,17 +352,36 @@ class ShardedMoEBlock(ShardedModule):
         Returns:
             output: (batch, seq, hidden_size)
         """
-        norm_out = self.input_norm(hidden)
+        norm_out = self._rms_norm(hidden, self.input_norm_weight)
         attn_out = self.attention(norm_out)
         hidden = hidden + attn_out
 
-        norm_out = self.post_attn_norm(hidden)
+        norm_out = self._rms_norm(hidden, self.post_attn_norm_weight)
         moe_out = self.moe(norm_out)
         output = hidden + moe_out
 
         self._activations["attn_out"] = attn_out
         self._activations["moe_out"] = moe_out
 
+        return output
+
+    def _rms_norm(self, input_tensor: ShardedTensor, weight: ShardedParameter) -> ShardedTensor:
+        """RMS normalization."""
+        output = ShardedTensor(
+            shape=input_tensor.shape,
+            shardable=input_tensor.shardable,
+            dtype=input_tensor.dtype,
+            name="rmsnorm_output",
+        )
+        output._op_history = input_tensor._op_history + [
+            RMSNormOp(
+                dtype=input_tensor.dtype,
+                input=input_tensor,
+                weight=weight,
+                output=output,
+            )
+        ]
+        self._track_intermediate("rmsnorm_output", output)
         return output
 
 
@@ -435,7 +513,12 @@ class DeepSeekModel(ShardedModule):
         self.layers = self.layers
         logger.debug(f"[DEEPSEEK_INIT] layers={len(self.layers)}, _submodules={len(self._submodules)}, _weights={len(self._weights)}")
 
-        self.final_norm = ShardedRMSNorm(hidden_size, dtype=dtype)
+        self.final_norm_weight = ShardedParameter(
+            shape=(hidden_size,),
+            shardable={},
+            dtype=dtype,
+            name="final_norm_weight",
+        )
         self.lm_head = ShardedLMHead(
             hidden_size=hidden_size,
             vocab_size=vocab_size,
@@ -458,10 +541,29 @@ class DeepSeekModel(ShardedModule):
             hidden = layer(hidden)
             self._activations[f"layer_{i}_output"] = hidden
 
-        hidden = self.final_norm(hidden)
+        hidden = self._rms_norm(hidden, self.final_norm_weight)
         self._activations["final_norm_output"] = hidden
 
         logits = self.lm_head(hidden)
         self._activations["lm_head_output"] = logits
 
         return logits
+
+    def _rms_norm(self, input_tensor: ShardedTensor, weight: ShardedParameter) -> ShardedTensor:
+        """RMS normalization."""
+        output = ShardedTensor(
+            shape=input_tensor.shape,
+            shardable=input_tensor.shardable,
+            dtype=input_tensor.dtype,
+            name="rmsnorm_output",
+        )
+        output._op_history = input_tensor._op_history + [
+            RMSNormOp(
+                dtype=input_tensor.dtype,
+                input=input_tensor,
+                weight=weight,
+                output=output,
+            )
+        ]
+        self._track_intermediate("rmsnorm_output", output)
+        return output
