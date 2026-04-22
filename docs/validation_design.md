@@ -15,38 +15,84 @@
 
 ### 2.1 并行策略验证
 
-#### 2.1.1 并行度乘积 = 卡数
+#### 2.1.1 分层并行策略验证（新增）
 
 **来源**：
-- 并行切分理论：TP×PP×DP×EP = 总设备数
-- 参考：Megatron-LM, DeepSpeed 官方文档
+- DeepSeek-V3、Mixtral 等 MoE 模型的分层切分策略
+- Megatron-LM、DeepSpeed 的 MoE 实现
+- Expert 权重切分：`{0: "ep", 2: "tp"}` - 按 expert 维度 EP 切分，按 intermediate 维度 TP 切分
 
-**门槛**：
-- TP×PP×DP×EP 必须精确等于集群总卡数
+**原理**：
+- Attention 层和 MoE/FFN 层可以采用独立的 TP 策略
+- `tp_degree` 用于 Attention 层的 TP 切分
+- `expert_tp_degree` 用于 MoE Expert 内部的 TP 切分（默认等于 `tp_degree`）
+- `ep_degree` 用于 Expert 并行
+
+**验证条件**：
+- Attention 部分：`tp_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+- MoE 部分：`expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+- 如果 `expert_tp_degree == tp_degree`（未设置），两条规则等价
+- 如果 `expert_tp_degree != tp_degree`（分层切分），两条规则独立验证
+
+**示例**：
+- 8卡集群，Attention TP=8，MoE ETP=2×EP=4：
+  - Attention: 8×1×1×1 = 8 ✅
+  - MoE: 2×4×1×1×1 = 8 ✅
+- 8卡集群，Attention TP=8，MoE ETP=4×EP=2：
+  - Attention: 8×1×1×1 = 8 ✅
+  - MoE: 4×2×1×1×1 = 8 ✅
+- 8卡集群，Attention TP=4，MoE ETP=2×EP=2：
+  - Attention: 4×1×1×1 = 4 ❌（不足）
+  - MoE: 2×2×1×1×1 = 4 ❌（不足）
+
+**配置建议**：
+- DeepSeek-V3 典型配置（64卡）：
+  - Attention: TP=64, 或 TP=32×PP=2
+  - MoE: ETP=8×EP=8×DP=1, 或 ETP=4×EP=16
+- Mixtral-8×7B（8卡）：
+  - Attention: TP=8
+  - MoE: ETP=2×EP=4（每个 TP 组内 4 个 Expert 分片）
+
+#### 2.1.2 并行度乘积 = 卡数（已更新为分层验证）
+
+**来源**：
+- 并行切分理论：不同层可使用不同并行策略
+- 参考：Megatron-LM MoE, DeepSpeed-MoE 官方文档
+
+**门槛**（分层验证）：
+- Attention 部分乘积必须精确等于集群总卡数
+- MoE 部分乘积必须精确等于集群总卡数
 - 不允许有余（资源浪费）或不足（切分失败）
 
-**示例**：
-- 8卡集群：TP=2, PP=2, DP=2 → 2×2×2=8 ✅
-- 8卡集群：TP=4, PP=2, DP=1 → 4×2×1=8 ✅
-- 8卡集群：TP=4, PP=1, DP=1 → 4×1×1=4 ❌（剩余4卡空闲）
+**示例**（分层切分）：
+- 8卡集群：TP=8, ETP=2, EP=4 → Attention: 8=8 ✅, MoE: 2×4=8 ✅
+- 8卡集群：TP=8, ETP=4, EP=2 → Attention: 8=8 ✅, MoE: 4×2=8 ✅
+- 8卡集群：TP=8, ETP=8, EP=1 → Attention: 8=8 ✅, MoE: 8×1=8 ✅（uniform TP）
 
-#### 2.1.2 EP ≤ TP
+#### 2.1.3 EP 与 Expert TP 关系（性能建议，已降级为 WARNING）
 
 **来源**：
-- Expert Parallelism 依赖 Tensor Parallelism
-- MoE 专家切分在 TP 组内进行
+- Expert Parallelism 与 Expert Tensor Parallelism 的关系
+- Expert 权重切分：`{0: "ep", 2: "tp"}`
 - 参考：DeepSpeed-MoE, MegaBlocks
 
-**门槛**：
-- EP 不能超过 TP，否则专家无法正确切分
-- EP 可以等于或小于 TP
+**门槛**（性能建议，WARNING 级别）：
+- EP 不应显著超过 `expert_tp_degree × 2`
+- 原 `EP ≤ TP` 约束已改为性能建议
+- 分层切分场景下，EP 可以独立于 Attention TP
 
 **示例**：
-- TP=8, EP=8 → 每个 TP 卡持有不同专家 ✅
-- TP=8, EP=4 → 每个 TP 组内2卡共享同一专家 ✅
-- TP=4, EP=8 → 专家切分超出 TP 组范围 ❌
+- ETP=2, EP=4 → ratio=2，正常 ✅
+- ETP=2, EP=8 → ratio=4，WARNING ⚠️（可能影响性能，但不是硬性错误）
+- TP=8, ETP=2, EP=16 → Attention TP=8, MoE ETP×EP=32，分层切分 ✅
 
-#### 2.1.3 各并行度 ≥ 1
+**说明**：
+此验证已从 ERROR 改为 WARNING，因为：
+1. 分层切分场景下 EP 可以独立于 Attention TP
+2. 性能可能受影响，但不会导致切分失败
+3. 用户可以根据实际需求选择最优配置
+
+#### 2.1.4 各并行度 ≥ 1
 
 **来源**：
 - 并行度代表切分数量，必须为正整数
@@ -56,6 +102,8 @@
 - pp_degree ≥ 1
 - dp_degree ≥ 1
 - ep_degree ≥ 1
+- sp_degree ≥ 1
+- expert_tp_degree ≥ 1
 
 ### 2.2 模型规格验证
 
@@ -522,7 +570,7 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
 - error: 必须修复，否则评估无法进行
 - warning: 建议优化，评估可继续但结果可能不可落地
 
-**错误响应**：
+**错误响应**（分层切分场景）：
 ```json
 {
   "success": false,
@@ -532,9 +580,38 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
       {
         "level": "error",
         "category": "strategy",
-        "code": "PARALLEL_PRODUCT_MISMATCH",
-        "message": "并行度乘积 (4) ≠ 卡数 (8)",
-        "suggestion": "调整并行度使 TP×PP×DP×EP = 8"
+        "code": "ATTN_PARALLEL_PRODUCT_MISMATCH",
+        "message": "Attention parallel product (4) ≠ GPU count (8)",
+        "suggestion": "Adjust parallel degrees so tp × dp × pp × sp = 8",
+        "details": {
+          "tp_degree": 4,
+          "dp_degree": 1,
+          "pp_degree": 1,
+          "sp_degree": 1,
+          "attn_product": 4,
+          "num_gpus": 8,
+          "layered_parallelism": true
+        }
+      }
+    ]
+  }
+}
+```
+
+**警告响应**（EP 性能建议）：
+```json
+{
+  "success": true,
+  "validation": {
+    "has_errors": false,
+    "has_warnings": true,
+    "warnings": [
+      {
+        "level": "warning",
+        "category": "strategy",
+        "code": "EP_EXCEEDS_EXPERT_TP_WARNING",
+        "message": "EP (16) significantly exceeds expert_tp (2), may impact performance",
+        "suggestion": "Consider setting EP <= expert_tp × 2"
       }
     ]
   }

@@ -57,13 +57,20 @@ class CommDomain:
 @dataclass
 class ParallelContext:
     """Parallel strategy context - unified model modeling and cost modeling.
-
+    
+    Layered Parallelism Support:
+    - Attention layers: use tp_degree for tensor parallelism
+    - MoE/FFN layers: use expert_tp_degree + ep_degree for independent parallelism
+    
     Attributes:
-        tp_degree: Tensor parallelism degree
+        tp_degree: Tensor parallelism degree (Attention layers)
         pp_degree: Pipeline parallelism degree
-        ep_degree: Expert parallelism degree
+        ep_degree: Expert parallelism degree (MoE)
         sp_degree: Sequence parallelism degree
         dp_degree: Data parallelism degree
+        expert_tp_degree: Expert tensor parallelism degree (MoE/FFN layers)
+            - If not set or equals tp_degree: uniform TP across all layers
+            - If different from tp_degree: layered parallelism
         sp_type: Sequence parallelism type
         ulysses_degree: Ulysses SP degree (for unified 2D)
         ring_degree: Ring SP degree (for unified 2D)
@@ -80,6 +87,7 @@ class ParallelContext:
     ep_degree: int = 1
     sp_degree: int = 1
     dp_degree: int = 1
+    expert_tp_degree: Optional[int] = None
     sp_type: SPType = SPType.NONE
     ulysses_degree: int = 1
     ring_degree: int = 1
@@ -91,6 +99,11 @@ class ParallelContext:
     hidden_size: int = 4096
 
     comm_domains: Dict[str, CommDomain] = field(default_factory=dict)
+
+    def __post_init__(self):
+        """Set expert_tp_degree default to tp_degree if not specified."""
+        if self.expert_tp_degree is None:
+            self.expert_tp_degree = self.tp_degree
 
     def get_degree(self, ptype: str) -> int:
         """Get degree for a parallel strategy."""
@@ -108,8 +121,23 @@ class ParallelContext:
         return self.comm_domains.get(ptype)
 
     def get_total_gpus(self) -> int:
-        """Total number of GPUs."""
-        return self.tp_degree * self.pp_degree * self.ep_degree * self.sp_degree * self.dp_degree
+        """Total number of GPUs for Attention part.
+        
+        Uses tp_degree for Attention layers.
+        Formula: tp_degree × pp_degree × sp_degree × dp_degree
+        """
+        return self.tp_degree * self.pp_degree * self.sp_degree * self.dp_degree
+
+    def get_moe_total_gpus(self) -> int:
+        """Total number of GPUs for MoE part.
+        
+        Uses expert_tp_degree for MoE/FFN layers.
+        Formula: expert_tp_degree × ep_degree × pp_degree × sp_degree × dp_degree
+        
+        If expert_tp_degree == tp_degree (uniform TP), this equals get_total_gpus().
+        """
+        effective_expert_tp = self.expert_tp_degree or self.tp_degree
+        return effective_expert_tp * self.ep_degree * self.pp_degree * self.sp_degree * self.dp_degree
 
     def build_from_strategy(
         self,
@@ -122,6 +150,9 @@ class ParallelContext:
         self.ep_degree = getattr(strategy, "ep_degree", 1)
         self.sp_degree = getattr(strategy, "sp_degree", 1)
         self.dp_degree = getattr(strategy, "dp_degree", 1)
+        self.expert_tp_degree = getattr(strategy, "expert_tp_degree", None)
+        if self.expert_tp_degree is None:
+            self.expert_tp_degree = self.tp_degree
 
         sp_type_str = getattr(strategy, "sp_type", None)
         if sp_type_str:
@@ -212,11 +243,13 @@ class ParallelContext:
             "ep_degree": self.ep_degree,
             "sp_degree": self.sp_degree,
             "dp_degree": self.dp_degree,
+            "expert_tp_degree": self.expert_tp_degree,
             "sp_type": self.sp_type.value,
             "ulysses_degree": self.ulysses_degree,
             "ring_degree": self.ring_degree,
             "dtype": self.dtype,
             "total_gpus": self.get_total_gpus(),
+            "moe_total_gpus": self.get_moe_total_gpus(),
             "activation_checkpointing": self.activation_checkpointing,
             "zero_stage": self.zero_stage,
             "comm_domains": {ptype: domain.to_dict() for ptype, domain in self.comm_domains.items()},

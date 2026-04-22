@@ -42,51 +42,74 @@ class ParallelConfig:
 
 @dataclass
 class StrategyConfig:
-    """Complete parallelism strategy configuration."""
+    """Complete parallelism strategy configuration.
+    
+    Layered Parallelism Support:
+    - Attention layers: use tp_degree for tensor parallelism
+    - MoE/FFN layers: can use independent expert_tp_degree + ep_degree
+    
+    Validation rules:
+    - Attention part: tp_degree × dp_degree × pp_degree × sp_degree = world_size
+    - MoE part: expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = world_size
+    - If expert_tp_degree is not set, defaults to tp_degree (uniform TP)
+    """
 
-    # Model configuration reference
     model_name: str = ""
 
-    # Parallelism degrees
-    tp_degree: int = 1  # Tensor Parallelism
-    pp_degree: int = 1  # Pipeline Parallelism
-    dp_degree: int = 1  # Data Parallelism
-    ep_degree: int = 1  # Expert Parallelism
-    sp_degree: int = 1  # Sequence Parallelism
-    cp_degree: int = 1  # Context Parallelism
+    tp_degree: int = 1
+    pp_degree: int = 1
+    dp_degree: int = 1
+    ep_degree: int = 1
+    sp_degree: int = 1
+    cp_degree: int = 1
 
-    # Sequence parallelism configuration
+    expert_tp_degree: Optional[int] = None
+
     sp_type: SPType = SPType.ULYSSES
     ulysses_degree: int = 1
     ring_degree: int = 1
 
-    # Scheduling options
-    pipeline_schedule: str = "1f1b"  # 1F1B, GPipe, etc.
+    pipeline_schedule: str = "1f1b"
     micro_batch_size: int = 1
 
-    # Sequence parallelism options
-    kv_separate_allgather: bool = False  # K/V 分开传输时前向需要 2 个 AllGather
+    kv_separate_allgather: bool = False
 
-    # Optimization flags
     activation_checkpointing: bool = False
     sequence_parallel: bool = False
     use_megatron: bool = True
 
-    # Memory optimization
-    zero_stage: int = 0  # ZeRO stage (0-3)
+    zero_stage: int = 0
 
-    # Scheduler features (can be SchedulerConfig or dict)
     scheduler: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
-        """Initialize scheduler if not provided."""
+        """Post-init processing.
+        
+        - Initialize scheduler if not provided
+        - Set expert_tp_degree default to tp_degree if not specified
+        """
         if self.scheduler is None:
             self.scheduler = {}
+        if self.expert_tp_degree is None:
+            self.expert_tp_degree = self.tp_degree
 
     @property
     def world_size(self) -> int:
-        """Total number of GPUs needed."""
-        return self.tp_degree * self.pp_degree * self.dp_degree * self.ep_degree * self.sp_degree
+        """Total number of GPUs needed for Attention part.
+        
+        Uses tp_degree for Attention layers.
+        """
+        return self.tp_degree * self.pp_degree * self.dp_degree * self.sp_degree
+
+    @property
+    def moe_world_size(self) -> int:
+        """Total number of GPUs needed for MoE part.
+        
+        Uses expert_tp_degree for MoE/FFN layers.
+        If expert_tp_degree == tp_degree, this equals world_size (uniform TP).
+        """
+        effective_expert_tp = self.expert_tp_degree or self.tp_degree
+        return effective_expert_tp * self.ep_degree * self.pp_degree * self.dp_degree * self.sp_degree
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -99,6 +122,7 @@ class StrategyConfig:
                 "ep": self.ep_degree,
                 "sp": self.sp_degree,
                 "cp": self.cp_degree,
+                "expert_tp": self.expert_tp_degree,
             },
             "sequence_parallelism": {
                 "sp_type": self.sp_type.value,
@@ -118,6 +142,7 @@ class StrategyConfig:
             },
             "scheduler": self.scheduler if isinstance(self.scheduler, dict) else {},
             "world_size": self.world_size,
+            "moe_world_size": self.moe_world_size,
         }
 
     @classmethod
@@ -142,6 +167,7 @@ class StrategyConfig:
             ep_degree=parallel.get("ep", 1),
             sp_degree=parallel.get("sp", 1),
             cp_degree=parallel.get("cp", 1),
+            expert_tp_degree=parallel.get("expert_tp"),
             sp_type=sp_type,
             ulysses_degree=sp_config.get("ulysses_degree", 1),
             ring_degree=sp_config.get("ring_degree", 1),

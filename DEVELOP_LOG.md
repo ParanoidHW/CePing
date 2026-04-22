@@ -1,6 +1,70 @@
 # 开发日志
 
 ## 会话时间
+2026-04-22
+
+---
+
+## 分层并行切分策略支持
+
+### [feat(validation)]: 支持 Attention 和 MoE 分层切分策略
+
+**功能需求**:
+- 用户指出 Attention 和 MoE 可以采用不同的 TP 策略
+- 8卡场景示例：Attn TP=8，MoE ETP=2×EP=4 或 ETP=4×EP=2
+- 需要支持分层切分的参数设计和验证逻辑
+
+**实现内容**:
+
+1. **新增 `expert_tp_degree` 参数** (`llm_perf/strategy/base.py`, `llm_perf/strategy/parallel_context.py`)
+   - `StrategyConfig.expert_tp_degree`: Optional[int]，默认等于 tp_degree
+   - `ParallelContext.expert_tp_degree`: 用于 MoE Expert 内部 TP 切分
+   - `world_size`: Attention 部分的 GPU 数量
+   - `moe_world_size`: MoE 部分的 GPU 数量（使用 expert_tp_degree）
+
+2. **更新验证逻辑** (`llm_perf/validation/strategy_validator.py`)
+   - `_validate_layered_parallelism`: 分层切分验证
+     - Attention: `tp_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+     - MoE: `expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+   - `_validate_ep_performance_suggestion`: EP 性能建议（WARNING 级别）
+     - 原 `EP ≤ TP` 约束改为性能建议
+     - 当 EP > expert_tp × 2 时发出警告
+
+3. **更新设计文档** (`docs/validation_design.md`)
+   - 新增 2.1.1 分层并行策略验证
+   - 更新 2.1.2 并行度乘积（分层验证）
+   - 2.1.3 EP 与 Expert TP 关系（降级为 WARNING）
+   - 更新错误响应示例
+
+4. **更新测试用例** (`tests/test_strategy.py`, `tests/test_validation.py`)
+   - `test_expert_tp_defaults_to_tp`: 默认值测试
+   - `test_expert_tp_explicit`: 显式设置测试
+   - `test_moe_world_size_layered`: 分层切分计算测试
+   - `test_valid_strategy_layered_tp`: 分层切分验证测试
+   - `test_ep_exceeds_expert_tp_warning`: EP 性能警告测试
+
+**关键变更**:
+- `StrategyConfig.world_size` 计算：不再包含 ep_degree
+- `StrategyConfig.moe_world_size` 新增：包含 expert_tp_degree × ep_degree
+- `EP_EXCEEDS_TP` 错误改为 `EP_EXCEEDS_EXPERT_TP_WARNING` 警告
+- `PARALLEL_PRODUCT_MISMATCH` 分拆为 `ATTN_PARALLEL_PRODUCT_MISMATCH` 和 `MOE_PARALLEL_PRODUCT_MISMATCH`
+
+**验证场景示例**:
+- 8卡集群，Attn TP=8，MoE ETP=2×EP=4：
+  - Attention: 8×1×1×1 = 8 ✅
+  - MoE: 2×4×1×1×1 = 8 ✅
+- 64卡集群，Attn TP=64，MoE ETP=8×EP=8：
+  - Attention: 64×1×1×1 = 64 ✅
+  - MoE: 8×8×1×1×1 = 64 ✅
+
+**参考来源**:
+- DeepSeek-V3 MoE 切分策略
+- Megatron-LM MoE 实现
+- Expert 权重切分：`{0: "ep", 2: "tp"}`
+
+---
+
+## 会话时间
 2026-04-03
 
 ---

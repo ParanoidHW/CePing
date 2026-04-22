@@ -42,18 +42,41 @@ class TestStrategyConfig(unittest.TestCase):
         self.assertEqual(config.pp_degree, 1)
         self.assertEqual(config.dp_degree, 1)
         self.assertEqual(config.ep_degree, 1)
+        self.assertEqual(config.expert_tp_degree, 1)
         self.assertEqual(config.pipeline_schedule, "1f1b")
         self.assertFalse(config.activation_checkpointing)
 
+    def test_expert_tp_defaults_to_tp(self):
+        """Test expert_tp_degree defaults to tp_degree."""
+        config = StrategyConfig(tp_degree=8)
+        self.assertEqual(config.expert_tp_degree, 8)
+
+    def test_expert_tp_explicit(self):
+        """Test explicit expert_tp_degree."""
+        config = StrategyConfig(tp_degree=8, expert_tp_degree=2)
+        self.assertEqual(config.tp_degree, 8)
+        self.assertEqual(config.expert_tp_degree, 2)
+
     def test_world_size(self):
-        """Test world size calculation."""
+        """Test world size calculation (Attention part)."""
         config = StrategyConfig(tp_degree=4, pp_degree=2, dp_degree=2)
         self.assertEqual(config.world_size, 16)
 
-    def test_world_size_with_ep(self):
-        """Test world size with expert parallelism."""
-        config = StrategyConfig(tp_degree=2, pp_degree=2, dp_degree=2, ep_degree=4)
-        self.assertEqual(config.world_size, 32)
+    def test_moe_world_size_uniform(self):
+        """Test moe_world_size with uniform TP."""
+        config = StrategyConfig(tp_degree=8, ep_degree=1)
+        self.assertEqual(config.moe_world_size, 8)
+
+    def test_moe_world_size_layered(self):
+        """Test moe_world_size with layered TP."""
+        config = StrategyConfig(tp_degree=8, expert_tp_degree=2, ep_degree=4)
+        self.assertEqual(config.moe_world_size, 8)
+
+    def test_world_size_with_ep_layered(self):
+        """Test world_size vs moe_world_size with layered parallelism."""
+        config = StrategyConfig(tp_degree=8, expert_tp_degree=2, ep_degree=4, dp_degree=2)
+        self.assertEqual(config.world_size, 16)
+        self.assertEqual(config.moe_world_size, 16)
 
     def test_to_dict(self):
         """Test serialization to dict."""
@@ -61,20 +84,23 @@ class TestStrategyConfig(unittest.TestCase):
             model_name="llama-7b",
             tp_degree=4,
             dp_degree=2,
+            expert_tp_degree=2,
             zero_stage=1,
         )
         data = config.to_dict()
         self.assertEqual(data["model_name"], "llama-7b")
         self.assertEqual(data["parallelism"]["tp"], 4)
+        self.assertEqual(data["parallelism"]["expert_tp"], 2)
         self.assertEqual(data["parallelism"]["dp"], 2)
         self.assertEqual(data["world_size"], 8)
+        self.assertEqual(data["moe_world_size"], 4)
         self.assertEqual(data["optimization"]["zero_stage"], 1)
 
     def test_from_dict(self):
         """Test deserialization from dict."""
         data = {
             "model_name": "test-model",
-            "parallelism": {"tp": 8, "pp": 2, "dp": 4},
+            "parallelism": {"tp": 8, "pp": 2, "dp": 4, "expert_tp": 4},
             "scheduling": {"pipeline_schedule": "gpipe", "micro_batch_size": 2},
             "optimization": {"activation_checkpointing": True, "zero_stage": 2},
         }
@@ -83,6 +109,7 @@ class TestStrategyConfig(unittest.TestCase):
         self.assertEqual(config.tp_degree, 8)
         self.assertEqual(config.pp_degree, 2)
         self.assertEqual(config.dp_degree, 4)
+        self.assertEqual(config.expert_tp_degree, 4)
         self.assertEqual(config.pipeline_schedule, "gpipe")
         self.assertEqual(config.micro_batch_size, 2)
         self.assertTrue(config.activation_checkpointing)
@@ -95,6 +122,14 @@ class TestStrategyConfig(unittest.TestCase):
         self.assertEqual(config.pp_degree, 1)
         self.assertEqual(config.dp_degree, 1)
         self.assertEqual(config.pipeline_schedule, "1f1b")
+        self.assertEqual(config.expert_tp_degree, 1)
+
+    def test_from_dict_expert_tp_defaults_to_tp(self):
+        """Test expert_tp defaults to tp when not specified."""
+        data = {"parallelism": {"tp": 8}}
+        config = StrategyConfig.from_dict(data)
+        self.assertEqual(config.tp_degree, 8)
+        self.assertEqual(config.expert_tp_degree, 8)
 
     def test_get_communication_domain_mapping(self):
         """Test communication domain mapping."""

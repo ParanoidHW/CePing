@@ -119,35 +119,109 @@ class TestValidationErrors(unittest.TestCase):
 
 
 class TestStrategyValidator(unittest.TestCase):
-    """Test StrategyValidator."""
+    """Test StrategyValidator with layered parallelism support."""
 
-    def test_valid_strategy(self):
-        """Test valid parallel strategy."""
+    def test_valid_strategy_uniform_tp(self):
+        """Test valid parallel strategy with uniform TP."""
         ctx = ParallelContext(tp_degree=2, pp_degree=2, dp_degree=2, sp_degree=1)
         errors = validate_strategy(ctx, num_gpus=8)
         self.assertFalse(errors.has_errors())
 
-    def test_parallel_product_mismatch(self):
-        """Test parallel product mismatch."""
+    def test_valid_strategy_layered_tp(self):
+        """Test valid layered parallelism strategy.
+        
+        Attention: TP=8, MoE: ETP=2×EP=4
+        """
+        ctx = ParallelContext(
+            tp_degree=8,
+            expert_tp_degree=2,
+            ep_degree=4,
+            dp_degree=1,
+            pp_degree=1,
+            sp_degree=1,
+        )
+        errors = validate_strategy(ctx, num_gpus=8)
+        self.assertFalse(errors.has_errors())
+        self.assertEqual(ctx.expert_tp_degree, 2)
+
+    def test_valid_strategy_layered_tp_etp4_ep2(self):
+        """Test valid layered parallelism: ETP=4, EP=2."""
+        ctx = ParallelContext(
+            tp_degree=8,
+            expert_tp_degree=4,
+            ep_degree=2,
+            dp_degree=1,
+            pp_degree=1,
+            sp_degree=1,
+        )
+        errors = validate_strategy(ctx, num_gpus=8)
+        self.assertFalse(errors.has_errors())
+
+    def test_attn_parallel_product_mismatch(self):
+        """Test Attention parallel product mismatch."""
         ctx = ParallelContext(tp_degree=2, pp_degree=2, dp_degree=1, sp_degree=1)
         errors = validate_strategy(ctx, num_gpus=8)
         self.assertTrue(errors.has_errors())
-        self.assertEqual(errors.errors[0].code, "PARALLEL_PRODUCT_MISMATCH")
+        self.assertEqual(errors.errors[0].code, "ATTN_PARALLEL_PRODUCT_MISMATCH")
 
-    def test_ep_exceeds_tp(self):
-        """Test EP exceeding TP."""
-        ctx = ParallelContext(tp_degree=2, ep_degree=4, dp_degree=1, sp_degree=1)
+    def test_moe_parallel_product_mismatch(self):
+        """Test MoE parallel product mismatch with layered TP."""
+        ctx = ParallelContext(
+            tp_degree=8,
+            expert_tp_degree=2,
+            ep_degree=2,
+            dp_degree=1,
+            pp_degree=1,
+            sp_degree=1,
+        )
         errors = validate_strategy(ctx, num_gpus=8)
         self.assertTrue(errors.has_errors())
-        self.assertEqual(errors.errors[0].code, "EP_EXCEEDS_TP")
+        self.assertEqual(errors.errors[0].code, "MOE_PARALLEL_PRODUCT_MISMATCH")
+
+    def test_ep_exceeds_expert_tp_warning(self):
+        """Test EP exceeding expert_tp produces WARNING (not ERROR).
+        
+        Need to ensure both Attention and MoE products equal num_gpus.
+        """
+        ctx = ParallelContext(
+            tp_degree=32,
+            expert_tp_degree=2,
+            ep_degree=16,
+            dp_degree=1,
+            pp_degree=1,
+            sp_degree=1,
+        )
+        errors = validate_strategy(ctx, num_gpus=32)
+        self.assertFalse(errors.has_errors())
+        self.assertTrue(errors.has_warnings())
+        self.assertEqual(errors.warnings[0].code, "EP_EXCEEDS_EXPERT_TP_WARNING")
+
+    def test_ep_within_expert_tp_no_warning(self):
+        """Test EP within expert_tp × 2 produces no warning."""
+        ctx = ParallelContext(
+            tp_degree=8,
+            expert_tp_degree=2,
+            ep_degree=4,
+            dp_degree=1,
+            pp_degree=1,
+            sp_degree=1,
+        )
+        errors = validate_strategy(ctx, num_gpus=8)
+        self.assertFalse(errors.has_errors())
+        self.assertFalse(errors.has_warnings())
 
     def test_invalid_parallel_degree(self):
         """Test invalid parallel degree (less than 1)."""
-        ctx = ParallelContext(tp_degree=0, dp_degree=1, pp_degree=1, ep_degree=1, sp_degree=1)
+        ctx = ParallelContext(tp_degree=0, expert_tp_degree=1, dp_degree=1, pp_degree=1, ep_degree=1, sp_degree=1)
         errors = validate_strategy(ctx, num_gpus=1)
         self.assertTrue(errors.has_errors())
         error_codes = [e.code for e in errors.errors]
         self.assertIn("INVALID_PARALLEL_DEGREE", error_codes)
+
+    def test_expert_tp_defaults_to_tp(self):
+        """Test expert_tp_degree defaults to tp_degree when not set."""
+        ctx = ParallelContext(tp_degree=8, ep_degree=1)
+        self.assertEqual(ctx.expert_tp_degree, 8)
 
 
 class TestModelValidator(unittest.TestCase):
@@ -413,10 +487,22 @@ class TestValidationIntegration(unittest.TestCase):
         self.assertFalse(errors.has_errors())
 
     def test_dsv3_config(self):
-        """Test DeepSeek-V3-like configuration."""
-        ctx = ParallelContext(tp_degree=8, ep_degree=8, dp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=64)
+        """Test DeepSeek-V3-like configuration with layered parallelism."""
+        ctx = ParallelContext(tp_degree=8, ep_degree=1, dp_degree=1, sp_degree=1)
+        errors = validate_strategy(ctx, num_gpus=8)
         self.assertFalse(errors.has_errors())
+
+        ctx_moe = ParallelContext(
+            tp_degree=64,
+            expert_tp_degree=8,
+            ep_degree=8,
+            dp_degree=1,
+            pp_degree=1,
+            sp_degree=1,
+        )
+        errors = validate_strategy(ctx_moe, num_gpus=64)
+        self.assertFalse(errors.has_errors())
+        self.assertEqual(ctx_moe.expert_tp_degree, 8)
 
         errors = validate_model(
             ctx,

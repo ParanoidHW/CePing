@@ -6,6 +6,17 @@
 
 ## 更新日志
 
+### 2026-04-22: 分层并行切分策略支持
+- 新增 `expert_tp_degree` 参数支持 Attention 和 MoE 分层切分
+- 验证逻辑更新：
+  - Attention 部分验证：`tp_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+  - MoE 部分验证：`expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+  - `EP ≤ TP` 约束改为性能建议（WARNING 级别）
+- 参考来源：
+  - DeepSeek-V3 MoE 切分策略
+  - Megatron-LM MoE 实现
+  - DeepSpeed-MoE Expert 权重切分：`{0: "ep", 2: "tp"}`
+
 ### 2026-04-19: 模型参数验证与官方配置对齐
 - 添加 LLaMA/DeepSeek V3 官方配置参数验证测试用例
 - DeepSeek V3 配置修正: first_k_dense_layers 从 1 改为 3 (与官方 first_k_dense_replace 一致)
