@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def validate_strategy(
     ctx: "ParallelContext",
-    num_gpus: int,
+    num_devices: int,
     num_experts: int = None,
     global_batch_size: int = None,
     micro_batch_size: int = None,
@@ -29,7 +29,7 @@ def validate_strategy(
     
     Args:
         ctx: ParallelContext with parallel strategy configuration
-        num_gpus: Total number of GPUs in the cluster
+        num_devices: Total number of devices in the cluster
         num_experts: Number of routed experts (for EP divisibility check)
         global_batch_size: Global batch size (for batch divisibility check)
         micro_batch_size: Micro batch size (for mini/micro divisibility check)
@@ -39,7 +39,7 @@ def validate_strategy(
     """
     errors = ValidationErrors()
     
-    errors.merge(_validate_layered_parallelism(ctx, num_gpus))
+    errors.merge(_validate_layered_parallelism(ctx, num_devices))
     errors.merge(_validate_ep_performance_suggestion(ctx))
     errors.merge(_validate_parallel_degrees(ctx))
     errors.merge(_validate_ep_expert_divisibility(ctx, num_experts))
@@ -50,13 +50,13 @@ def validate_strategy(
 
 def _validate_layered_parallelism(
     ctx: "ParallelContext",
-    num_gpus: int,
+    num_devices: int,
 ) -> ValidationErrors:
     """Validate layered parallelism strategy.
     
     Layered Parallelism Rules:
-    - Attention part: tp_degree × dp_degree × pp_degree × sp_degree = num_gpus
-    - MoE part: expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_gpus
+    - Attention part: tp_degree × dp_degree × pp_degree × sp_degree = num_devices
+    - MoE part: expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_devices
     
     If expert_tp_degree == tp_degree (uniform TP), both rules are equivalent.
     If expert_tp_degree != tp_degree (layered TP), both must satisfy independently.
@@ -83,31 +83,31 @@ def _validate_layered_parallelism(
     
     is_layered = (effective_expert_tp != ctx.tp_degree) or (ctx.ep_degree > 1)
     
-    if attn_product != num_gpus:
+    if attn_product != num_devices:
         errors.add_error(ValidationError(
             level=ValidationLevel.ERROR,
             category=ValidationCategory.STRATEGY,
             code="ATTN_PARALLEL_PRODUCT_MISMATCH",
-            message=f"Attention parallel product ({attn_product}) does not equal GPU count ({num_gpus})",
-            suggestion=f"Adjust parallel degrees so tp × dp × pp × sp = {num_gpus}",
+            message=f"Attention parallel product ({attn_product}) does not equal device count ({num_devices})",
+            suggestion=f"Adjust parallel degrees so tp × dp × pp × sp = {num_devices}",
             details={
                 "tp_degree": ctx.tp_degree,
                 "dp_degree": ctx.dp_degree,
                 "pp_degree": ctx.pp_degree,
                 "sp_degree": ctx.sp_degree,
                 "attn_product": attn_product,
-                "num_gpus": num_gpus,
+                "num_devices": num_devices,
                 "layered_parallelism": is_layered,
             },
         ))
     
-    if moe_product != num_gpus:
+    if moe_product != num_devices:
         errors.add_error(ValidationError(
             level=ValidationLevel.ERROR,
             category=ValidationCategory.STRATEGY,
             code="MOE_PARALLEL_PRODUCT_MISMATCH",
-            message=f"MoE parallel product ({moe_product}) does not equal GPU count ({num_gpus})",
-            suggestion=f"Adjust parallel degrees so expert_tp × ep × dp × pp × sp = {num_gpus}",
+            message=f"MoE parallel product ({moe_product}) does not equal device count ({num_devices})",
+            suggestion=f"Adjust parallel degrees so expert_tp × ep × dp × pp × sp = {num_devices}",
             details={
                 "expert_tp_degree": effective_expert_tp,
                 "ep_degree": ctx.ep_degree,
@@ -115,14 +115,14 @@ def _validate_layered_parallelism(
                 "pp_degree": ctx.pp_degree,
                 "sp_degree": ctx.sp_degree,
                 "moe_product": moe_product,
-                "num_gpus": num_gpus,
+                "num_devices": num_devices,
                 "layered_parallelism": is_layered,
             },
         ))
     
     logger.info(
         f"[StrategyValidator] Layered parallelism check: "
-        f"attn_product={attn_product}, moe_product={moe_product}, num_gpus={num_gpus}, "
+        f"attn_product={attn_product}, moe_product={moe_product}, num_devices={num_devices}, "
         f"layered={is_layered}"
     )
     return errors
@@ -242,7 +242,7 @@ def _validate_ep_expert_divisibility(
     else:
         logger.info(
             f"[StrategyValidator] EP divisibility check passed: "
-            f"{num_experts} / {ctx.ep_degree} = {num_experts // ctx.ep_degree} experts/GPU"
+            f"{num_experts} / {ctx.ep_degree} = {num_experts // ctx.ep_degree} experts/device"
         )
     
     return errors

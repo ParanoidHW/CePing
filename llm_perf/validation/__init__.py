@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def validate_all(
     ctx: "ParallelContext",
-    num_gpus: int,
+    num_devices: int,
     vocab_size: int,
     hidden_size: int,
     num_heads: int,
@@ -54,18 +54,18 @@ def validate_all(
     
     Args:
         ctx: ParallelContext with parallel strategy configuration
-        num_gpus: Total number of GPUs in the cluster
+        num_devices: Total number of devices in the cluster
         vocab_size: Vocabulary size
         hidden_size: Hidden dimension size
         num_heads: Number of attention heads
         intermediate_size: FFN intermediate dimension
         seq_len: Sequence length
         num_kv_heads: Number of KV heads for GQA
-        weight_memory_gb: Weight memory per GPU in GB
-        activation_memory_gb: Activation memory per GPU in GB
+        weight_memory_gb: Weight memory per device in GB
+        activation_memory_gb: Activation memory per device in GB
         device_memory_gb: Device memory capacity in GB
-        gradient_memory_gb: Gradient memory per GPU in GB
-        optimizer_memory_gb: Optimizer state memory per GPU in GB
+        gradient_memory_gb: Gradient memory per device in GB
+        optimizer_memory_gb: Optimizer state memory per device in GB
         mode: Mode ("training" or "inference")
         model_type: Model type (e.g., "dit", "wan")
         image_height: Image height (for DiT)
@@ -85,10 +85,10 @@ def validate_all(
     """
     errors = ValidationErrors()
     
-    logger.info(f"[Validation] Starting validation for mode={mode}, num_gpus={num_gpus}")
+    logger.info(f"[Validation] Starting validation for mode={mode}, num_devices={num_devices}")
     
     errors.merge(validate_strategy(
-        ctx, num_gpus, num_experts, global_batch_size, micro_batch_size
+        ctx, num_devices, num_experts, global_batch_size, micro_batch_size
     ))
     
     errors.merge(validate_model(

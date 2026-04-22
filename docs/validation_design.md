@@ -29,27 +29,27 @@
 - `ep_degree` 用于 Expert 并行
 
 **验证条件**：
-- Attention 部分：`tp_degree × dp_degree × pp_degree × sp_degree = num_gpus`
-- MoE 部分：`expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_gpus`
+- Attention 部分：`tp_degree × dp_degree × pp_degree × sp_degree = num_devices`
+- MoE 部分：`expert_tp_degree × ep_degree × dp_degree × pp_degree × sp_degree = num_devices`
 - 如果 `expert_tp_degree == tp_degree`（未设置），两条规则等价
 - 如果 `expert_tp_degree != tp_degree`（分层切分），两条规则独立验证
 
 **示例**：
-- 8卡集群，Attention TP=8，MoE ETP=2×EP=4：
+- 8 device 集群，Attention TP=8，MoE ETP=2×EP=4：
   - Attention: 8×1×1×1 = 8 ✅
   - MoE: 2×4×1×1×1 = 8 ✅
-- 8卡集群，Attention TP=8，MoE ETP=4×EP=2：
+- 8 device 集群，Attention TP=8，MoE ETP=4×EP=2：
   - Attention: 8×1×1×1 = 8 ✅
   - MoE: 4×2×1×1×1 = 8 ✅
-- 8卡集群，Attention TP=4，MoE ETP=2×EP=2：
+- 8 device 集群，Attention TP=4，MoE ETP=2×EP=2：
   - Attention: 4×1×1×1 = 4 ❌（不足）
   - MoE: 2×2×1×1×1 = 4 ❌（不足）
 
 **配置建议**：
-- DeepSeek-V3 典型配置（64卡）：
+- DeepSeek-V3 典型配置（64 device）：
   - Attention: TP=64, 或 TP=32×PP=2
   - MoE: ETP=8×EP=8×DP=1, 或 ETP=4×EP=16
-- Mixtral-8×7B（8卡）：
+- Mixtral-8×7B（8 device）：
   - Attention: TP=8
   - MoE: ETP=2×EP=4（每个 TP 组内 4 个 Expert 分片）
 
@@ -60,14 +60,14 @@
 - 参考：Megatron-LM MoE, DeepSpeed-MoE 官方文档
 
 **门槛**（分层验证）：
-- Attention 部分乘积必须精确等于集群总卡数
-- MoE 部分乘积必须精确等于集群总卡数
+- Attention 部分乘积必须精确等于集群总设备数
+- MoE 部分乘积必须精确等于集群总设备数
 - 不允许有余（资源浪费）或不足（切分失败）
 
 **示例**（分层切分）：
-- 8卡集群：TP=8, ETP=2, EP=4 → Attention: 8=8 ✅, MoE: 2×4=8 ✅
-- 8卡集群：TP=8, ETP=4, EP=2 → Attention: 8=8 ✅, MoE: 4×2=8 ✅
-- 8卡集群：TP=8, ETP=8, EP=1 → Attention: 8=8 ✅, MoE: 8×1=8 ✅（uniform TP）
+- 8 device 集群：TP=8, ETP=2, EP=4 → Attention: 8=8 ✅, MoE: 2×4=8 ✅
+- 8 device 集群：TP=8, ETP=4, EP=2 → Attention: 8=8 ✅, MoE: 4×2=8 ✅
+- 8 device 集群：TP=8, ETP=8, EP=1 → Attention: 8=8 ✅, MoE: 8×1=8 ✅（uniform TP）
 
 #### 2.1.3 EP 与 Expert TP 关系（性能建议，已降级为 WARNING）
 
@@ -109,7 +109,7 @@
 
 **来源**：
 - MoE 模型中，路由专家数（num_routed_experts）需要能被 EP 整除
-- 参考：DeepSeek-V3（256专家，EP=32 → 256/32=8 expert/GPU）
+- 参考：DeepSeek-V3（256专家，EP=32 → 256/32=8 expert/device）
 
 **验证条件**：
 - `num_routed_experts % ep_degree == 0`
@@ -160,8 +160,8 @@
 - vocab_size % tp_degree == 0
 
 **示例**：
-- vocab_size=32000, TP=8 → 32000/8=4000 tokens/GPU ✅
-- vocab_size=129280, TP=8 → 129280/8=16160 tokens/GPU ✅（DSv3）
+- vocab_size=32000, TP=8 → 32000/8=4000 tokens/device ✅
+- vocab_size=129280, TP=8 → 129280/8=16160 tokens/device ✅（DSv3）
 - vocab_size=32000, TP=7 → 32000/7≈4571.4 ❌（不整除）
 
 #### 2.2.2 hidden_size 可被 TP 整除
@@ -174,22 +174,22 @@
 - hidden_size % tp_degree == 0
 
 **示例**：
-- hidden_size=4096, TP=8 → 4096/8=512/GPU ✅
-- hidden_size=7168, TP=8 → 7168/8=896/GPU ✅（DSv3）
+- hidden_size=4096, TP=8 → 4096/8=512/device ✅
+- hidden_size=7168, TP=8 → 7168/8=896/device ✅（DSv3）
 - hidden_size=4096, TP=3 → 4096/3≈1365.3 ❌
 
 #### 2.2.3 num_heads 可被 TP 整除
 
 **来源**：
-- Attention 的 head 数量需要均匀分配到 TP 卡
-- 每个 GPU 需要完整的 head 数量
+- Attention 的 head 数量需要均匀分配到 TP 设备
+- 每个设备需要完整的 head 数量
 
 **门槛**：
 - num_heads % tp_degree == 0
 
 **示例**：
-- num_heads=32, TP=8 → 32/8=4 heads/GPU ✅
-- num_heads=128, TP=8 → 128/8=16 heads/GPU ✅（DSv3）
+- num_heads=32, TP=8 → 32/8=4 heads/device ✅
+- num_heads=128, TP=8 → 128/8=16 heads/device ✅（DSv3）
 - num_heads=32, TP=5 → 32/5=6.4 ❌
 
 #### 2.2.4 intermediate_size 可被 TP 整除
@@ -201,8 +201,8 @@
 - intermediate_size % tp_degree == 0
 
 **示例**：
-- intermediate_size=11008, TP=8 → 11008/8=1376/GPU ✅（Llama-7B）
-- intermediate_size=18432, TP=8 → 18432/8=2304/GPU ✅
+- intermediate_size=11008, TP=8 → 11008/8=1376/device ✅（Llama-7B）
+- intermediate_size=18432, TP=8 → 18432/8=2304/device ✅
 
 #### 2.2.5 num_kv_heads 可被 TP 整除（GQA）
 
@@ -215,7 +215,7 @@
 - 特例：num_kv_heads=1 时需要特殊处理（MQA）
 
 **示例**：
-- Llama-70B: num_heads=64, num_kv_heads=8, TP=8 → 8/8=1 KV_head/GPU ✅
+- Llama-70B: num_heads=64, num_kv_heads=8, TP=8 → 8/8=1 KV_head/device ✅
 
 ### 2.3 序列切分验证
 
@@ -240,8 +240,8 @@
 - 仅作为 WARNING 提示，不阻塞评估
 
 **示例**：
-- seq_len=4096, TP=8, SP=8 → 每卡 512 tokens ✅
-- seq_len=8192, TP=8, SP=4 → 每卡 2048 tokens ✅
+- seq_len=4096, TP=8, SP=8 → 每设备 512 tokens ✅
+- seq_len=8192, TP=8, SP=4 → 每设备 2048 tokens ✅
 - seq_len=4096, TP=4, SP=8 → SP 超出 TP ❌（硬约束）
 - seq_len=4097, TP=8, SP=8 → 4097%8=1 ⚠️（可 padding 到 4098）
 
@@ -295,8 +295,8 @@
   - block_size ≤ seq_len / sp_degree
 
 **示例**：
-- seq_len=100K, TP=8, block_size=2048 → 100K/8=12.5K tokens/GPU, block=2K ✅
-- seq_len=50K, TP=4, block_size=512 → 50K/4=12.5K tokens/GPU, block=512 ✅
+- seq_len=100K, TP=8, block_size=2048 → 100K/8=12.5K tokens/device, block=2K ✅
+- seq_len=50K, TP=4, block_size=512 → 50K/4=12.5K tokens/device, block=512 ✅
 
 **内存影响**：
 - Ring Attention 激活内存 ≈ block_size × hidden_size × batch_size
@@ -333,7 +333,7 @@
 - 与 Megatron-SP 的区别：Ulysses 使用 all-to-all 通信，Megatron-SP 使用 all-gather + reduce-scatter
 
 **原理**：
-- 在 sequence 维度上切分输入样本，每个 GPU 持有 `seq_len / ulysses_degree` 长度的序列片段
+- 在 sequence 维度上切分输入样本，每个设备持有 `seq_len / ulysses_degree` 长度的序列片段
 - Attention 计算前，Q、K、V 各自通过 all-to-all 从 sequence-sharded 转换为 head-parallel 布局
 - Attention 计算后，Output 通过 all-to-all 转回 sequence-sharded 布局
 - 每层 Transformer block 的 Attention 层包含 **4 次 all-to-all** (Q/K/V pre-attention + O post-attention)
@@ -363,7 +363,7 @@
 | 与 TP 组合时 | Megatron-SP 失效 | 不适用 |
 
 **示例**：
-- seq_len=64K, Ulysses=8, num_heads=32 → 每卡 8K tokens，每卡 4 heads ✅
+- seq_len=64K, Ulysses=8, num_heads=32 → 每设备 8K tokens，每设备 4 heads ✅
 - seq_len=64K+1, Ulysses=8 → ⚠️（可 padding）
 - seq_len=64K, Ulysses=16, num_heads=32 → 16 > 32 ❌（Ulysses 超过 head 数）
 
@@ -388,7 +388,7 @@
 - `seq_len % sp_degree == 0`
 - `ulysses_degree * tp_degree <= num_heads` 且 `num_heads % (ulysses_degree * tp_degree) == 0`
 - `ulysses_degree >= 1`, `ring_degree >= 1`
-- `ulysses_degree * ring_degree * tp_degree * pp_degree * dp_degree * ep_degree = num_gpus`
+- `ulysses_degree * ring_degree * tp_degree * pp_degree * dp_degree * ep_degree = num_devices`
 
 **通信开销叠加**：
 - Ulysses 部分（每层）：
@@ -422,7 +422,7 @@
 - 三者正交但需要满足 head 分配约束
 
 **验证条件**：
-- `ulysses_degree * ring_degree * tp_degree <= num_gpus`
+- `ulysses_degree * ring_degree * tp_degree <= num_devices`
 - `ulysses_degree * tp_degree <= num_heads` 且 `num_heads % (ulysses_degree * tp_degree) == 0`
 - `seq_len % (ulysses_degree * ring_degree) == 0`
 - `hidden_size % tp_degree == 0`
@@ -573,19 +573,19 @@ Hidden 切分：
 #### 2.5.1 权重内存 ≤ 设备内存
 
 **来源**：
-- 权重是静态内存，必须完整加载到 GPU
+- 权重是静态内存，必须完整加载到设备
 - 不开启 ZeRO/offload 时，权重不可拆分
 
 **门槛**：
 - weight_memory_physical ≤ device_memory_gb
 
 **示例**：
-- DSv3 权重=168GB（TP=8时每卡21GB），H100=80GB ✅
-- DSv3 权重=168GB（TP=1时每卡168GB），H100=80GB ❌
+- DSv3 权重=168GB（TP=8时每设备21GB），H100=80GB ✅
+- DSv3 权重=168GB（TP=1时每设备168GB），H100=80GB ❌
 
 **计算公式**：
 ```python
-weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
+weight_memory_per_device = total_weight / (tp_degree * pp_degree * ep_degree)
 ```
 
 #### 2.5.2 权重+激活+梯度+优化器 ≤ 设备内存
@@ -656,7 +656,7 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
         "level": "error",
         "category": "strategy",
         "code": "ATTN_PARALLEL_PRODUCT_MISMATCH",
-        "message": "Attention parallel product (4) ≠ GPU count (8)",
+        "message": "Attention parallel product (4) ≠ device count (8)",
         "suggestion": "Adjust parallel degrees so tp × dp × pp × sp = 8",
         "details": {
           "tp_degree": 4,
@@ -664,7 +664,7 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
           "pp_degree": 1,
           "sp_degree": 1,
           "attn_product": 4,
-          "num_gpus": 8,
+          "num_devices": 8,
           "layered_parallelism": true
         }
       }
@@ -718,7 +718,7 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
 **问题**：权重/优化器卸载到 CPU
 
 **处理**：
-- Offload 时权重内存不计入 GPU 内存
+- Offload 时权重内存不计入设备内存
 - 需要额外验证 CPU 内存是否足够
 
 ### 4.4 Ulysses-SP 与 GQA/MQA 场景
@@ -734,7 +734,7 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
 
 **示例**：
 - Llama-2-70B: num_heads=64, num_kv_heads=8, GQA ratio=8
-  - Ulysses=8 时每卡 1 KV head ✅
+  - Ulysses=8 时每设备 1 KV head ✅
   - Ulysses=16 时 KV heads 不足，需要复制 ❌（或使用 Dummy-Head）
 
 ### 4.5 多模态生成场景
@@ -800,12 +800,12 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
 
 **示例**：
 - 1024×1024 图像，patch_size=16 → num_patches=64×64=4096
-  - SP=8 → 4096/8=512 patches/GPU ✅
-  - 按行切分：1024/8=128 rows/GPU，每行 64 patches ✅
+  - SP=8 → 4096/8=512 patches/device ✅
+  - 按行切分：1024/8=128 rows/device，每行 64 patches ✅
 - 512×512 图像，patch_size=8 → num_patches=64×64=4096
-  - SP=16 → 4096/16=256 patches/GPU ✅
+  - SP=16 → 4096/16=256 patches/device ✅
 - 768×512 图像，patch_size=16 → num_patches=48×32=1536
-  - SP=8 → 1536/8=192 patches/GPU ✅
+  - SP=8 → 1536/8=192 patches/device ✅
   - SP=10 → 1536/10=153.6 ❌（不整除）
 
 #### 4.5.3 视频/3D 内容切分
@@ -829,7 +829,7 @@ weight_memory_per_gpu = total_weight / (tp_degree * pp_degree * ep_degree)
 - 5秒视频，24fps → 120 frames，temporal_comp=4 → 30 temporal tokens
 - 1080p（1920×1080），spatial_comp=8×8 → 240×135=32400 spatial tokens
 - 总 tokens = 30 × 32400 = 972000
-- SP=32 → 972000/32=30375 tokens/GPU ✅
+- SP=32 → 972000/32=30375 tokens/device ✅
 
 **内存影响**：
 - 视频 tokens 激活内存 = batch × num_frames × H × W × channels × dtype_size

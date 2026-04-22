@@ -124,7 +124,7 @@ class TestStrategyValidator(unittest.TestCase):
     def test_valid_strategy_uniform_tp(self):
         """Test valid parallel strategy with uniform TP."""
         ctx = ParallelContext(tp_degree=2, pp_degree=2, dp_degree=2, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertFalse(errors.has_errors())
 
     def test_valid_strategy_layered_tp(self):
@@ -140,7 +140,7 @@ class TestStrategyValidator(unittest.TestCase):
             pp_degree=1,
             sp_degree=1,
         )
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertFalse(errors.has_errors())
         self.assertEqual(ctx.expert_tp_degree, 2)
 
@@ -154,13 +154,13 @@ class TestStrategyValidator(unittest.TestCase):
             pp_degree=1,
             sp_degree=1,
         )
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertFalse(errors.has_errors())
 
     def test_attn_parallel_product_mismatch(self):
         """Test Attention parallel product mismatch."""
         ctx = ParallelContext(tp_degree=2, pp_degree=2, dp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "ATTN_PARALLEL_PRODUCT_MISMATCH")
 
@@ -174,14 +174,14 @@ class TestStrategyValidator(unittest.TestCase):
             pp_degree=1,
             sp_degree=1,
         )
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "MOE_PARALLEL_PRODUCT_MISMATCH")
 
     def test_ep_exceeds_expert_tp_warning(self):
         """Test EP exceeding expert_tp produces WARNING (not ERROR).
         
-        Need to ensure both Attention and MoE products equal num_gpus.
+        Need to ensure both Attention and MoE products equal num_devices.
         """
         ctx = ParallelContext(
             tp_degree=32,
@@ -191,7 +191,7 @@ class TestStrategyValidator(unittest.TestCase):
             pp_degree=1,
             sp_degree=1,
         )
-        errors = validate_strategy(ctx, num_gpus=32)
+        errors = validate_strategy(ctx, num_devices=32)
         self.assertFalse(errors.has_errors())
         self.assertTrue(errors.has_warnings())
         self.assertEqual(errors.warnings[0].code, "EP_EXCEEDS_EXPERT_TP_WARNING")
@@ -206,14 +206,14 @@ class TestStrategyValidator(unittest.TestCase):
             pp_degree=1,
             sp_degree=1,
         )
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertFalse(errors.has_errors())
         self.assertFalse(errors.has_warnings())
 
     def test_invalid_parallel_degree(self):
         """Test invalid parallel degree (less than 1)."""
         ctx = ParallelContext(tp_degree=0, expert_tp_degree=1, dp_degree=1, pp_degree=1, ep_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=1)
+        errors = validate_strategy(ctx, num_devices=1)
         self.assertTrue(errors.has_errors())
         error_codes = [e.code for e in errors.errors]
         self.assertIn("INVALID_PARALLEL_DEGREE", error_codes)
@@ -228,7 +228,7 @@ class TestStrategyValidator(unittest.TestCase):
         ctx = ParallelContext(
             tp_degree=8, expert_tp_degree=2, ep_degree=4, dp_degree=1, pp_degree=1, sp_degree=1
         )
-        errors = validate_strategy(ctx, num_gpus=8, num_experts=8)
+        errors = validate_strategy(ctx, num_devices=8, num_experts=8)
         self.assertFalse(errors.has_errors())
     
     def test_ep_not_divisible_by_num_experts(self):
@@ -236,7 +236,7 @@ class TestStrategyValidator(unittest.TestCase):
         ctx = ParallelContext(
             tp_degree=8, expert_tp_degree=1, ep_degree=8, dp_degree=1, pp_degree=1, sp_degree=1
         )
-        errors = validate_strategy(ctx, num_gpus=8, num_experts=10)
+        errors = validate_strategy(ctx, num_devices=8, num_experts=10)
         self.assertTrue(errors.has_errors())
         error_codes = [e.code for e in errors.errors]
         self.assertIn("EP_EXPERT_DIVISIBILITY", error_codes)
@@ -244,19 +244,19 @@ class TestStrategyValidator(unittest.TestCase):
     def test_ep_skip_when_ep_is_one(self):
         """Test EP divisibility skipped when EP=1."""
         ctx = ParallelContext(tp_degree=8, ep_degree=1, dp_degree=1, pp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=8, num_experts=256)
+        errors = validate_strategy(ctx, num_devices=8, num_experts=256)
         self.assertFalse(errors.has_errors())
     
     def test_global_batch_divisible_by_dp(self):
         """Test global_batch_size divisible by DP."""
         ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=32, global_batch_size=32)
+        errors = validate_strategy(ctx, num_devices=32, global_batch_size=32)
         self.assertFalse(errors.has_errors())
     
     def test_global_batch_not_divisible_by_dp(self):
         """Test global_batch_size not divisible by DP produces ERROR."""
         ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=32, global_batch_size=10)
+        errors = validate_strategy(ctx, num_devices=32, global_batch_size=10)
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "GLOBAL_BATCH_DP_DIVISIBILITY")
     
@@ -264,7 +264,7 @@ class TestStrategyValidator(unittest.TestCase):
         """Test mini_batch_size divisible by micro_batch_size."""
         ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
         errors = validate_strategy(
-            ctx, num_gpus=32, global_batch_size=32, micro_batch_size=1
+            ctx, num_devices=32, global_batch_size=32, micro_batch_size=1
         )
         self.assertFalse(errors.has_errors())
     
@@ -272,7 +272,7 @@ class TestStrategyValidator(unittest.TestCase):
         """Test mini_batch_size not divisible by micro_batch_size produces ERROR."""
         ctx = ParallelContext(tp_degree=4, dp_degree=8, pp_degree=1, sp_degree=1)
         errors = validate_strategy(
-            ctx, num_gpus=32, global_batch_size=32, micro_batch_size=3
+            ctx, num_devices=32, global_batch_size=32, micro_batch_size=3
         )
         self.assertTrue(errors.has_errors())
         self.assertEqual(errors.errors[0].code, "MINI_BATCH_MICRO_DIVISIBILITY")
@@ -280,7 +280,7 @@ class TestStrategyValidator(unittest.TestCase):
     def test_batch_size_skip_when_dp_is_one(self):
         """Test batch size divisibility skipped when DP=1."""
         ctx = ParallelContext(tp_degree=8, dp_degree=1, pp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=8, global_batch_size=10)
+        errors = validate_strategy(ctx, num_devices=8, global_batch_size=10)
         self.assertFalse(errors.has_errors())
 
 
@@ -553,7 +553,7 @@ class TestValidateAll(unittest.TestCase):
         ctx = ParallelContext(tp_degree=8)
         errors = validate_all(
             ctx,
-            num_gpus=8,
+            num_devices=8,
             vocab_size=32000,
             hidden_size=4096,
             num_heads=32,
@@ -570,7 +570,7 @@ class TestValidateAll(unittest.TestCase):
         ctx = ParallelContext(tp_degree=3)
         errors = validate_all(
             ctx,
-            num_gpus=8,
+            num_devices=8,
             vocab_size=32000,
             hidden_size=4096,
             num_heads=32,
@@ -589,7 +589,7 @@ class TestValidationIntegration(unittest.TestCase):
         ctx = ParallelContext(tp_degree=2, pp_degree=2, dp_degree=2, sp_degree=1)
         errors = validate_all(
             ctx,
-            num_gpus=8,
+            num_devices=8,
             vocab_size=32000,
             hidden_size=4096,
             num_heads=32,
@@ -601,7 +601,7 @@ class TestValidationIntegration(unittest.TestCase):
     def test_dsv3_config(self):
         """Test DeepSeek-V3-like configuration with layered parallelism."""
         ctx = ParallelContext(tp_degree=8, ep_degree=1, dp_degree=1, sp_degree=1)
-        errors = validate_strategy(ctx, num_gpus=8)
+        errors = validate_strategy(ctx, num_devices=8)
         self.assertFalse(errors.has_errors())
 
         ctx_moe = ParallelContext(
@@ -612,7 +612,7 @@ class TestValidationIntegration(unittest.TestCase):
             pp_degree=1,
             sp_degree=1,
         )
-        errors = validate_strategy(ctx_moe, num_gpus=64)
+        errors = validate_strategy(ctx_moe, num_devices=64)
         self.assertFalse(errors.has_errors())
         self.assertEqual(ctx_moe.expert_tp_degree, 8)
 
