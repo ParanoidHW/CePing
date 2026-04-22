@@ -27,7 +27,6 @@ const elements = {
     modelType: document.getElementById('model-type'),
     deviceVendor: document.getElementById('device-vendor'),
     deviceModel: document.getElementById('device-model'),
-    numNodes: document.getElementById('num-nodes'),
     totalDevices: document.getElementById('total-devices'),
     topologyType: document.getElementById('topology-type'),
     topologyParams: document.getElementById('topology-params'),
@@ -40,7 +39,6 @@ const elements = {
     dpDegree: document.getElementById('dp-degree'),
     ulyssesDegree: document.getElementById('ulysses-degree'),
     ringDegree: document.getElementById('ring-degree'),
-    cpDegree: document.getElementById('cp-degree'),
     megatronSpEnabled: document.getElementById('megatron-sp-enabled'),
     dpValidationError: document.getElementById('dp-validation-error'),
     evaluateBtn: document.getElementById('evaluate-btn'),
@@ -116,7 +114,6 @@ function setupEventListeners() {
     elements.topologyType.addEventListener('change', updateTopologyParams);
     elements.evaluateBtn.addEventListener('click', evaluate);
     
-    elements.numNodes.addEventListener('input', calculateDP);
     elements.totalDevices.addEventListener('input', calculateDP);
     
     if (elements.workloadScenario) {
@@ -127,7 +124,7 @@ function setupEventListeners() {
     
     const parallelismInputs = [
         elements.tpDegree, elements.ppDegree, elements.vppDegree,
-        elements.epDegree, elements.ulyssesDegree, elements.ringDegree, elements.cpDegree
+        elements.epDegree, elements.ulyssesDegree, elements.ringDegree
     ];
     parallelismInputs.forEach(input => {
         if (input) {
@@ -142,10 +139,9 @@ function calculateDP() {
     const ep = parseInt(elements.epDegree.value) || 1;
     const ulysses = parseInt(elements.ulyssesDegree.value) || 1;
     const ring = parseInt(elements.ringDegree.value) || 1;
-    const cp = parseInt(elements.cpDegree.value) || 1;
     const totalDevices = parseInt(elements.totalDevices.value) || 64;
     
-    const product = tp * pp * ep * ulysses * ring * cp;
+    const product = tp * pp * ep * ulysses * ring;
     const dp = totalDevices / product;
     
     elements.dpValidationError.style.display = 'none';
@@ -374,18 +370,17 @@ function validateConfigBeforeSubmit() {
     const ep = parseInt(elements.epDegree.value) || 1;
     const ulysses = parseInt(elements.ulyssesDegree.value) || 1;
     const ring = parseInt(elements.ringDegree.value) || 1;
-    const cp = parseInt(elements.cpDegree.value) || 1;
-    const totalDevices = parseInt(elements.totalDevices.value) || 8;
+    const totalDevices = parseInt(elements.totalDevices.value) || 64;
     
     const errors = [];
     
-    const product = tp * pp * dp * ep * ulysses * ring * cp;
+    const product = tp * pp * dp * ep * ulysses * ring;
     if (product !== totalDevices) {
         errors.push({
             level: 'error',
             category: 'strategy',
             message: `并行度乘积 (${product}) ≠ 总设备数 (${totalDevices})`,
-            suggestion: `调整并行度使 TP×PP×DP×EP×Ulysses×Ring×CP = ${totalDevices}`,
+            suggestion: `调整并行度使 TP×PP×DP×EP×Ulysses×Ring = ${totalDevices}`,
         });
     }
     
@@ -528,7 +523,6 @@ function collectConfig() {
     const config = {
         cluster: {
             topology: topologyType,
-            num_nodes: parseInt(elements.numNodes.value),
             total_devices: parseInt(elements.totalDevices.value),
         },
         model: {
@@ -553,7 +547,6 @@ function collectConfig() {
             ep: parseInt(elements.epDegree.value),
             ulysses_degree: parseInt(elements.ulyssesDegree.value),
             ring_degree: parseInt(elements.ringDegree.value),
-            cp_degree: parseInt(elements.cpDegree.value),
             megatron_sp_enabled: elements.megatronSpEnabled.checked,
             activation_checkpointing: document.getElementById('activation-checkpointing').checked,
             zero_stage: parseInt(document.getElementById('zero-stage').value)
@@ -575,20 +568,18 @@ function collectWorkloadConfig(scenario) {
             workload.num_steps = parseInt(document.getElementById('num-steps')?.value || 1000);
             break;
         case 'inference_prefill':
-            workload.num_prompts = parseInt(document.getElementById('num-prompts')?.value || 1000);
-            workload.seq_len = parseInt(document.getElementById('prefill-seq-len')?.value || 4096);
-            workload.kv_cache_tokens = parseInt(document.getElementById('prefill-kv-cache')?.value || 0);
+            workload.input_tokens = parseInt(document.getElementById('prefill-input-tokens')?.value || 1000);
+            workload.output_tokens = parseInt(document.getElementById('prefill-output-tokens')?.value || 100);
             break;
         case 'inference_decode':
-            workload.batch_size = parseInt(document.getElementById('decode-batch-size')?.value || 8);
-            workload.seq_len = parseInt(document.getElementById('decode-seq-len')?.value || 4096);
-            workload.kv_cache_tokens = parseInt(document.getElementById('decode-kv-cache')?.value || 0);
+            workload.input_tokens = parseInt(document.getElementById('decode-input-tokens')?.value || 1000);
+            workload.output_tokens = parseInt(document.getElementById('decode-output-tokens')?.value || 100);
             break;
         case 'pd_disagg':
-            workload.prefill_nodes = parseInt(document.getElementById('prefill-nodes')?.value || 4);
-            workload.decode_nodes = parseInt(document.getElementById('decode-nodes')?.value || 4);
-            workload.seq_len = parseInt(document.getElementById('pd-seq-len')?.value || 4096);
-            workload.batch_size = parseInt(document.getElementById('pd-batch-size')?.value || 32);
+            workload.prefill_devices = parseInt(document.getElementById('prefill-devices')?.value || 32);
+            workload.decode_devices = parseInt(document.getElementById('decode-devices')?.value || 32);
+            workload.input_tokens = parseInt(document.getElementById('pd-input-tokens')?.value || 1000);
+            workload.output_tokens = parseInt(document.getElementById('pd-output-tokens')?.value || 100);
             break;
         case 'rl_training':
             workload.batch_size = parseInt(document.getElementById('rl-batch-size')?.value || 32);

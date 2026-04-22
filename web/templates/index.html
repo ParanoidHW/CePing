@@ -41,15 +41,9 @@
                         <select id="device-model"></select>
                     </div>
 
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>节点数</label>
-                            <input type="number" id="num-nodes" value="8" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>总设备数</label>
-                            <input type="number" id="total-devices" value="64" min="1">
-                        </div>
+                    <div class="form-group">
+                        <label>总设备数</label>
+                        <input type="number" id="total-devices" value="64" min="1">
                     </div>
 
                     <div class="form-group">
@@ -166,12 +160,8 @@
                             <input type="number" id="ulysses-degree" value="1" min="1">
                         </div>
                         <div class="form-group">
-                            <label>Ring-SP</label>
+                            <label>Ring-SP（含CP）</label>
                             <input type="number" id="ring-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>CP (Context)</label>
-                            <input type="number" id="cp-degree" value="1" min="1">
                         </div>
                     </div>
 
@@ -241,17 +231,13 @@
                         <div class="section-hint">Inference-Prefill 参数</div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Num Prompts</label>
-                                <input type="number" id="num-prompts" value="1000">
+                                <label>输入 Tokens</label>
+                                <input type="number" id="prefill-input-tokens" value="1000">
                             </div>
                             <div class="form-group">
-                                <label>Sequence Length</label>
-                                <input type="number" id="prefill-seq-len" value="4096">
+                                <label>输出 Tokens</label>
+                                <input type="number" id="prefill-output-tokens" value="100">
                             </div>
-                        </div>
-                        <div class="form-group">
-                            <label>KV Cache Tokens</label>
-                            <input type="number" id="prefill-kv-cache" value="0">
                         </div>
                     </div>
 
@@ -259,17 +245,13 @@
                         <div class="section-hint">Inference-Decode 参数</div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Batch Size</label>
-                                <input type="number" id="decode-batch-size" value="8">
+                                <label>输入 Tokens</label>
+                                <input type="number" id="decode-input-tokens" value="1000">
                             </div>
                             <div class="form-group">
-                                <label>Sequence Length</label>
-                                <input type="number" id="decode-seq-len" value="4096">
+                                <label>输出 Tokens</label>
+                                <input type="number" id="decode-output-tokens" value="100">
                             </div>
-                        </div>
-                        <div class="form-group">
-                            <label>KV Cache Tokens</label>
-                            <input type="number" id="decode-kv-cache" value="0">
                         </div>
                     </div>
 
@@ -277,22 +259,22 @@
                         <div class="section-hint">PD-Disagg 参数</div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Prefill Nodes</label>
-                                <input type="number" id="prefill-nodes" value="4">
+                                <label>Prefill 设备数</label>
+                                <input type="number" id="prefill-devices" value="32">
                             </div>
                             <div class="form-group">
-                                <label>Decode Nodes</label>
-                                <input type="number" id="decode-nodes" value="4">
+                                <label>Decode 设备数</label>
+                                <input type="number" id="decode-devices" value="32">
                             </div>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Sequence Length</label>
-                                <input type="number" id="pd-seq-len" value="4096">
+                                <label>输入 Tokens</label>
+                                <input type="number" id="pd-input-tokens" value="1000">
                             </div>
                             <div class="form-group">
-                                <label>Batch Size</label>
-                                <input type="number" id="pd-batch-size" value="32">
+                                <label>输出 Tokens</label>
+                                <input type="number" id="pd-output-tokens" value="100">
                             </div>
                         </div>
                     </div>
