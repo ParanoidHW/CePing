@@ -154,12 +154,21 @@ class ParallelContext:
         if self.expert_tp_degree is None:
             self.expert_tp_degree = self.tp_degree
 
-        sp_type_str = getattr(strategy, "sp_type", None)
-        if sp_type_str:
-            try:
-                self.sp_type = SPType(sp_type_str.lower())
-            except ValueError:
-                self.sp_type = SPType.NONE
+        sp_type_value = getattr(strategy, "sp_type", None)
+        if sp_type_value:
+            if isinstance(sp_type_value, SPType):
+                self.sp_type = sp_type_value
+            elif hasattr(sp_type_value, "value"):
+                sp_type_str = sp_type_value.value
+                try:
+                    self.sp_type = SPType(sp_type_str)
+                except ValueError:
+                    self.sp_type = SPType.NONE
+            elif isinstance(sp_type_value, str):
+                try:
+                    self.sp_type = SPType(sp_type_value.lower())
+                except ValueError:
+                    self.sp_type = SPType.NONE
 
         self.ulysses_degree = getattr(strategy, "ulysses_degree", 1)
         self.ring_degree = getattr(strategy, "ring_degree", 1)

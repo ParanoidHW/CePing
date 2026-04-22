@@ -388,6 +388,48 @@ select {
     margin: 1rem 0;
 }
 
+.validation-container {
+    margin: 1rem 0;
+}
+
+.validation-error {
+    background-color: #ffebee;
+    border: 1px solid #f44336;
+    padding: 10px 12px;
+    margin: 5px 0;
+    border-radius: var(--radius-sm);
+}
+
+.validation-warning {
+    background-color: #fff3e0;
+    border: 1px solid #ff9800;
+    padding: 10px 12px;
+    margin: 5px 0;
+    border-radius: var(--radius-sm);
+}
+
+.error-icon, .warning-icon {
+    font-size: 1em;
+    margin-right: 8px;
+}
+
+.error-category, .warning-category {
+    font-weight: bold;
+    color: #666;
+    margin-right: 8px;
+}
+
+.error-message, .warning-message {
+    color: #333;
+}
+
+.error-suggestion, .warning-suggestion {
+    color: #888;
+    font-size: 0.9em;
+    margin-top: 5px;
+    margin-left: 1.5em;
+}
+
 /* Footer */
 footer {
     text-align: center;

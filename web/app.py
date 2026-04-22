@@ -30,6 +30,8 @@ from llm_perf.hardware.topology import NetworkTopology
 from llm_perf.modeling import create_model_from_config, get_model_presets, get_presets_by_sparse_type
 from llm_perf.scenarios import ColocateAnalyzer, ModelAllocation
 from llm_perf.strategy.base import StrategyConfig
+from llm_perf.strategy.parallel_context import ParallelContext
+from llm_perf.validation import validate_all
 
 app = Flask(
     __name__,
@@ -222,12 +224,42 @@ def evaluate():
         if not workload:
             mode = data.get("mode", "inference")
             workload = infer_workload(model_type, mode)
+        else:
+            mode = "training" if workload.endswith("-training") or "training" in workload else "inference"
 
         logger.info(
             f"[PARSED_PARAMS] model_type={model_type}, device={device.config.name}, "
             f"tp={strategy.tp_degree}, pp={strategy.pp_degree}, "
             f"dp={strategy.dp_degree}, ep={strategy.ep_degree}"
         )
+
+        ctx = ParallelContext().build_from_strategy(strategy, cluster)
+
+        seq_len = data.get("seq_len", model_config.get("max_seq_len", 4096))
+        batch_size = data.get("batch_size", 1)
+
+        pre_errors = validate_all(
+            ctx=ctx,
+            num_devices=data["num_devices"],
+            vocab_size=model_config.get("vocab_size", 32000),
+            hidden_size=model_config.get("hidden_size", 4096),
+            num_heads=model_config.get("num_attention_heads", model_config.get("num_heads", 32)),
+            intermediate_size=model_config.get("intermediate_size", model_config.get("hidden_size", 4096) * 4),
+            seq_len=seq_len,
+            num_kv_heads=model_config.get("num_key_value_heads", model_config.get("num_attention_heads", 32)),
+            mode=mode,
+            model_type=model_type,
+            num_experts=model_config.get("num_experts"),
+            global_batch_size=batch_size * strategy.dp_degree,
+            micro_batch_size=batch_size,
+        )
+
+        if pre_errors.has_errors():
+            return jsonify({
+                "success": False,
+                "error": "配置验证失败",
+                "validation": pre_errors.to_dict(),
+            }), 400
 
         analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
 
@@ -251,12 +283,37 @@ def evaluate():
 
         result = analyzer.analyze(workload, **params)
 
-        return jsonify(
-            {
-                "success": True,
-                "result": result.to_dict(),
-            }
+        response = {
+            "success": True,
+            "result": result.to_dict(),
+        }
+
+        detailed = result.to_dict().get("detailed_breakdown", {})
+        memory_by_type = detailed.get("memory", {}).get("by_type", {})
+        device_memory_gb = device.config.memory_gb
+
+        post_errors = validate_all(
+            ctx=ctx,
+            num_devices=data["num_devices"],
+            vocab_size=model_config.get("vocab_size", 32000),
+            hidden_size=model_config.get("hidden_size", 4096),
+            num_heads=model_config.get("num_attention_heads", model_config.get("num_heads", 32)),
+            intermediate_size=model_config.get("intermediate_size", model_config.get("hidden_size", 4096) * 4),
+            seq_len=seq_len,
+            num_kv_heads=model_config.get("num_key_value_heads", model_config.get("num_attention_heads", 32)),
+            weight_memory_gb=memory_by_type.get("weight"),
+            activation_memory_gb=memory_by_type.get("activation"),
+            device_memory_gb=device_memory_gb,
+            gradient_memory_gb=memory_by_type.get("gradient"),
+            optimizer_memory_gb=memory_by_type.get("optimizer"),
+            mode=mode,
+            model_type=model_type,
         )
+
+        if post_errors.has_errors() or post_errors.has_warnings():
+            response["validation"] = post_errors.to_dict()
+
+        return jsonify(response)
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -293,20 +350,73 @@ def evaluate_training():
 
         workload = infer_workload(model_type, "training")
 
-        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        ctx = ParallelContext().build_from_strategy(strategy, cluster)
+
         training_params = dict(data["training"])
+        seq_len = training_params.get("seq_len", model_config.get("max_seq_len", 4096))
+        batch_size = training_params.get("batch_size", 1)
+
+        pre_errors = validate_all(
+            ctx=ctx,
+            num_devices=data["num_devices"],
+            vocab_size=model_config.get("vocab_size", 32000),
+            hidden_size=model_config.get("hidden_size", 4096),
+            num_heads=model_config.get("num_attention_heads", model_config.get("num_heads", 32)),
+            intermediate_size=model_config.get("intermediate_size", model_config.get("hidden_size", 4096) * 4),
+            seq_len=seq_len,
+            num_kv_heads=model_config.get("num_key_value_heads", model_config.get("num_attention_heads", 32)),
+            mode="training",
+            model_type=model_type,
+            num_experts=model_config.get("num_experts"),
+            global_batch_size=batch_size * strategy.dp_degree,
+            micro_batch_size=batch_size,
+        )
+
+        if pre_errors.has_errors():
+            return jsonify({
+                "success": False,
+                "error": "配置验证失败",
+                "validation": pre_errors.to_dict(),
+            }), 400
+
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
         result = analyzer.analyze(
             workload,
             batch_size=training_params.get("batch_size", 1),
             **{k: v for k, v in training_params.items() if k != "batch_size"},
         )
 
-        return jsonify(
-            {
-                "success": True,
-                "result": result.to_dict(),
-            }
+        response = {
+            "success": True,
+            "result": result.to_dict(),
+        }
+
+        detailed = result.to_dict().get("detailed_breakdown", {})
+        memory_by_type = detailed.get("memory", {}).get("by_type", {})
+        device_memory_gb = device.config.memory_gb
+
+        post_errors = validate_all(
+            ctx=ctx,
+            num_devices=data["num_devices"],
+            vocab_size=model_config.get("vocab_size", 32000),
+            hidden_size=model_config.get("hidden_size", 4096),
+            num_heads=model_config.get("num_attention_heads", model_config.get("num_heads", 32)),
+            intermediate_size=model_config.get("intermediate_size", model_config.get("hidden_size", 4096) * 4),
+            seq_len=seq_len,
+            num_kv_heads=model_config.get("num_key_value_heads", model_config.get("num_attention_heads", 32)),
+            weight_memory_gb=memory_by_type.get("weight"),
+            activation_memory_gb=memory_by_type.get("activation"),
+            device_memory_gb=device_memory_gb,
+            gradient_memory_gb=memory_by_type.get("gradient"),
+            optimizer_memory_gb=memory_by_type.get("optimizer"),
+            mode="training",
+            model_type=model_type,
         )
+
+        if post_errors.has_errors() or post_errors.has_warnings():
+            response["validation"] = post_errors.to_dict()
+
+        return jsonify(response)
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

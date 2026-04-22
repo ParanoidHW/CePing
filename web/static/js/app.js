@@ -3,6 +3,14 @@
  * Flat, minimal UI controller
  */
 
+const CATEGORY_NAMES = {
+    'strategy': '并行策略',
+    'model': '模型规格',
+    'sequence': '序列切分',
+    'memory': '内存容量',
+    'special': '特殊场景',
+};
+
 // ==================== State ====================
 const state = {
     mode: 'training', // 'training' | 'inference'
@@ -336,13 +344,90 @@ function updateTopologyParams() {
     elements.topologyParams.innerHTML = html;
 }
 
+function renderValidationErrors(validation) {
+    if (!validation) return '';
+    
+    const errors = validation.errors || [];
+    const warnings = validation.warnings || [];
+    
+    if (errors.length === 0 && warnings.length === 0) return '';
+    
+    const errorHtml = errors.map(e => `
+        <div class="validation-error">
+            <span class="error-icon">❌</span>
+            <span class="error-category">${CATEGORY_NAMES[e.category] || e.category}</span>
+            <span class="error-message">${e.message}</span>
+            ${e.suggestion ? `<div class="error-suggestion">建议: ${e.suggestion}</div>` : ''}
+        </div>
+    `).join('');
+    
+    const warningHtml = warnings.map(e => `
+        <div class="validation-warning">
+            <span class="warning-icon">⚠️</span>
+            <span class="warning-category">${CATEGORY_NAMES[e.category] || e.category}</span>
+            <span class="warning-message">${e.message}</span>
+            ${e.suggestion ? `<div class="warning-suggestion">建议: ${e.suggestion}</div>` : ''}
+        </div>
+    `).join('');
+    
+    return `
+        <div class="validation-container">
+            ${errorHtml}
+            ${warningHtml}
+        </div>
+    `;
+}
+
+function validateConfigBeforeSubmit() {
+    const tp = parseInt(document.getElementById('tp-degree').value) || 1;
+    const pp = parseInt(document.getElementById('pp-degree').value) || 1;
+    const dp = parseInt(document.getElementById('dp-degree').value) || 1;
+    const ep = parseInt(document.getElementById('ep-degree').value) || 1;
+    const numDevices = parseInt(document.getElementById('num-devices').value) || 8;
+    
+    const errors = [];
+    
+    const product = tp * pp * dp * ep;
+    if (product !== numDevices) {
+        errors.push({
+            level: 'error',
+            category: 'strategy',
+            message: `并行度乘积 (${product}) ≠ 设备数 (${numDevices})`,
+            suggestion: `调整并行度使 TP×PP×DP×EP = ${numDevices}`,
+        });
+    }
+    
+    return errors;
+}
+
+function showValidationErrors(errors) {
+    elements.results.style.display = 'block';
+    elements.resultsContent.innerHTML = `
+        <div class="validation-container">
+            ${errors.map(e => `
+                <div class="validation-error">
+                    <span class="error-icon">❌</span>
+                    <span class="error-category">${CATEGORY_NAMES[e.category] || e.category}</span>
+                    <span class="error-message">${e.message}</span>
+                    ${e.suggestion ? `<div class="error-suggestion">建议: ${e.suggestion}</div>` : ''}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
 // ==================== Evaluation ====================
 async function evaluate() {
+    const frontendErrors = validateConfigBeforeSubmit();
+    if (frontendErrors.length > 0) {
+        showValidationErrors(frontendErrors);
+        return;
+    }
+    
     const btn = elements.evaluateBtn;
     const btnText = btn.querySelector('.btn-text');
     const spinner = btn.querySelector('.spinner');
     
-    // Show loading state
     btn.disabled = true;
     btnText.textContent = '评估中...';
     spinner.style.display = 'inline-block';
@@ -350,7 +435,6 @@ async function evaluate() {
     try {
         const config = collectConfig();
         
-        // Use pipeline endpoint for video generation models
         let endpoint;
         if (state.currentPipeline === 'diffusion-video') {
             if (state.mode === 'training') {
@@ -372,10 +456,28 @@ async function evaluate() {
         
         const data = await response.json();
         
-        if (data.success) {
-            displayResults(data.result);
-        } else {
-            showError(data.error || 'Evaluation failed');
+        if (!data.success) {
+            if (data.validation) {
+                const validationHtml = renderValidationErrors(data.validation);
+                elements.results.style.display = 'block';
+                elements.resultsContent.innerHTML = `
+                    <div class="error-message">
+                        <strong>Error:</strong> ${data.error || '评估失败'}
+                    </div>
+                    ${validationHtml}
+                `;
+            } else {
+                showError(data.error || 'Evaluation failed');
+            }
+            return;
+        }
+        
+        displayResults(data.result);
+        
+        if (data.validation) {
+            const validationHtml = renderValidationErrors(data.validation);
+            const currentContent = elements.resultsContent.innerHTML;
+            elements.resultsContent.innerHTML = validationHtml + currentContent;
         }
     } catch (error) {
         showError('Network error: ' + error.message);
