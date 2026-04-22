@@ -15,7 +15,6 @@
         </header>
 
         <main>
-            <!-- Mode Selection -->
             <section class="card mode-selector">
                 <h2>评估模式</h2>
                 <div class="tabs">
@@ -25,7 +24,53 @@
             </section>
 
             <div class="grid">
-                <!-- Model Configuration -->
+                <section class="card cluster-config">
+                    <h2>集群拓扑</h2>
+                    
+                    <div class="form-group">
+                        <label>设备厂商</label>
+                        <select id="device-vendor">
+                            <option value="NVIDIA">NVIDIA</option>
+                            <option value="AMD">AMD</option>
+                            <option value="Huawei">Huawei Ascend</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>设备型号</label>
+                        <select id="device-model"></select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>节点数</label>
+                            <input type="number" id="num-nodes" value="8" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>单节点设备数</label>
+                            <input type="number" id="devices-per-node" value="8" min="1">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>总设备数（自动计算）</label>
+                        <div class="readonly-display" id="total-devices-display">64</div>
+                        <input type="hidden" id="total-devices" value="64">
+                    </div>
+
+                    <div class="form-group">
+                        <label>拓扑类型</label>
+                        <select id="topology-type">
+                            <option value="2-Tier Simple">2层简单 (2-Tier)</option>
+                            <option value="3-Tier Clos">3层Clos</option>
+                            <option value="Fat-Tree">胖树 (Fat-Tree)</option>
+                            <option value="CloudMatrix Supernode">CloudMatrix超节点</option>
+                        </select>
+                    </div>
+
+                    <div id="topology-params"></div>
+                </section>
+
                 <section class="card model-config">
                     <h2>模型配置</h2>
                     
@@ -45,102 +90,49 @@
                         </select>
                     </div>
 
-                    <div class="advanced-toggle">
-                        <button type="button" class="btn-link">展开高级参数 ▼</button>
-                    </div>
-
-                    <div class="advanced-params collapsed">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Hidden Size</label>
-                                <input type="number" id="hidden-size" value="4096">
-                            </div>
-                            <div class="form-group">
-                                <label>Num Layers</label>
-                                <input type="number" id="num-layers" value="32">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Attention Heads</label>
-                                <input type="number" id="num-heads" value="32">
-                            </div>
-                            <div class="form-group">
-                                <label>Max Seq Len</label>
-                                <input type="number" id="max-seq-len" value="4096">
-                            </div>
-                        </div>
-                        <div class="form-group moe-only" style="display: none;">
-                            <label>Experts / Active</label>
-                            <div class="form-row">
-                                <input type="number" id="num-experts" value="8" placeholder="Total">
-                                <input type="number" id="experts-per-token" value="2" placeholder="Active">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Data Type</label>
-                            <select id="dtype">
-                                <option value="fp16">FP16</option>
-                                <option value="bf16">BF16</option>
-                                <option value="fp8">FP8</option>
-                            </select>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Hardware Configuration -->
-                <section class="card hardware-config">
-                    <h2>硬件配置</h2>
-                    
-                    <div class="form-group">
-                        <label>设备类型</label>
-                        <select id="device-vendor">
-                            <option value="NVIDIA">NVIDIA</option>
-                            <option value="AMD">AMD</option>
-                            <option value="Huawei">Huawei Ascend</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>设备型号</label>
-                        <select id="device-model"></select>
-                    </div>
+                    <div class="section-hint">模型规格参数</div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>总设备数</label>
-                            <input type="number" id="num-devices" value="8" min="1">
+                            <label>Hidden Size</label>
+                            <input type="number" id="hidden-size" value="4096">
                         </div>
                         <div class="form-group">
-                            <label>每节点设备</label>
-                            <input type="number" id="devices-per-node" value="8" min="1">
+                            <label>Num Layers</label>
+                            <input type="number" id="num-layers" value="32">
                         </div>
                     </div>
-                </section>
-
-                <!-- Topology Configuration -->
-                <section class="card topology-config">
-                    <h2>网络拓扑</h2>
-                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Attention Heads</label>
+                            <input type="number" id="num-heads" value="32">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Seq Len</label>
+                            <input type="number" id="max-seq-len" value="4096">
+                        </div>
+                    </div>
+                    <div class="form-group moe-only" style="display: none;">
+                        <label>Experts / Active</label>
+                        <div class="form-row">
+                            <input type="number" id="num-experts" value="8" placeholder="Total">
+                            <input type="number" id="experts-per-token" value="2" placeholder="Active">
+                        </div>
+                    </div>
                     <div class="form-group">
-                        <label>拓扑类型</label>
-                        <select id="topology-type">
-                            <option value="2-Tier Simple">2层简单 (2-Tier)</option>
-                            <option value="3-Tier Clos">3层Clos</option>
-                            <option value="Fat-Tree">胖树 (Fat-Tree)</option>
-                            <option value="CloudMatrix Supernode">CloudMatrix超节点</option>
+                        <label>Data Type</label>
+                        <select id="dtype">
+                            <option value="fp16">FP16</option>
+                            <option value="bf16">BF16</option>
+                            <option value="fp8">FP8</option>
                         </select>
                     </div>
-
-                    <div id="topology-params">
-                        <!-- Dynamic topology parameters -->
-                    </div>
                 </section>
 
-                <!-- Strategy Configuration -->
-                <section class="card strategy-config">
-                    <h2>并行策略</h2>
+                <section class="card parallelism-config">
+                    <h2>并行切分配置</h2>
                     
+                    <div class="section-hint">基础并行策略</div>
                     <div class="parallel-grid">
                         <div class="form-group">
                             <label>TP (Tensor)</label>
@@ -151,15 +143,44 @@
                             <input type="number" id="pp-degree" value="1" min="1">
                         </div>
                         <div class="form-group">
-                            <label>DP (Data)</label>
-                            <input type="number" id="dp-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
                             <label>EP (Expert)</label>
                             <input type="number" id="ep-degree" value="1" min="1">
                         </div>
+                        <div class="form-group">
+                            <label>DP (Data) <span class="auto-calc-hint">自动计算</span></label>
+                            <div class="readonly-display" id="dp-degree-display">1</div>
+                            <input type="hidden" id="dp-degree" value="1">
+                        </div>
                     </div>
 
+                    <div class="section-hint">序列并行策略</div>
+                    <div class="parallel-grid">
+                        <div class="form-group">
+                            <label>SP (Sequence)</label>
+                            <input type="number" id="sp-degree" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Ulysses</label>
+                            <input type="number" id="ulysses-degree" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Ring</label>
+                            <input type="number" id="ring-degree" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>CP (Context)</label>
+                            <input type="number" id="cp-degree" value="1" min="1">
+                        </div>
+                    </div>
+
+                    <div class="form-check">
+                        <input type="checkbox" id="megatron-sp-enabled">
+                        <label for="megatron-sp-enabled">启用 Megatron-SP（需配合 TP 使用）</label>
+                    </div>
+
+                    <div id="dp-validation-error" class="validation-error" style="display: none;"></div>
+
+                    <div class="section-hint">内存优化</div>
                     <div class="form-check">
                         <input type="checkbox" id="activation-checkpointing">
                         <label for="activation-checkpointing">Activation Checkpointing</label>
@@ -176,9 +197,9 @@
                     </div>
                 </section>
 
-                <!-- Training/Inference Params -->
-                <section class="card runtime-config">
-                    <h2 id="runtime-title">训练参数</h2>
+                <section class="card workload-config">
+                    <h2 id="workload-title">Workload 配置</h2>
+                    <div class="section-hint">计算特征参数</div>
                     
                     <div id="training-params">
                         <div class="form-row">
@@ -212,7 +233,6 @@
                 </section>
             </div>
 
-            <!-- Evaluate Button -->
             <div class="action-bar">
                 <button id="evaluate-btn" class="btn-primary">
                     <span class="btn-text">开始评估</span>
@@ -220,7 +240,6 @@
                 </button>
             </div>
 
-            <!-- Results -->
             <section id="results" class="card results" style="display: none;">
                 <h2>评估结果</h2>
                 <div id="results-content"></div>

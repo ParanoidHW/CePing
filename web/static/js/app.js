@@ -1,6 +1,6 @@
 /**
  * LLM Performance Evaluator - Web Interface
- * Flat, minimal UI controller
+ * Configuration sections: Cluster Topology, Model Config, Parallelism, Workload
  */
 
 const CATEGORY_NAMES = {
@@ -11,59 +11,68 @@ const CATEGORY_NAMES = {
     'special': '特殊场景',
 };
 
-// ==================== State ====================
 const state = {
-    mode: 'training', // 'training' | 'inference'
+    mode: 'training',
     devices: {},
     devicePresets: {},
     modelPresets: {},
     topologyPresets: {},
-    currentPipeline: null, // 'diffusion-video' for video generation
+    currentPipeline: null,
     videoParams: null
 };
 
-// ==================== DOM Elements ====================
 const elements = {
     modeTabs: document.querySelectorAll('.tab'),
     modelPreset: document.getElementById('model-preset'),
     modelType: document.getElementById('model-type'),
-    advancedToggle: document.querySelector('.advanced-toggle button'),
-    advancedParams: document.querySelector('.advanced-params'),
     deviceVendor: document.getElementById('device-vendor'),
     deviceModel: document.getElementById('device-model'),
+    numNodes: document.getElementById('num-nodes'),
+    devicesPerNode: document.getElementById('devices-per-node'),
+    totalDevicesDisplay: document.getElementById('total-devices-display'),
+    totalDevices: document.getElementById('total-devices'),
     topologyType: document.getElementById('topology-type'),
     topologyParams: document.getElementById('topology-params'),
+    tpDegree: document.getElementById('tp-degree'),
+    ppDegree: document.getElementById('pp-degree'),
+    epDegree: document.getElementById('ep-degree'),
+    dpDegreeDisplay: document.getElementById('dp-degree-display'),
+    dpDegree: document.getElementById('dp-degree'),
+    spDegree: document.getElementById('sp-degree'),
+    ulyssesDegree: document.getElementById('ulysses-degree'),
+    ringDegree: document.getElementById('ring-degree'),
+    cpDegree: document.getElementById('cp-degree'),
+    megatronSpEnabled: document.getElementById('megatron-sp-enabled'),
+    dpValidationError: document.getElementById('dp-validation-error'),
     evaluateBtn: document.getElementById('evaluate-btn'),
     results: document.getElementById('results'),
     resultsContent: document.getElementById('results-content'),
     trainingParams: document.getElementById('training-params'),
     inferenceParams: document.getElementById('inference-params'),
-    runtimeTitle: document.getElementById('runtime-title')
+    workloadTitle: document.getElementById('workload-title')
 };
 
-// ==================== Initialization ====================
 async function init() {
     await loadData();
     setupEventListeners();
     updateDeviceModels();
     updateTopologyParams();
     loadModelPreset();
+    calculateTotalDevices();
+    calculateDP();
 }
 
 async function loadData() {
     try {
-        // Load devices
         const deviceRes = await fetch('/api/devices');
         const deviceData = await deviceRes.json();
         state.devices = deviceData.devices;
         state.devicePresets = deviceData.device_info;
         
-        // Load model presets
         const modelRes = await fetch('/api/model/presets');
         state.modelPresets = await modelRes.json();
         populateModelPresets();
         
-        // Load topology presets
         const topoRes = await fetch('/api/topology/presets');
         state.topologyPresets = await topoRes.json();
     } catch (error) {
@@ -93,9 +102,7 @@ function populateModelPresets() {
     });
 }
 
-// ==================== Event Listeners ====================
 function setupEventListeners() {
-    // Mode tabs
     elements.modeTabs.forEach(tab => {
         tab.addEventListener('click', () => {
             elements.modeTabs.forEach(t => t.classList.remove('active'));
@@ -106,35 +113,93 @@ function setupEventListeners() {
         });
     });
     
-    // Model preset selection
     elements.modelPreset.addEventListener('change', loadModelPreset);
-    
-    // Model type toggle
     elements.modelType.addEventListener('change', updateModelTypeUI);
-    
-    // Advanced params toggle
-    elements.advancedToggle.addEventListener('click', toggleAdvanced);
-    
-    // Device vendor change
     elements.deviceVendor.addEventListener('change', updateDeviceModels);
-    
-    // Topology type change
     elements.topologyType.addEventListener('change', updateTopologyParams);
-    
-    // Evaluate button
     elements.evaluateBtn.addEventListener('click', evaluate);
+    
+    elements.numNodes.addEventListener('input', () => {
+        calculateTotalDevices();
+        calculateDP();
+    });
+    elements.devicesPerNode.addEventListener('input', () => {
+        calculateTotalDevices();
+        calculateDP();
+    });
+    
+    const parallelismInputs = [
+        elements.tpDegree, elements.ppDegree, elements.epDegree,
+        elements.spDegree, elements.ulyssesDegree, elements.ringDegree, elements.cpDegree
+    ];
+    parallelismInputs.forEach(input => {
+        if (input) {
+            input.addEventListener('input', calculateDP);
+        }
+    });
 }
 
-// ==================== UI Updates ====================
+function calculateTotalDevices() {
+    const numNodes = parseInt(elements.numNodes.value) || 1;
+    const devicesPerNode = parseInt(elements.devicesPerNode.value) || 1;
+    const totalDevices = numNodes * devicesPerNode;
+    
+    elements.totalDevicesDisplay.textContent = totalDevices;
+    elements.totalDevices.value = totalDevices;
+    
+    return totalDevices;
+}
+
+function calculateDP() {
+    const tp = parseInt(elements.tpDegree.value) || 1;
+    const pp = parseInt(elements.ppDegree.value) || 1;
+    const ep = parseInt(elements.epDegree.value) || 1;
+    const sp = parseInt(elements.spDegree.value) || 1;
+    const ulysses = parseInt(elements.ulyssesDegree.value) || 1;
+    const ring = parseInt(elements.ringDegree.value) || 1;
+    const cp = parseInt(elements.cpDegree.value) || 1;
+    const totalDevices = parseInt(elements.totalDevices.value) || 64;
+    
+    const product = tp * pp * ep * sp * ulysses * ring * cp;
+    const dp = totalDevices / product;
+    
+    elements.dpValidationError.style.display = 'none';
+    
+    if (product > totalDevices) {
+        elements.dpValidationError.innerHTML = `
+            <span class="error-icon">❌</span>
+            <span>并行度乘积 (${product}) > 总设备数 (${totalDevices})，无法计算 DP</span>
+        `;
+        elements.dpValidationError.style.display = 'block';
+        elements.dpDegreeDisplay.textContent = 'N/A';
+        elements.dpDegree.value = 0;
+        return null;
+    }
+    
+    if (!Number.isInteger(dp)) {
+        elements.dpValidationError.innerHTML = `
+            <span class="error-icon">⚠️</span>
+            <span>DP = ${dp.toFixed(2)}（非整数），建议调整并行参数使 DP 为整数</span>
+        `;
+        elements.dpValidationError.style.display = 'block';
+    }
+    
+    const dpInt = Math.floor(dp);
+    elements.dpDegreeDisplay.textContent = dpInt;
+    elements.dpDegree.value = dpInt;
+    
+    return dpInt;
+}
+
 function updateModeUI() {
     if (state.mode === 'training') {
         elements.trainingParams.style.display = 'block';
         elements.inferenceParams.style.display = 'none';
-        elements.runtimeTitle.textContent = '训练参数';
+        elements.workloadTitle.textContent = 'Workload 配置';
     } else {
         elements.trainingParams.style.display = 'none';
         elements.inferenceParams.style.display = 'block';
-        elements.runtimeTitle.textContent = '推理参数';
+        elements.workloadTitle.textContent = 'Workload 配置';
     }
     elements.results.style.display = 'none';
     renderParamInputs();
@@ -160,7 +225,7 @@ function renderParamInputs() {
     
     const container = state.mode === 'training' ? elements.trainingParams : elements.inferenceParams;
     
-    let html = '';
+    let html = '<div class="section-hint">计算特征参数</div>';
     const paramsPerRow = 2;
     
     for (let i = 0; i < modeSchema.length; i += paramsPerRow) {
@@ -200,23 +265,19 @@ function loadModelPreset() {
 
     const preset = presets[presetKey];
 
-    // Store current preset and pipeline info
     state.currentPreset = preset;
     state.currentPipeline = preset.architecture === 'wan_pipeline' && state.mode === 'inference' 
         ? 'diffusion-video' 
         : null;
 
-    // Set model type based on sparse_type
     elements.modelType.value = preset.sparse_type || 'dense';
 
-    // Set model config params
     document.getElementById('hidden-size').value = preset.hidden_size || 4096;
     document.getElementById('num-layers').value = preset.num_layers || 32;
     document.getElementById('num-heads').value = preset.num_heads || preset.num_attention_heads || 32;
     document.getElementById('max-seq-len').value = preset.max_seq_len || 4096;
     document.getElementById('dtype').value = preset.dtype || 'fp16';
 
-    // MoE params
     if (preset.num_experts) {
         document.getElementById('num-experts').value = preset.num_experts;
         document.getElementById('experts-per-token').value = preset.num_experts_per_token;
@@ -232,14 +293,6 @@ function updateModelTypeUI() {
     moeFields.forEach(el => {
         el.style.display = isMoE ? 'block' : 'none';
     });
-}
-
-function toggleAdvanced() {
-    elements.advancedParams.classList.toggle('collapsed');
-    const btn = elements.advancedToggle;
-    btn.textContent = elements.advancedParams.classList.contains('collapsed') 
-        ? '展开高级参数 ▼' 
-        : '收起高级参数 ▲';
 }
 
 function updateDeviceModels() {
@@ -379,21 +432,34 @@ function renderValidationErrors(validation) {
 }
 
 function validateConfigBeforeSubmit() {
-    const tp = parseInt(document.getElementById('tp-degree').value) || 1;
-    const pp = parseInt(document.getElementById('pp-degree').value) || 1;
-    const dp = parseInt(document.getElementById('dp-degree').value) || 1;
-    const ep = parseInt(document.getElementById('ep-degree').value) || 1;
-    const numDevices = parseInt(document.getElementById('num-devices').value) || 8;
+    const tp = parseInt(elements.tpDegree.value) || 1;
+    const pp = parseInt(elements.ppDegree.value) || 1;
+    const dp = parseInt(elements.dpDegree.value) || 1;
+    const ep = parseInt(elements.epDegree.value) || 1;
+    const sp = parseInt(elements.spDegree.value) || 1;
+    const ulysses = parseInt(elements.ulyssesDegree.value) || 1;
+    const ring = parseInt(elements.ringDegree.value) || 1;
+    const cp = parseInt(elements.cpDegree.value) || 1;
+    const totalDevices = parseInt(elements.totalDevices.value) || 8;
     
     const errors = [];
     
-    const product = tp * pp * dp * ep;
-    if (product !== numDevices) {
+    const product = tp * pp * dp * ep * sp * ulysses * ring * cp;
+    if (product !== totalDevices) {
         errors.push({
             level: 'error',
             category: 'strategy',
-            message: `并行度乘积 (${product}) ≠ 设备数 (${numDevices})`,
-            suggestion: `调整并行度使 TP×PP×DP×EP = ${numDevices}`,
+            message: `并行度乘积 (${product}) ≠ 总设备数 (${totalDevices})`,
+            suggestion: `调整并行度使 TP×PP×DP×EP×SP×Ulysses×Ring×CP = ${totalDevices}`,
+        });
+    }
+    
+    if (dp < 1) {
+        errors.push({
+            level: 'error',
+            category: 'strategy',
+            message: `DP 必须为 ≥ 1 的整数`,
+            suggestion: '调整其他并行参数使 DP 为正整数',
         });
     }
     
@@ -416,7 +482,6 @@ function showValidationErrors(errors) {
     `;
 }
 
-// ==================== Evaluation ====================
 async function evaluate() {
     const frontendErrors = validateConfigBeforeSubmit();
     if (frontendErrors.length > 0) {
@@ -492,7 +557,6 @@ function collectConfig() {
     const topologyType = elements.topologyType.value;
     let topology = { type: topologyType };
     
-    // Collect topology params
     switch(topologyType) {
         case '2-Tier Simple':
             topology.intra_node_bw_gbps = parseFloat(document.getElementById('topo-intra').value);
@@ -532,20 +596,25 @@ function collectConfig() {
             dtype: document.getElementById('dtype').value,
         },
         device: elements.deviceModel.value,
-        num_devices: parseInt(document.getElementById('num-devices').value),
-        devices_per_node: parseInt(document.getElementById('devices-per-node').value),
+        num_devices: parseInt(elements.totalDevices.value),
+        devices_per_node: parseInt(elements.devicesPerNode.value),
+        num_nodes: parseInt(elements.numNodes.value),
         topology: topology,
         strategy: {
-            tp: parseInt(document.getElementById('tp-degree').value),
-            pp: parseInt(document.getElementById('pp-degree').value),
-            dp: parseInt(document.getElementById('dp-degree').value),
-            ep: parseInt(document.getElementById('ep-degree').value),
+            tp: parseInt(elements.tpDegree.value),
+            pp: parseInt(elements.ppDegree.value),
+            dp: parseInt(elements.dpDegree.value),
+            ep: parseInt(elements.epDegree.value),
+            sp: parseInt(elements.spDegree.value),
+            ulysses_degree: parseInt(elements.ulyssesDegree.value),
+            ring_degree: parseInt(elements.ringDegree.value),
+            cp_degree: parseInt(elements.cpDegree.value),
+            megatron_sp_enabled: elements.megatronSpEnabled.checked,
             activation_checkpointing: document.getElementById('activation-checkpointing').checked,
             zero_stage: parseInt(document.getElementById('zero-stage').value)
         }
     };
     
-    // Collect mode-specific params from param_schema
     const schema = preset.param_schema;
     const modeParams = schema?.[state.mode] || [];
     
@@ -581,39 +650,18 @@ function collectConfig() {
 function displayResults(result) {
     elements.results.style.display = 'block';
     
-    // DEBUG: Log raw data for troubleshooting
-    console.log('=== DEBUG: Raw API Result ===');
-    console.log('result:', JSON.stringify(result, null, 2).substring(0, 2000));
-    
-    const detailed = result.detailed_breakdown;
-    if (detailed && detailed.memory) {
-        console.log('=== DEBUG: Memory by_type ===');
-        console.log('by_type:', detailed.memory.by_type);
-        console.log('weight:', detailed.memory.by_type?.weight);
-        console.log('by_submodule_type keys:', Object.keys(detailed.memory.by_submodule_type || {}));
-        console.log('by_submodule_type weights:', 
-            Object.entries(detailed.memory.by_submodule_type || {})
-                .map(([k, v]) => `${k}: ${v.memory?.weight_gb?.toFixed(2)} GB`)
-                .join(', ')
-        );
-    }
-    
-    // Handle pipeline results (e.g., video generation)
     if (state.currentPipeline === 'diffusion-video') {
         const phases = result.phases || [];
         const totalTime = result.total_time_sec || 0;
         
-        // 从phases提取各组件时间
         const encodePhase = phases.find(p => p.name === 'encode') || {};
         const denoisePhase = phases.find(p => p.name === 'denoise') || {};
         const decodePhase = phases.find(p => p.name === 'decode') || {};
         
-        // 计算占比
         const encodePct = (encodePhase.total_time_sec || 0) / totalTime * 100;
         const denoisePct = (denoisePhase.total_time_sec || 0) / totalTime * 100;
         const decodePct = (decodePhase.total_time_sec || 0) / totalTime * 100;
         
-        // 从params获取配置信息
         const params = result.params || {};
         
         elements.resultsContent.innerHTML = `
@@ -739,38 +787,20 @@ function displayResults(result) {
 function renderDetailedBreakdown(detailed) {
     if (!detailed) return '';
 
-    // DEBUG: Log memory data for troubleshooting
-    console.log('=== DEBUG: renderDetailedBreakdown ===');
-    console.log('detailed.memory.by_type:', detailed.memory?.by_type);
-    console.log('detailed.memory.by_submodule_type:', detailed.memory?.by_submodule_type);
-    console.log('detailed.by_submodule_type:', detailed.by_submodule_type);
-
-    // Memory breakdown by type - separate total from breakdown items
     const memByType = detailed.memory?.by_type || {};
     const { total, ...breakdownItems } = memByType;
-    
-    console.log('=== DEBUG: memByType extracted ===');
-    console.log('total:', total);
-    console.log('breakdownItems:', breakdownItems);
-    console.log('breakdownItems.weight:', breakdownItems.weight);
 
-    // Render breakdown items in fixed order
     const orderedTypes = ['weight', 'gradient', 'optimizer', 'activation'];
     const memRows = orderedTypes
         .filter(type => breakdownItems[type] !== undefined)
         .map(type => `<tr><td>${type}</td><td>${breakdownItems[type].toFixed(2)} GB</td></tr>`)
         .join('');
-    
-    console.log('=== DEBUG: memRows HTML ===');
-    console.log(memRows);
 
-    // Total row with visual distinction
     const totalRow = total !== undefined 
         ? `<tr style="font-weight: bold; border-top: 2px solid var(--gray-200);">
              <td>总计</td><td>${total.toFixed(2)} GB</td></tr>` 
         : '';
 
-    // Memory breakdown by submodel
     const memBySubmodel = detailed.memory?.by_submodel || {};
     const submodelMemRows = Object.entries(memBySubmodel)
         .map(([name, mems]) => {
@@ -778,7 +808,6 @@ function renderDetailedBreakdown(detailed) {
             return `<tr><td>${name}</td><td>${total.toFixed(2)} GB</td></tr>`;
         }).join('');
 
-    // Unified breakdown by submodule type with nested breakdown
     const bySubmoduleType = detailed.by_submodule_type || {};
     
     let submoduleBreakdownRows = '';
@@ -818,7 +847,6 @@ function renderDetailedBreakdown(detailed) {
         }
     }
 
-    // Communication breakdown by parallelism type
     const commByPara = detailed.communication?.by_parallelism || {};
     const commRows = Object.entries(commByPara)
         .map(([type, data]) => {
@@ -827,7 +855,6 @@ function renderDetailedBreakdown(detailed) {
             return `<tr><td>${type.toUpperCase()}</td><td>${totalGb.toFixed(2)} GB</td><td>${totalMs.toFixed(2)} ms</td></tr>`;
         }).join('');
 
-    // Submodel details - read from summary, not by_type
     const submodelDetails = (detailed.submodels || []).map(sm => {
         const summary = sm.memory?.summary || {};
         const memTypes = Object.entries(summary)
@@ -842,29 +869,7 @@ function renderDetailedBreakdown(detailed) {
         `;
     }).join('');
 
-    // DEBUG panel - show raw memory data for troubleshooting
-    const debugPanel = `
-        <details style="margin: 1.5rem 0; background: var(--gray-100); padding: 0.5rem; border-radius: 4px;">
-            <summary style="cursor: pointer; font-weight: bold; color: #666;">
-                🔍 Debug: 原始内存数据 (点击展开)
-            </summary>
-            <pre style="margin: 0.5rem 0; font-size: 12px; overflow: auto; max-height: 300px;">
-memory.by_type:
-${JSON.stringify(detailed.memory?.by_type, null, 2)}
-
-memory.by_submodule_type (weight_gb):
-${JSON.stringify(
-    Object.fromEntries(
-        Object.entries(detailed.memory?.by_submodule_type || {})
-            .map(([k, v]) => [k, {weight_gb: v.memory?.weight_gb}])
-    ), null, 2
-)}
-            </pre>
-        </details>
-    `;
-
     return `
-        ${debugPanel}
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
         <table class="breakdown-table">
             <tr><th>内存类型</th><th>大小</th></tr>
@@ -962,5 +967,4 @@ function showError(message) {
     `;
 }
 
-// ==================== Start ====================
 document.addEventListener('DOMContentLoaded', init);
