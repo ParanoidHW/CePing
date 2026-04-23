@@ -1,5 +1,70 @@
 # 开发日志
 
+## 2026-04-23: Qwen3.5 Dense 模型支持
+
+### 任务背景
+Qwen3.5 系列有 Dense 和 MoE 两种架构：
+- Dense 模型：Qwen3.5-0.8B/2B/4B/9B/27B（SwiGLU FFN）
+- MoE 模型：Qwen3.5-35B-A3B（已完成，256 experts, top-8 routing）
+
+需要添加 Dense 版本支持，包括：
+- 混合注意力（linear/full，每4层一个 full attention）
+- SwiGLU FFN（而非 MoE）
+- tie_word_embeddings（小模型共享 embedding/lm_head）
+
+### 实现内容
+1. **ShardedQwen3_5DenseBlock**
+   - 支持 linear_attention 和 full_attention
+   - 使用 ShardedFFN（SwiGLU activation）
+   - RMSNorm（post-attention 和 post-FFN）
+
+2. **Qwen3_5Model**
+   - 混合注意力：generate_layer_types() 函数生成层类型
+   - tie_word_embeddings 处理：
+     - true: lm_head=None，forward 使用 embedding.weight.T
+     - false: 独立 lm_head 子模块
+   - 参数量自动计算（父类方法处理）
+
+3. **Presets（YAML配置）**
+   - qwen3-5.yaml（9B 默认）
+   - qwen3-5-0-8b.yaml（1024 hidden, 24 layers, tie=True）
+   - qwen3-5-2b.yaml（2048 hidden, 24 layers, tie=True）
+   - qwen3-5-4b.yaml（2560 hidden, 32 layers, tie=True）
+   - qwen3-5-27b.yaml（5120 hidden, 64 layers, tie=False）
+
+### 架构特点
+- 所有模型都有混合注意力（linear/full）
+- SwiGLU FFN：gate_proj + up_proj + down_proj
+- 权重参数：2 * hidden_size * intermediate_size + intermediate_size * hidden_size
+- 小模型（0.8B/2B/4B）共享 embedding/lm_head 权重，减少内存
+
+### 参数量验证
+| 模型 | 计算值 | 预期范围 |
+|------|--------|----------|
+| 0.8B | 0.85B | ~0.9B |
+| 2B | 2.08B | ~2B |
+| 4B | 5.05B | ~5B |
+| 9B | 10.42B | ~10B |
+| 27B | 32.71B | ~28B（总参数量） |
+
+### 测试验证
+- 新增测试：26 个（ShardedQwen3_5DenseBlock, Qwen3_5Model, tie_embeddings, params, inference）
+- 存量测试：113 passed, 2 skipped
+- ruff 代码检查通过
+
+### 参考来源
+- HuggingFace Qwen3.5 config.json（官方配置参数）
+- linear_num_value_heads（linear attention 的 value head 数）
+- head_dim（attention head 维度）
+- intermediate_size（SwiGLU FFN 中间层大小）
+
+### Commit
+- Hash: c9aaca4
+- Message: feat(modeling): add Qwen3.5 Dense model support
+- Tests: 55 passed (26 new tests added)
+
+---
+
 ## 2026-04-23: Wan VAE 重构到 encoder.py
 
 ### 任务背景
