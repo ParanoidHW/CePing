@@ -196,6 +196,26 @@ function switchWorkloadScenario(scenario) {
         setupDiffusionModeTabs();
         updateDiffusionModeUI(state.diffusionCurrentMode);
     }
+    
+    updateMemoryOptsVisibility(scenario);
+}
+
+function updateMemoryOptsVisibility(scenario) {
+    const recomputeEl = document.querySelector('.memory-opt-recompute');
+    const zeroEl = document.querySelector('.memory-opt-zero');
+    const sectionEl = document.querySelector('.memory-opt-section');
+    
+    const isTraining = scenario === 'training' || scenario === 'rl_training';
+    
+    if (recomputeEl) {
+        recomputeEl.classList.toggle('memory-opts-hidden', !isTraining);
+    }
+    if (zeroEl) {
+        zeroEl.classList.toggle('memory-opts-hidden', !isTraining);
+    }
+    if (sectionEl) {
+        sectionEl.classList.toggle('memory-opts-hidden', !isTraining);
+    }
 }
 
 function setupPDDisaggListeners() {

@@ -160,16 +160,16 @@
                                 </div>
                                 <div class="form-group" id="diffusion-input-image-group" style="display: none;">
                                     <label>输入图像</label>
-                                    <div class="form-row">
-                                        <input type="number" id="diffusion-input-image-width" value="1024" placeholder="Width">
-                                        <input type="number" id="diffusion-input-image-height" value="1024" placeholder="Height">
+                                    <div class="diffusion-resolution-input">
+                                        <input type="number" id="diffusion-input-image-width" value="1024" placeholder="宽">
+                                        <input type="number" id="diffusion-input-image-height" value="1024" placeholder="高">
                                     </div>
                                 </div>
                                 <div class="form-group" id="diffusion-input-video-group" style="display: none;">
                                     <label>输入视频</label>
-                                    <div class="form-row">
-                                        <input type="number" id="diffusion-input-video-width" value="1920" placeholder="Width">
-                                        <input type="number" id="diffusion-input-video-height" value="1080" placeholder="Height">
+                                    <div class="diffusion-resolution-input">
+                                        <input type="number" id="diffusion-input-video-width" value="1920" placeholder="宽">
+                                        <input type="number" id="diffusion-input-video-height" value="1080" placeholder="高">
                                     </div>
                                     <div class="form-group" style="margin-top: 0.5rem;">
                                         <label>输入帧数</label>
@@ -184,16 +184,16 @@
                             <div class="form-row" id="diffusion-output-row">
                                 <div class="form-group" id="diffusion-output-image-group">
                                     <label>输出图像</label>
-                                    <div class="form-row">
-                                        <input type="number" id="diffusion-output-image-width" value="1024" placeholder="Width">
-                                        <input type="number" id="diffusion-output-image-height" value="1024" placeholder="Height">
+                                    <div class="diffusion-resolution-input">
+                                        <input type="number" id="diffusion-output-image-width" value="1024" placeholder="宽">
+                                        <input type="number" id="diffusion-output-image-height" value="1024" placeholder="高">
                                     </div>
                                 </div>
                                 <div class="form-group" id="diffusion-output-video-group" style="display: none;">
                                     <label>输出视频</label>
-                                    <div class="form-row">
-                                        <input type="number" id="diffusion-output-video-width" value="1920" placeholder="Width">
-                                        <input type="number" id="diffusion-output-video-height" value="1080" placeholder="Height">
+                                    <div class="diffusion-resolution-input">
+                                        <input type="number" id="diffusion-output-video-width" value="1920" placeholder="宽">
+                                        <input type="number" id="diffusion-output-video-height" value="1080" placeholder="高">
                                     </div>
                                     <div class="form-group" style="margin-top: 0.5rem;">
                                         <label>输出帧数</label>
@@ -492,13 +492,13 @@
 
                     <div id="dp-validation-error" class="validation-error" style="display: none;"></div>
 
-                    <div class="section-hint">内存优化</div>
+                    <div class="section-hint memory-opt-section">内存优化</div>
                     <div class="memory-opts">
-                        <div class="form-check">
+                        <div class="form-check memory-opt-recompute">
                             <input type="checkbox" id="activation-checkpointing">
                             <label for="activation-checkpointing">Activation Checkpointing</label>
                         </div>
-                        <div class="form-group inline-group">
+                        <div class="form-group inline-group memory-opt-zero">
                             <label>ZeRO Stage</label>
                             <select id="zero-stage">
                                 <option value="0">Disabled</option>

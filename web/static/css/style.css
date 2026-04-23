@@ -644,3 +644,24 @@ footer {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
 }
+
+.diffusion-resolution-input {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+
+.diffusion-resolution-input input {
+    text-align: center;
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+}
+
+.memory-opts-hidden {
+    display: none !important;
+}
+
+.memory-opt-recompute,
+.memory-opt-zero {
+    transition: opacity 0.2s ease;
+}
