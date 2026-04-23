@@ -1,5 +1,56 @@
 # 开发日志
 
+## 2026-04-23: Wan VAE 重构到 encoder.py
+
+### 任务背景
+Wan 模型中的 VAE 编解码器是独立模块，与 backbone（DiT）无关，应该抽取到 encoder.py 保持一致性。vision.py 中有重复定义的 VAE（第一版无 attention，第二版有 attention），需要统一。
+
+### 实现内容
+1. **encoder.py 新增 VAE**
+   - 移动 `ShardedVAEEncoder`, `ShardedVAEDecoder`, `ShardedVAE` 从 vision.py 到 encoder.py
+   - 使用通用命名（不绑定 Wan）
+   - Encoder: 降采样（空间压缩 8x）
+   - Decoder: 上采样（空间恢复 8x）
+
+2. **vision.py 清理重复定义**
+   - 删除第一版 VAE（无 attention，175-344行）
+   - 删除第二版 VAE（已移到 encoder.py）
+   - 只保留基础组件：Conv, GroupNorm, ResNetBlock, AttentionBlock, ResNet
+
+3. **导入路径更新**
+   - `__init__.py`: 从 encoder 导入 VAE
+   - `registry.py`: 从 encoder 导入 VAE
+   - `wan.py`: `ShardedWanVAE` 使用 encoder.py 的 `ShardedVAE`（向后兼容）
+   - `test_analyzer.py`: 从 encoder 导入 VAE decoder
+
+4. **Wan 模型简化**
+   - Wan 只保留 DiT backbone
+   - `ShardedWanVAE` 标记为 deprecated，内部使用 `ShardedVAE`
+   - VAE 作为独立模块存在
+
+### 架构改进
+- VAE encoder/decoder 是独立模块（不绑定 Wan）
+- 命名通用（`ShardedVAE`），与 Wan 解耦
+- 更好的职责分离：encoder.py（编码器），vision.py（基础组件）
+- 向后兼容：`ShardedWanVAE` 仍然可用
+
+### 测试验证
+- 存量测试全部通过（132 passed）
+- VAE 功能正常（test_vae_model_integration, test_vae_decoder_flops）
+- ruff 代码检查通过
+
+### 参考来源
+- Wan 论文: https://arxiv.org/abs/2503.20314
+- Wan VAE 结构：3D causal VAE for video generation
+- 空间压缩：8x（height/8, width/8）
+
+### Commit
+- Hash: 5699c7a
+- Message: refactor(modeling): move VAE to encoder.py for consistency
+- Tests: 132 passed (all existing tests pass)
+
+---
+
 ## 2026-04-23: 实现 ShardedLinearAttention kernel + 子模块
 
 ### 任务背景
