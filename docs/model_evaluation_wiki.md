@@ -9,7 +9,7 @@
 1. [LLaMA 模型](#1-llama-模型)
 2. [DeepSeek V3 模型](#2-deepseek-v3-模型)
 3. [Wan DiT 模型](#3-wan-dit-模型)
-4. [Qwen3.5-35B-A3B 模型](#4-qwen35-35b-a3b-模型)
+4. [Qwen3.5 模型](#4-qwen35-模型)
 
 ---
 
@@ -771,188 +771,357 @@ print(f"峰值显存: {result.peak_memory_gb:.2f} GB")
 
 ---
 
-## 4. Qwen3.5-35B-A3B 模型
+## 4. Qwen3.5 模型
 
 ### 4.1 架构概述
 
-Qwen3.5-35B-A3B 是阿里巴巴开发的 MoE 模型，采用混合 Attention 和 MoE 架构。
+Qwen3.5 是阿里巴巴开发的大语言模型系列，包含 Dense 和 MoE 两种架构，均采用 Hybrid Attention。
 
-| 参数 | 值 |
-|------|-----|
-| Hidden Size | 2048 |
-| Layers | 40 |
-| Full Attention Heads | 16 (query), 2 (KV, GQA) |
-| Linear Attention Heads | 16 (query), 32 (KV) |
-| Head Dim | 256 (full), 128 (linear) |
-| Intermediate Size | 512 (expert) |
-| Experts | 256 |
-| Active Experts | 8 (top-8 routing) |
-| Shared Expert | 512 intermediate |
+#### Dense 模型规格
+
+| 模型 | Hidden | Layers | Heads | KV Heads | Intermediate | tie_embed | 参数量 |
+|------|--------|--------|-------|----------|--------------|-----------|--------|
+| 0.8B | 1024 | 24 | 8 | 2 | 3584 | ✅ | 0.9B |
+| 2B | 2048 | 24 | 8 | 2 | 6144 | ✅ | 2B |
+| 4B | 2560 | 32 | 16 | 4 | 9216 | ✅ | 5B |
+| 9B | 4096 | 32 | 16 | 4 | 12288 | ❌ | 10B |
+| 27B | 5120 | 64 | 24 | 4 | 17408 | ❌ | 28B |
+
+#### MoE 模型规格
+
+| 模型 | Hidden | Layers | Heads | Experts | Top_K | MoE Intermediate | 总参数 | 活跃参数 |
+|------|--------|--------|-------|---------|-------|------------------|--------|----------|
+| 35B-A3B | 2048 | 40 | 16 | 256 | 8 | 512 | 35B | 3B |
+| 122B-A10B | 3072 | 48 | 32 | 256 | 8 | 1024 | 122B | 10B |
+| 397B-A17B | 4096 | 60 | 32 | 512 | 10 | 1024 | 397B | 17B |
 
 **关键特性**:
-- **Hybrid Attention**: 3 linear + 1 full per 4-layer cycle (30 linear + 10 full layers)
-- **Linear Attention**: O(seq) 复杂度，无 KV cache，使用 kernel feature map
-- **MoE**: 256 experts + shared expert，top-8 routing
-- **MTP (Multi-Token Prediction)**: 推测解码，可选
+- **Hybrid Attention**: 3 linear + 1 full per 4-layer cycle
+- **Linear Attention**: O(seq) 复杂度，无 KV cache，kernel_dim=4
+- **Dense FFN**: SwiGLU (gate_proj + up_proj + down_proj)
+- **MoE FFN**: 256/512 routed experts + 1 shared expert
+- **tie_word_embeddings**: Small models share embedding/lm_head weights
+- **Vision Encoder**: 支持多模态，不同规格配置不同
 
 **与其他模型区别**:
-- 相比 LLaMA: Linear Attention vs Standard，MoE vs Dense
-- 相比 DeepSeek: Linear Attention vs MLA，相同 MoE 结构
+- 相比 LLaMA: Hybrid Attention vs Standard，Dense/MoE vs Dense
+- 相比 DeepSeek: Linear Attention vs MLA，MoE 结构相似
 - 相比 Wan: LLM vs DiT，有 causal mask
+
+#### Dense vs MoE 架构对比
+
+| 特性 | Dense 模型 | MoE 模型 |
+|------|-----------|----------|
+| FFN 类型 | SwiGLU FFN | MoE (routed + shared experts) |
+| 参数效率 | 固定激活 | 稀疏激活，活跃参数 << 总参数 |
+| 推理计算 | 全参数 | 只计算 top-k experts |
+| 内存占用 | 固定 | 权重更大，但激活内存小 |
+| 训练成本 | 高 | 低（稀疏激活） |
 
 ### 4.2 子模块分解
 
-Qwen3.5 结构: `Embedding → 40 × HybridMoEBlock → Final RMSNorm → LM Head`
+#### Dense 模型结构
 
-#### HybridMoEBlock (Linear Attention)
 ```
-input_norm → LinearAttention → post_attn_norm → MoE
-```
+Embedding → N × ShardedQwen3_5DenseBlock → Final RMSNorm → LM Head
 
-#### HybridMoEBlock (Full Attention)
-```
-input_norm → Attention (GQA) → post_attn_norm → MoE
+ShardedQwen3_5DenseBlock:
+  input_norm → (Linear/Full) Attention → post_attn_norm → SwiGLU FFN
 ```
 
-#### Linear Attention 详细结构
+#### MoE 模型结构
 
-Linear Attention 使用 kernel feature map 实现 O(seq) 复杂度:
 ```
-# Standard Attention
-output = softmax(QK^T) × V  # O(seq²)
+Embedding → N × ShardedQwen3_5MoEBlock → Final RMSNorm → LM Head
 
-# Linear Attention
-output = φ(Q) × (φ(K)^T × V)  # O(seq)
+ShardedQwen3_5MoEBlock:
+  input_norm → (Linear/Full) Attention → post_attn_norm → MoE FFN
 ```
 
-| 权重 | Shape | 说明 |
-|------|-------|------|
-| q_weight | `(hidden_size, num_heads × head_dim)` | Query projection |
-| k_weight | `(hidden_size, num_kv_heads × head_dim)` | Key projection |
-| v_weight | `(hidden_size, num_kv_heads × head_dim)` | Value projection |
-| o_weight | `(num_heads × head_dim, hidden_size)` | Output projection |
+#### Hybrid Attention 详细结构
 
-**关键参数**:
-- `kernel_dim = 4`: Feature map 维度
-- Linear Attention 无 KV cache，状态大小 = `kernel_dim × head_dim` per head
+每 4 层为一个 cycle：3 层 linear_attention + 1 层 full_attention
+
+```
+# layer_types 生成逻辑
+pattern = ["linear_attention", "linear_attention", "linear_attention", "full_attention"]
+num_cycles = num_layers // 4
+layer_types = pattern * num_cycles + pattern[:remainder]
+```
+
+**Linear Attention**:
+- kernel_dim = 4 (feature map 维度)
+- 状态大小固定 = `kernel_dim × head_dim` per head
+- 无 KV cache，O(seq) 复杂度
+
+**Full Attention**:
+- 标准 Attention，使用 GQA (num_kv_heads < num_heads)
+- KV cache = `2 × batch × seq × num_kv_heads × head_dim × dtype_size`
 
 ### 4.3 权重计算
 
-#### Linear Attention 权重
-```
-params_q = hidden_size × linear_num_heads × linear_key_head_dim
-params_k = hidden_size × linear_num_kv_heads × linear_key_head_dim
-params_v = hidden_size × linear_num_kv_heads × linear_value_head_dim
-params_o = linear_num_heads × linear_value_head_dim × hidden_size
+#### Dense 模型权重计算
 
-# Qwen3.5
-params_q = 2048 × 16 × 128 = 4.19M
-params_k = 2048 × 32 × 128 = 8.39M
-params_v = 2048 × 32 × 128 = 8.39M
-params_o = 16 × 128 × 2048 = 4.19M
-params_linear_attn = 27.16M
+**Embedding 权重**:
+```
+params_embedding = vocab_size × hidden_size
 ```
 
-#### Full Attention 权重
+**SwiGLU FFN 权重**:
 ```
-params_q = hidden_size × num_heads × head_dim
-params_k = hidden_size × num_kv_heads × head_dim
-params_v = hidden_size × num_kv_heads × head_dim
-params_o = num_heads × head_dim × hidden_size
+FFN_weight = (hidden_size × intermediate_size × 2) + (intermediate_size × hidden_size)
+           = 3 × hidden_size × intermediate_size
 
-# Qwen3.5 (GQA)
-params_q = 2048 × 16 × 256 = 8.39M
-params_k = 2048 × 2 × 256 = 1.05M
-params_v = 2048 × 2 × 256 = 1.05M
-params_o = 16 × 256 × 2048 = 8.39M
-params_full_attn = 18.88M
+# Qwen3.5-9B 示例
+hidden_size = 4096
+intermediate_size = 12288
+params_ffn = 3 × 4096 × 12288 = 151M
 ```
 
-#### MoE 权重
+**Hybrid Attention 权重** (linear + full 混合):
 ```
-params_router = hidden_size × num_experts = 2048 × 256 = 0.52M
-params_experts = num_experts × 3 × hidden_size × intermediate_size
-              = 256 × 3 × 2048 × 512 = 0.8B
+# Linear Attention (每层的 3/4)
+params_linear_q = hidden_size × linear_num_heads × linear_key_head_dim
+params_linear_k = hidden_size × linear_num_kv_heads × linear_key_head_dim
+params_linear_v = hidden_size × linear_num_kv_heads × linear_value_head_dim
+params_linear_o = linear_num_heads × linear_value_head_dim × hidden_size
+
+# Full Attention (每层的 1/4)
+params_full_q = hidden_size × num_heads × head_dim
+params_full_k = hidden_size × num_kv_heads × head_dim
+params_full_v = hidden_size × num_kv_heads × head_dim
+params_full_o = num_heads × head_dim × hidden_size
+```
+
+**tie_word_embeddings 影响**:
+```
+# tie=True: embedding 和 lm_head 共享权重
+params_lm_head = 0 (共享)
+params_total -= vocab_size × hidden_size
+
+# tie=False: 独立权重
+params_lm_head = vocab_size × hidden_size
+```
+
+**Dense 模型总参数量公式**:
+```
+params_total = params_embedding + params_layers + params_norms + params_lm_head
+
+# Qwen3.5-9B 示例 (tie=False)
+vocab_size = 248320
+hidden_size = 4096
+num_layers = 32
+num_heads = 16
+num_kv_heads = 4
+head_dim = 256
+intermediate_size = 12288
+
+params_embedding = 248320 × 4096 = 1.02B
+params_ffn = 3 × 4096 × 12288 = 151M
+params_attn = (3/4 × linear_attn + 1/4 × full_attn) × num_layers
+params_layers ≈ 32 × (linear_attn + ffn)
+params_lm_head = 1.02B
+params_total ≈ 10B
+```
+
+#### MoE 模型权重计算
+
+**MoE FFN 权重**:
+```
+params_router = hidden_size × num_experts
+params_experts = num_experts × 3 × hidden_size × moe_intermediate_size
 params_shared = 3 × hidden_size × shared_intermediate
-              = 3 × 2048 × 512 = 3.15M
-params_moe = 0.52M + 0.8B + 3.15M ≈ 0.8B
+
+params_moe = params_router + params_experts + params_shared
 ```
 
-#### 总参数量
+**不同规格对比**:
+
+| 参数 | 35B-A3B | 122B-A10B | 397B-A17B |
+|------|---------|-----------|-----------|
+| moe_intermediate_size | 512 | 1024 | 1024 |
+| num_experts | 256 | 256 | 512 |
+| top_k | 8 | 8 | 10 |
+| params_router | 0.52M | 0.78M | 2.1M |
+| params_experts | 0.8B | 2.4B | 12.6B |
+| params_shared | 3.15M | 9.2M | 12.3M |
+
+**MoE 参数量公式**:
 ```
-params_embedding = vocab_size × hidden_size = 248320 × 2048 = 0.51B
-params_layers = 30 × (params_linear_attn + params_moe) + 10 × (params_full_attn + params_moe)
-            = 30 × (27M + 0.8B) + 10 × (19M + 0.8B)
-            ≈ 24.6B + 8.2B
-            ≈ 32.8B
-params_lm_head = hidden_size × vocab_size = 0.51B
-params_total ≈ 33.8B (但活跃参数只有 ~3.5B per token)
+Total = Embedding + Layers × (Attention + MoE_experts + Shared_expert) + LM_head
+
+MoE_experts = num_experts × moe_intermediate × hidden × 2 + moe_intermediate × hidden
+            = num_experts × 3 × hidden × moe_intermediate
+
+Active = top_k × (MoE_experts / num_experts) + Shared_expert
+       = top_k × 3 × hidden × moe_intermediate + 3 × hidden × shared_intermediate
 ```
 
-### 4.4 FLOPs 计算
+**35B-A3B 示例**:
+```
+hidden_size = 2048
+num_layers = 40
+num_experts = 256
+moe_intermediate = 512
+shared_intermediate = 512
+top_k = 8
+
+params_embedding = 248320 × 2048 = 0.51B
+params_router = 2048 × 256 = 0.52M
+params_experts = 256 × 3 × 2048 × 512 = 0.8B
+params_shared = 3 × 2048 × 512 = 3.15M
+params_moe = 0.52M + 0.8B + 3.15M ≈ 0.81B
+
+params_layers = 40 × (27M + 0.81B) ≈ 33.6B
+params_lm_head = 0.51B
+params_total ≈ 34.6B
+
+# Active params per token
+active_experts = 8 × 3 × 2048 × 512 = 25M
+active_shared = 3 × 2048 × 512 = 3.15M
+active_total ≈ 28M + attention ≈ 3B
+```
+
+### 4.4 Vision Encoder 配置
+
+Qwen3.5 支持多模态，不同规格的 Vision Encoder 配置不同：
+
+| 模型 | Vision Depth | Vision Hidden | out_hidden_size |
+|------|--------------|---------------|-----------------|
+| 0.8B | 12 | 768 | 1024 |
+| 2B | 24 | 1024 | 2048 |
+| 4B | 24 | 1024 | 2560 |
+| 9B | 27 | 1152 | 4096 |
+| 27B | 27 | 1152 | 5120 |
+| 35B-A3B | 27 | 1152 | 2048 |
+| 122B-A10B | 27 | 1152 | 3072 |
+| 397B-A17B | 27 | 1152 | 4096 |
+
+**Vision Encoder 权重**:
+```
+params_vision = vision_depth × (attention_params + ffn_params)
+attention_params = 4 × vision_hidden²
+ffn_params = vision_hidden × vision_intermediate × 3
+```
+
+### 4.5 FLOPs 计算
 
 #### Linear Attention FLOPs
 
-Linear Attention 的 O(seq) 计算:
 ```
 # Projections
-flops_qkv = 3 × batch × seq × hidden_size × num_heads × head_dim
+flops_qkv = 3 × batch × seq × hidden × linear_heads × linear_head_dim
 
-# Linear Attention kernel
-flops_kernel = batch × num_heads × seq × kernel_dim × head_dim × 2
+# Kernel feature map
+flops_kernel = batch × seq × linear_heads × kernel_dim × linear_head_dim × 2
 
 # Output projection
-flops_o = batch × seq × num_heads × head_dim × hidden_size
+flops_o = batch × seq × linear_heads × linear_head_dim × hidden
 
-# Total (vs Standard Attention O(seq²))
-flops_linear_attn = O(seq)  # 无 seq² 项
+# Total: O(seq) 无 seq² 项
 ```
 
-**关键优势**: Linear Attention 的 decode 阶段计算量不随 KV cache 长度增长。
+**关键优势**: Decode 阶段计算量不随 KV cache 长度增长。
 
 #### Full Attention FLOPs
+
 ```
-# 标准 Attention (与 LLaMA 相同)
-flops_attn = 4 × batch × num_heads × seq × seq × head_dim
+flops_attn = 4 × batch × heads × seq × seq × head_dim
 ```
 
-#### MoE FLOPs
+#### Dense SwiGLU FFN FLOPs
+
 ```
-flops_router = batch × seq × hidden_size × num_experts
-flops_experts = num_experts_per_token × batch × seq × 3 × hidden_size × intermediate_size
-flops_shared = batch × seq × 3 × hidden_size × shared_intermediate
+flops_ffn = batch × seq × (hidden × intermediate × 2 + intermediate × hidden)
+          = 3 × batch × seq × hidden × intermediate
 ```
 
-### 4.5 内存分析
+#### MoE FFN FLOPs
+
+```
+flops_router = batch × seq × hidden × num_experts
+flops_active_experts = top_k × 3 × batch × seq × hidden × moe_intermediate
+flops_shared = 3 × batch × seq × hidden × shared_intermediate
+
+flops_moe = flops_router + flops_active_experts + flops_shared
+```
+
+**注意**: MoE FLOPs 只计算 top-k active experts，而非全部 experts。
+
+### 4.6 内存分析
 
 #### Linear Attention 内存 (关键优势)
 
-Linear Attention 无 KV cache，内存占用固定:
+Linear Attention 无 KV cache，状态大小固定：
 ```
-# Standard Attention KV cache
-memory_kv_standard = 2 × batch × seq × num_kv_heads × head_dim × dtype_size × num_layers
+# Standard Attention KV cache (随 seq 增长)
+memory_kv_standard = 2 × batch × seq × kv_heads × head_dim × dtype × layers
 
 # Linear Attention state (固定大小)
-memory_linear_state = num_heads × kernel_dim × head_dim × dtype_size
+memory_linear_state = heads × kernel_dim × head_dim × dtype
                    = 16 × 4 × 128 × 2 = 16 KB per head
-                   = 0.5 MB total (固定)
+                   ≈ 0.5 MB total (固定)
 ```
 
 **对比**:
-- seq=4096: Standard KV cache ≈ 1.3 GB, Linear state = 0.5 MB (固定)
-- seq=100K: Standard KV cache ≈ 32 GB, Linear state = 0.5 MB (固定)
-
-这是 Qwen3.5 支持长序列的关键。
+- seq=4096: Standard KV ≈ 1.3 GB, Linear state = 0.5 MB
+- seq=100K: Standard KV ≈ 32 GB, Linear state = 0.5 MB
 
 #### Full Attention KV cache
+
+只有 1/4 层使用 full attention：
 ```
-# 10 layers use full attention
-memory_kv_full = 10 × 2 × batch × seq × num_kv_heads × head_dim × dtype_size
+memory_kv_full = (num_layers / 4) × 2 × batch × seq × kv_heads × head_dim × dtype
 ```
 
-### 4.6 切分策略
+#### Dense 模型权重内存
 
-#### TP + EP 组合
+```
+# Qwen3.5-9B (tie=False)
+memory_weights = 10B × 2 bytes = 20 GB
+
+# Qwen3.5-2B (tie=True)
+memory_weights = 2B × 2 bytes = 4 GB
+```
+
+#### MoE 模型权重内存
+
+```
+# 35B-A3B
+memory_weights = 35B × 2 bytes = 70 GB
+memory_per_gpu (TP=8) = 70 / 8 ≈ 9 GB (可行)
+
+# 397B-A17B
+memory_weights = 397B × 2 bytes = 794 GB
+memory_per_gpu (TP=8, EP=64) = 794 / 512 ≈ 1.5 GB per expert shard
+```
+
+### 4.7 切分策略
+
+#### Dense 模型切分
+
+```python
+ctx = ParallelContext(tp_degree=8)
+
+# Attention TP切分
+q_weight.shardable = {1: "tp"}
+k_weight.shardable = {1: "tp"}
+v_weight.shardable = {1: "tp"}
+o_weight.shardable = {0: "tp"}
+
+# SwiGLU FFN TP切分
+gate_weight.shardable = {1: "tp"}
+up_weight.shardable = {1: "tp"}
+down_weight.shardable = {0: "tp"}
+```
+
+**TP 建议**:
+- 0.8B/2B: TP=1 (单卡可行)
+- 4B: TP=2
+- 9B: TP=2-4
+- 27B: TP=4-8
+
+#### MoE 模型切分 (TP + EP)
 
 ```python
 ctx = ParallelContext(tp_degree=8, ep_degree=8)
@@ -967,12 +1136,43 @@ o_weight.shardable = {0: "tp"}
 expert_gate_weight.shardable = {0: "ep", 2: "tp"}
 expert_up_weight.shardable = {0: "ep", 2: "tp"}
 expert_down_weight.shardable = {0: "ep", 1: "tp"}
+shared_expert.shardable = {1: "tp"}  # shared expert 用 TP
 ```
 
-### 4.7 评估示例
+**切分建议**:
 
-#### 配置
+| 模型 | TP | EP | 总 GPU |
+|------|----|----|--------|
+| 35B-A3B | 4-8 | 2-4 | 8-32 |
+| 122B-A10B | 8 | 8-16 | 64-128 |
+| 397B-A17B | 8 | 32-64 | 256-512 |
+
+### 4.8 评估示例
+
+#### Dense 模型配置
+
 ```python
+# Qwen3.5-9B
+model = Qwen3_5Model(
+    vocab_size=248320,
+    hidden_size=4096,
+    num_layers=32,
+    num_heads=16,
+    num_kv_heads=4,
+    head_dim=256,
+    intermediate_size=12288,
+    tie_word_embeddings=False,
+)
+
+device = Device.from_preset("H100-SXM-80GB")
+cluster = Cluster.create_homogeneous(device.config, num_devices=4)
+strategy = StrategyConfig(tp_degree=4)
+```
+
+#### MoE 模型配置
+
+```python
+# Qwen3.5-35B-A3B
 model = Qwen3_5MoEModel(
     vocab_size=248320,
     hidden_size=2048,
@@ -984,42 +1184,84 @@ model = Qwen3_5MoEModel(
     linear_num_kv_heads=32,
     linear_key_head_dim=128,
     linear_value_head_dim=128,
-    linear_kernel_dim=4,
     intermediate_size=512,
     num_experts=256,
     num_experts_per_token=8,
     shared_expert_intermediate=512,
 )
+
 device = Device.from_preset("H100-SXM-80GB")
 cluster = Cluster.create_homogeneous(device.config, num_devices=16)
-strategy = StrategyConfig(tp_degree=8, ep_degree=2, num_experts=256)
+strategy = StrategyConfig(tp_degree=8, ep_degree=2)
+```
+
+#### Qwen3.5-122B-A10B 配置
+
+```python
+model = Qwen3_5MoEModel(
+    vocab_size=248320,
+    hidden_size=3072,
+    num_layers=48,
+    num_heads=32,
+    num_kv_heads=4,
+    head_dim=128,
+    intermediate_size=1024,
+    num_experts=256,
+    num_experts_per_token=8,
+    shared_expert_intermediate=1024,
+)
+
+strategy = StrategyConfig(tp_degree=8, ep_degree=16)
+```
+
+#### Qwen3.5-397B-A17B 配置
+
+```python
+model = Qwen3_5MoEModel(
+    vocab_size=248320,
+    hidden_size=4096,
+    num_layers=60,
+    num_heads=32,
+    num_kv_heads=4,
+    head_dim=128,
+    intermediate_size=1024,
+    num_experts=512,
+    num_experts_per_token=10,  # top-10 routing
+    shared_expert_intermediate=1024,
+)
+
+strategy = StrategyConfig(tp_degree=8, ep_degree=64)
 ```
 
 #### 训练评估
+
 ```python
 analyzer = TrainingAnalyzer(model, device, cluster, strategy)
 result = analyzer.analyze(batch_size=32, seq_len=4096)
 
 print(f"吞吐量: {result.tokens_per_sec:.1f} tokens/s")
-print(f"Linear Attention layers: 30")
-print(f"Full Attention layers: 10")
+print(f"MFU: {result.mfu:.2%}")
+print(f"Linear Attention layers: {num_layers * 3 // 4}")
+print(f"Full Attention layers: {num_layers // 4}")
 ```
 
 #### 长序列推理评估
+
 ```python
 analyzer = InferenceAnalyzer(model, device, cluster, strategy)
 
-# 对比 Linear vs Full Attention
+# 对比 Linear vs Full Attention KV cache
 prompt_len = 100000  # 100K context
 
 result = analyzer.analyze(batch_size=1, prompt_len=prompt_len, generation_len=100)
 
 print(f"TTFT: {result.prefill_time_sec * 1000:.1f} ms")
-print(f"Linear Attention 内存: 固定 0.5 MB")
-print(f"Full Attention KV cache: {10 * 2 * 1 * prompt_len * 2 * 256 * 2 / 1024**2:.2f} MB")
+print(f"Linear Attention 内存: 固定 ~0.5 MB")
+print(f"Full Attention KV cache: {(num_layers // 4) * 2 * 1 * prompt_len * kv_heads * head_dim * 2 / 1024**2:.2f} MB")
 ```
 
 #### MTP 推测解码评估
+
 ```python
 model_with_mtp = Qwen3_5MoEModel(
     vocab_size=248320,
@@ -1027,11 +1269,13 @@ model_with_mtp = Qwen3_5MoEModel(
     num_layers=40,
     num_heads=16,
     num_experts=256,
-    mtp_num_layers=1,  # 添加 MTP 层
+    mtp_num_layers=1,
+    mtp_share_embeddings=True,
 )
 
 # MTP 可以并行生成多个 token，提高吞吐
 result = analyzer.analyze_with_mtp(batch_size=8, prompt_len=1024, generation_len=128)
+print(f"MTP throughput gain: {result.throughput_gain:.1f}%")
 ```
 
 ---
@@ -1054,7 +1298,8 @@ result = analyzer.analyze_with_mtp(batch_size=8, prompt_len=1024, generation_len
 | LLaMA | Dense SwiGLU | 固定 | 固定 | SiLU + gate |
 | DeepSeek V3 | MoE (256+1) | 671B total | 37B active | SiLU + gate |
 | Wan DiT | Dense GELU | 固定 | 固定 | GELU |
-| Qwen3.5 | MoE (256+1) | 33.8B total | 3.5B active | SiLU + gate |
+| Qwen3.5-Dense | SwiGLU | 0.9B-28B | 固定 | SiLU + gate |
+| Qwen3.5-MoE | MoE (256/512+1) | 35B-397B total | 3B-17B active | SiLU + gate |
 
 ### 5.3 切分策略对比
 
@@ -1072,7 +1317,10 @@ result = analyzer.analyze_with_mtp(batch_size=8, prompt_len=1024, generation_len
 | LLaMA-7B | 13.5 GB | 8.6 GB | ~4 GB |
 | DeepSeek V3 | 1342 GB (需要多卡) | 0.5 GB (MLA compressed) | ~10 GB |
 | Wan DiT-14B | 28 GB | N/A | ~110 GB (需要 FlashAttn) |
-| Qwen3.5-35B | 67 GB | 0.5 MB (linear) + 0.5 GB (full) | ~2 GB |
+| Qwen3.5-9B | 20 GB | 0.5 MB + 0.13 GB | ~2 GB |
+| Qwen3.5-27B | 56 GB | 0.5 MB + 0.3 GB | ~5 GB |
+| Qwen3.5-35B-A3B | 70 GB | 0.5 MB + 0.2 GB | ~2 GB |
+| Qwen3.5-397B-A17B | 794 GB (需要多卡) | 0.5 MB + 0.3 GB | ~3 GB |
 
 ---
 
