@@ -15,15 +15,139 @@
         </header>
 
         <main>
-            <section class="card mode-selector">
-                <h2>评估模式</h2>
-                <div class="tabs">
-                    <button class="tab active" data-mode="training">训练 (Training)</button>
-                    <button class="tab" data-mode="inference">推理 (Inference)</button>
-                </div>
-            </section>
-
             <div class="grid">
+                <section class="card workload-config">
+                    <h2>Workload 配置</h2>
+                    <div class="form-group">
+                        <label>计算场景</label>
+                        <select id="workload-scenario">
+                            <option value="training">Training（训练）</option>
+                            <option value="inference">Inference（推理）</option>
+                            <option value="pd_disagg">PD-Disagg（推理 PD 分离）</option>
+                            <option value="rl_training">RL-Training（RL 后训练）</option>
+                            <option value="diffusion">Diffusion（多模态生成）</option>
+                        </select>
+                    </div>
+                    
+                    <div id="workload-params-training" class="workload-params">
+                        <div class="section-hint">Training 参数</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="train-batch-size" value="32">
+                            </div>
+                            <div class="form-group">
+                                <label>Micro Batch Size</label>
+                                <input type="number" id="micro-batch-size" value="1">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>序列长度 (seq_len)</label>
+                                <input type="number" id="train-seq-len" value="4096">
+                            </div>
+                            <div class="form-group">
+                                <label>训练步数</label>
+                                <input type="number" id="num-steps" value="1000">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="workload-params-inference" class="workload-params" style="display: none;">
+                        <div class="section-hint">Inference 参数</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="infer-batch-size" value="1">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>输入 Tokens (input_tokens)</label>
+                                <input type="number" id="infer-input-tokens" value="1000">
+                            </div>
+                            <div class="form-group">
+                                <label>输出 Tokens (output_tokens)</label>
+                                <input type="number" id="infer-output-tokens" value="100">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="workload-params-pd_disagg" class="workload-params" style="display: none;">
+                        <div class="section-hint">PD-Disagg 参数</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="pd-batch-size" value="1">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Prefill 设备数</label>
+                                <input type="number" id="prefill-devices" value="32">
+                            </div>
+                            <div class="form-group">
+                                <label>Decode 设备数</label>
+                                <input type="number" id="decode-devices" value="32">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>输入 Tokens (input_tokens)</label>
+                                <input type="number" id="pd-input-tokens" value="1000">
+                            </div>
+                            <div class="form-group">
+                                <label>输出 Tokens (output_tokens)</label>
+                                <input type="number" id="pd-output-tokens" value="100">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="workload-params-rl_training" class="workload-params" style="display: none;">
+                        <div class="section-hint">RL-Training 参数</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="rl-batch-size" value="32">
+                            </div>
+                            <div class="form-group">
+                                <label>序列长度 (seq_len)</label>
+                                <input type="number" id="rl-seq-len" value="4096">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Rollout 次数</label>
+                                <input type="number" id="num-rollouts" value="100">
+                            </div>
+                            <div class="form-group">
+                                <label>PPO Epochs</label>
+                                <input type="number" id="ppo-epochs" value="4">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="workload-params-diffusion" class="workload-params" style="display: none;">
+                        <div class="section-hint">Diffusion 参数</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Batch Size</label>
+                                <input type="number" id="diffusion-batch-size" value="1">
+                            </div>
+                            <div class="form-group">
+                                <label>图像分辨率</label>
+                                <input type="number" id="image-size" value="1024">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Diffusion 步数</label>
+                                <input type="number" id="diffusion-steps" value="50">
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <section class="card cluster-config">
                     <h2>集群拓扑</h2>
                     
@@ -186,141 +310,6 @@
                             <option value="2">Stage 2 (Gradients)</option>
                             <option value="3">Stage 3 (Parameters)</option>
                         </select>
-                    </div>
-                </section>
-
-                <section class="card workload-config">
-                    <h2>Workload 配置</h2>
-                    <div class="form-group">
-                        <label>计算场景</label>
-                        <select id="workload-scenario">
-                            <option value="training">Training（训练）</option>
-                            <option value="inference_prefill">Inference-Prefill（推理预填充）</option>
-                            <option value="inference_decode">Inference-Decode（推理解码）</option>
-                            <option value="pd_disagg">PD-Disagg（推理 PD 分离）</option>
-                            <option value="rl_training">RL-Training（RL 后训练）</option>
-                            <option value="diffusion">Diffusion（多模态生成）</option>
-                        </select>
-                    </div>
-                    
-                    <div id="workload-params-training" class="workload-params">
-                        <div class="section-hint">Training 参数</div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Global Batch Size</label>
-                                <input type="number" id="global-batch-size" value="32">
-                            </div>
-                            <div class="form-group">
-                                <label>Micro Batch Size</label>
-                                <input type="number" id="micro-batch-size" value="1">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Sequence Length</label>
-                                <input type="number" id="train-seq-len" value="4096">
-                            </div>
-                            <div class="form-group">
-                                <label>Num Steps</label>
-                                <input type="number" id="num-steps" value="1000">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="workload-params-inference_prefill" class="workload-params" style="display: none;">
-                        <div class="section-hint">Inference-Prefill 参数</div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>输入 Tokens</label>
-                                <input type="number" id="prefill-input-tokens" value="1000">
-                            </div>
-                            <div class="form-group">
-                                <label>输出 Tokens</label>
-                                <input type="number" id="prefill-output-tokens" value="100">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="workload-params-inference_decode" class="workload-params" style="display: none;">
-                        <div class="section-hint">Inference-Decode 参数</div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>输入 Tokens</label>
-                                <input type="number" id="decode-input-tokens" value="1000">
-                            </div>
-                            <div class="form-group">
-                                <label>输出 Tokens</label>
-                                <input type="number" id="decode-output-tokens" value="100">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="workload-params-pd_disagg" class="workload-params" style="display: none;">
-                        <div class="section-hint">PD-Disagg 参数</div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Prefill 设备数</label>
-                                <input type="number" id="prefill-devices" value="32">
-                            </div>
-                            <div class="form-group">
-                                <label>Decode 设备数</label>
-                                <input type="number" id="decode-devices" value="32">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>输入 Tokens</label>
-                                <input type="number" id="pd-input-tokens" value="1000">
-                            </div>
-                            <div class="form-group">
-                                <label>输出 Tokens</label>
-                                <input type="number" id="pd-output-tokens" value="100">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="workload-params-rl_training" class="workload-params" style="display: none;">
-                        <div class="section-hint">RL-Training 参数</div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Batch Size</label>
-                                <input type="number" id="rl-batch-size" value="32">
-                            </div>
-                            <div class="form-group">
-                                <label>Sequence Length</label>
-                                <input type="number" id="rl-seq-len" value="4096">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Num Rollouts</label>
-                                <input type="number" id="num-rollouts" value="100">
-                            </div>
-                            <div class="form-group">
-                                <label>PPO Epochs</label>
-                                <input type="number" id="ppo-epochs" value="4">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="workload-params-diffusion" class="workload-params" style="display: none;">
-                        <div class="section-hint">Diffusion 参数</div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Image Size</label>
-                                <input type="number" id="image-size" value="1024">
-                            </div>
-                            <div class="form-group">
-                                <label>Diffusion Steps</label>
-                                <input type="number" id="diffusion-steps" value="50">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Batch Size</label>
-                                <input type="number" id="diffusion-batch-size" value="1">
-                            </div>
-                        </div>
                     </div>
                 </section>
             </div>

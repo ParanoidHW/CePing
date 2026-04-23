@@ -12,7 +12,6 @@ const CATEGORY_NAMES = {
 };
 
 const state = {
-    mode: 'training',
     devices: {},
     devicePresets: {},
     modelPresets: {},
@@ -22,7 +21,6 @@ const state = {
 };
 
 const elements = {
-    modeTabs: document.querySelectorAll('.tab'),
     modelPreset: document.getElementById('model-preset'),
     modelType: document.getElementById('model-type'),
     deviceVendor: document.getElementById('device-vendor'),
@@ -83,11 +81,6 @@ function populateModelPresets() {
     const presets = state.modelPresets.presets || state.modelPresets;
     Object.keys(presets).forEach(key => {
         const preset = presets[key];
-        const presetType = preset.preset_type || 'model';
-        
-        if (state.mode === 'inference' && presetType === 'component') {
-            return;
-        }
         
         const option = document.createElement('option');
         option.value = key;
@@ -98,16 +91,6 @@ function populateModelPresets() {
 }
 
 function setupEventListeners() {
-    elements.modeTabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            elements.modeTabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            state.mode = tab.dataset.mode;
-            populateModelPresets();
-            updateModeUI();
-        });
-    });
-    
     elements.modelPreset.addEventListener('change', loadModelPreset);
     elements.modelType.addEventListener('change', updateModelTypeUI);
     elements.deviceVendor.addEventListener('change', updateDeviceModels);
@@ -182,14 +165,6 @@ function switchWorkloadScenario(scenario) {
     }
 }
 
-function updateModeUI() {
-    elements.results.style.display = 'none';
-    renderParamInputs();
-}
-
-function renderParamInputs() {
-}
-
 function loadModelPreset() {
     const presetKey = elements.modelPreset.value;
     const presets = state.modelPresets.presets || state.modelPresets;
@@ -198,7 +173,8 @@ function loadModelPreset() {
     const preset = presets[presetKey];
 
     state.currentPreset = preset;
-    state.currentPipeline = preset.architecture === 'wan_pipeline' && state.mode === 'inference' 
+    const scenario = elements.workloadScenario?.value || 'training';
+    state.currentPipeline = preset.architecture === 'wan_pipeline' && scenario !== 'training'
         ? 'diffusion-video' 
         : null;
 
@@ -216,7 +192,6 @@ function loadModelPreset() {
     }
 
     updateModelTypeUI();
-    renderParamInputs();
 }
 
 function updateModelTypeUI() {
@@ -438,8 +413,7 @@ async function evaluate() {
         } else {
             const endpointMap = {
                 'training': '/api/evaluate/training',
-                'inference_prefill': '/api/evaluate/inference',
-                'inference_decode': '/api/evaluate/inference',
+                'inference': '/api/evaluate/inference',
                 'pd_disagg': '/api/evaluate/inference',
                 'rl_training': '/api/evaluate/training',
                 'diffusion': '/api/evaluate/inference',
@@ -562,20 +536,18 @@ function collectWorkloadConfig(scenario) {
     
     switch(scenario) {
         case 'training':
-            workload.global_batch_size = parseInt(document.getElementById('global-batch-size')?.value || 32);
+            workload.batch_size = parseInt(document.getElementById('train-batch-size')?.value || 32);
             workload.micro_batch_size = parseInt(document.getElementById('micro-batch-size')?.value || 1);
             workload.seq_len = parseInt(document.getElementById('train-seq-len')?.value || 4096);
             workload.num_steps = parseInt(document.getElementById('num-steps')?.value || 1000);
             break;
-        case 'inference_prefill':
-            workload.input_tokens = parseInt(document.getElementById('prefill-input-tokens')?.value || 1000);
-            workload.output_tokens = parseInt(document.getElementById('prefill-output-tokens')?.value || 100);
-            break;
-        case 'inference_decode':
-            workload.input_tokens = parseInt(document.getElementById('decode-input-tokens')?.value || 1000);
-            workload.output_tokens = parseInt(document.getElementById('decode-output-tokens')?.value || 100);
+        case 'inference':
+            workload.batch_size = parseInt(document.getElementById('infer-batch-size')?.value || 1);
+            workload.input_tokens = parseInt(document.getElementById('infer-input-tokens')?.value || 1000);
+            workload.output_tokens = parseInt(document.getElementById('infer-output-tokens')?.value || 100);
             break;
         case 'pd_disagg':
+            workload.batch_size = parseInt(document.getElementById('pd-batch-size')?.value || 1);
             workload.prefill_devices = parseInt(document.getElementById('prefill-devices')?.value || 32);
             workload.decode_devices = parseInt(document.getElementById('decode-devices')?.value || 32);
             workload.input_tokens = parseInt(document.getElementById('pd-input-tokens')?.value || 1000);
@@ -588,9 +560,9 @@ function collectWorkloadConfig(scenario) {
             workload.ppo_epochs = parseInt(document.getElementById('ppo-epochs')?.value || 4);
             break;
         case 'diffusion':
+            workload.batch_size = parseInt(document.getElementById('diffusion-batch-size')?.value || 1);
             workload.image_size = parseInt(document.getElementById('image-size')?.value || 1024);
             workload.diffusion_steps = parseInt(document.getElementById('diffusion-steps')?.value || 50);
-            workload.batch_size = parseInt(document.getElementById('diffusion-batch-size')?.value || 1);
             break;
     }
     
@@ -664,7 +636,9 @@ function displayResults(result) {
         return;
     }
     
-    if (state.mode === 'training') {
+    const scenario = elements.workloadScenario?.value || 'training';
+    
+    if (scenario === 'training' || scenario === 'rl_training') {
         const detailed = result.detailed_breakdown;
         const detailedHtml = renderDetailedBreakdown(detailed);
         
