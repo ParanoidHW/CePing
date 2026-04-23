@@ -1,5 +1,44 @@
 # 开发日志
 
+## 2026-04-23: 修复 TPOT 时间计算，加入 KV Cache 访存时间
+
+### 问题描述
+- 当前实现：kvcache 只计算容量（bytes），没有计算访存时间
+- TPOT 不随序列长度变化（应该线性增长）
+
+### 修复内容
+在 `llm_perf/analyzer/unified.py` 的 `_analyze_phases` 方法中：
+1. 计算 KV cache 访存时间 = framework_overhead_bytes / memory_bandwidth
+2. 将访存时间添加到 single_time，再计算 total_time
+3. 添加 debug 日志，便于调试
+
+### 修改文件
+- `llm_perf/analyzer/unified.py`: line 326-336
+
+### 测试结果
+- 所有测试通过：551 passed
+- Web API 测试通过：test_workload_inference_scenario
+
+### 后续 TODO
+**重要**：当前修复仅添加了 KV cache 访存时间，但 TPOT 的线性增长问题仍未完全解决。
+
+根本原因：
+- Attention 计算未考虑 kv_seq_len
+- decode 阶段 seq_len=1，导致 attention 计算量被低估
+- 实际 attention 计算量：O(kv_seq_len × hidden_size)
+
+后续需要：
+1. 修改 Attention kernel 或 bind 机制，使其考虑 kv_seq_len
+2. 确保 Attention 计算时间随 kv_seq_len 线性增长
+3. 参考 `_calculate_framework_overhead` 中的 kv_seq_len 计算逻辑
+
+### 数据来源
+- Transformer decode 阶段特性：Q长度=1，K/V长度=kv_seq_len
+- Memory-bound 特性：decode 阶段受内存带宽限制
+- 理论分析：Attention QK^T 和 PV 计算都随 kv_seq_len 变化
+
+---
+
 ## 会话时间
 2026-04-22
 
