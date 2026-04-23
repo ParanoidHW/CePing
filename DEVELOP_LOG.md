@@ -1,5 +1,56 @@
 # 开发日志
 
+## 2026-04-23: 实现 ShardedLinearAttention kernel + 子模块
+
+### 任务背景
+Qwen3.5 使用混合注意力架构：
+- 40层中每4层有1层 `full_attention`，其余3层 `linear_attention`
+- Linear Attention 没有 KV cache 的 seq² 复杂度，适合长序列
+
+### 实现内容
+1. **kernel 层 (llm_perf/kernels/)**
+   - 新增 `LinearAttentionOp` 在 op.py
+     - kernel_dim 参数（Qwen3.5 为 4）
+     - 无 phase/workload 参数，保持 kernel 层纯粹
+     - 无 kv_seq_len 参数（与 standard attention 不同）
+
+2. **functional 层 (llm_perf/kernels/functional.py)**
+   - 新增 `linear_attention` kernel 函数
+     - FLOPs: O(seq)，而非 O(seq²)
+     - Memory: 固定大小 state，无 KV cache 线性增长
+     - 使用 kernel trick (elu+1) 近似 softmax
+
+3. **modeling 层 (llm_perf/modeling/layers.py)**
+   - 新增 `ShardedLinearAttention` 模块
+     - 继承 ShardedModule
+     - 使用 LinearAttentionOp
+     - 支持 TP sharding（heads 维度）
+     - 不依赖 phase/workload
+
+4. **测试用例 (tests/test_framework_overhead.py)**
+   - test_linear_attention_flops_linear_in_seq: 验证 O(seq) 复杂度
+   - test_linear_attention_memory_no_seq_growth: 验证无 seq² 内存增长
+   - test_linear_attention_backward_metrics: 验证 backward metrics
+   - test_linear_attention_op_purity: 验证 kernel 层纯粹性
+   - test_linear_attention_sharded_module: 验证模块功能
+   - test_linear_attention_tp_sharding: 验证 TP sharding
+
+### 参考来源
+- Linear Attention 论文: https://arxiv.org/abs/2006.16236
+- Qwen3.5 config.json 参数:
+  - linear_conv_kernel_dim: 4
+  - linear_key_head_dim: 128
+  - linear_num_key_heads: 16
+  - linear_num_value_heads: 32
+  - linear_value_head_dim: 128
+
+### Commit
+- Hash: d8fb484
+- Message: feat(kernels): add LinearAttentionOp for Qwen3.5 mixed attention
+- Tests: 138 passed (6 new tests, all existing tests pass)
+
+---
+
 ## 2026-04-23: 修复 Attention kv_seq_len 问题，decode 阶段计算量正确评估
 
 ### 问题描述
