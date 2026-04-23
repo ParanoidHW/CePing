@@ -653,3 +653,165 @@ class ShardedMoE(ShardedModule):
         self._activations["expert_out"] = expert_out
 
         return output
+
+
+def linear_attention(
+    query: ShardedTensor,
+    key: ShardedTensor,
+    value: ShardedTensor,
+    kernel_dim: int = 4,
+    is_causal: bool = True,
+) -> ShardedTensor:
+    """Linear Attention operation.
+
+    Args:
+        query: (batch, heads, seq, head_dim)
+        key: (batch, kv_heads, seq, head_dim)
+        value: (batch, kv_heads, seq, head_dim)
+        kernel_dim: Feature map dimension (default: 4 for Qwen3.5)
+        is_causal: Whether causal mask
+
+    Returns:
+        output: (batch, heads, seq, head_dim)
+    """
+    from llm_perf.kernels.op import LinearAttentionOp
+
+    batch, heads, seq, head_dim = query.shape
+
+    output_shardable = {}
+    if 1 in query.shardable:
+        output_shardable[1] = query.shardable[1]
+
+    output = ShardedTensor(
+        shape=(batch, heads, seq, head_dim),
+        shardable=output_shardable,
+        dtype=query.dtype,
+        name="linear_attention_output",
+    )
+
+    output._op_history = query._op_history + [
+        LinearAttentionOp(
+            dtype=query.dtype,
+            query=query,
+            key=key,
+            value=value,
+            output=output,
+            kernel_dim=kernel_dim,
+            is_causal=is_causal,
+        )
+    ]
+
+    return output
+
+
+class ShardedLinearAttention(ShardedModule):
+    """Linear Attention layer with O(seq) complexity.
+
+    Unlike standard attention which has O(seq^2) complexity,
+    Linear Attention reformulates the computation to achieve O(seq):
+    - Standard: softmax(QK^T)V
+    - Linear: Q(K^T V) with kernel feature map
+
+    Key differences from ShardedAttention:
+    1. No KV cache needed - maintains fixed-size state per head
+    2. No kv_seq_len parameter - state size is independent of sequence length
+    3. Memory does not grow with sequence length
+
+    Sharding:
+    - Q/K/V weights: heads dimension TP-sharded (column sharding)
+    - O weight: heads dimension TP-sharded (row sharding)
+    - Output needs AllReduce aggregation
+
+    Reference: "Linear Transformers Are Secretly Fast Weight Programmers"
+    https://arxiv.org/abs/2006.16236
+
+    Args:
+        hidden_size: Hidden size
+        num_heads: Number of query heads
+        num_kv_heads: Number of KV heads (for GQA support)
+        head_dim: Head dimension
+        kernel_dim: Feature map dimension (default: 4 for Qwen3.5)
+        dtype: Data type
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        num_kv_heads: Optional[int] = None,
+        head_dim: Optional[int] = None,
+        kernel_dim: int = 4,
+        dtype: str = "fp16",
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads or num_heads
+        self.head_dim = head_dim or (hidden_size // num_heads)
+        self.kernel_dim = kernel_dim
+
+        self.q_weight = ShardedParameter(
+            shape=(hidden_size, num_heads * self.head_dim),
+            shardable={1: "tp"},
+            dtype=dtype,
+            name="q_weight",
+        )
+
+        self.k_weight = ShardedParameter(
+            shape=(hidden_size, self.num_kv_heads * self.head_dim),
+            shardable={1: "tp"},
+            dtype=dtype,
+            name="k_weight",
+        )
+
+        self.v_weight = ShardedParameter(
+            shape=(hidden_size, self.num_kv_heads * self.head_dim),
+            shardable={1: "tp"},
+            dtype=dtype,
+            name="v_weight",
+        )
+
+        self.o_weight = ShardedParameter(
+            shape=(num_heads * self.head_dim, hidden_size),
+            shardable={0: "tp"},
+            dtype=dtype,
+            name="o_weight",
+        )
+
+    def forward(
+        self,
+        hidden: ShardedTensor,
+        is_causal: bool = True,
+    ) -> ShardedTensor:
+        """Linear Attention forward.
+
+        Args:
+            hidden: (batch, seq, hidden_size)
+            is_causal: Whether causal mask
+
+        Returns:
+            output: (batch, seq, hidden_size)
+        """
+        batch = hidden.shape[0] if len(hidden.shape) >= 1 else 1
+        seq = hidden.shape[1] if len(hidden.shape) >= 2 else 1
+
+        q_proj = self._track_intermediate("q_proj", hidden @ self.q_weight)
+        k_proj = self._track_intermediate("k_proj", hidden @ self.k_weight)
+        v_proj = self._track_intermediate("v_proj", hidden @ self.v_weight)
+
+        q = q_proj.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        v = v_proj.view(batch, seq, self.num_kv_heads, self.head_dim).transpose(1, 2)
+
+        attn_out = linear_attention(q, k, v, kernel_dim=self.kernel_dim, is_causal=is_causal)
+
+        attn_flat = attn_out.transpose(1, 2).view(batch, seq, self.num_heads * self.head_dim)
+
+        output = self._track_intermediate("output", attn_flat @ self.o_weight)
+
+        self._activations["q_proj"] = q_proj
+        self._activations["k_proj"] = k_proj
+        self._activations["v_proj"] = v_proj
+        self._activations["output"] = output
+
+        return output

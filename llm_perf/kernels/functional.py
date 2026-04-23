@@ -1335,3 +1335,95 @@ def moe_expert(
         bytes_accessed_backward=bytes_accessed_backward,
         saved_inputs=["hidden"],
     )
+
+
+def linear_attention(
+    query: Tuple[int, ...],
+    key: Tuple[int, ...],
+    value: Tuple[int, ...],
+    kernel_dim: int = 4,
+    is_causal: bool = True,
+    dtype: str = "fp16",
+) -> KernelResult:
+    """Linear Attention with O(seq) complexity.
+
+    Reformulates standard attention using kernel trick:
+    - Standard: softmax(QK^T)V - O(seq^2) compute and memory
+    - Linear: Q(K^T V) with feature map φ - O(seq) compute, fixed state
+
+    Key characteristics:
+    - No KV cache linear growth: fixed-size state per head
+    - Memory: O(batch × heads × seq × head_dim) - no seq^2 term
+    - Compute: O(batch × heads × seq × head_dim × kernel_dim)
+
+    Uses feature map φ(x) = elu(x) + 1 or similar to approximate softmax.
+    For Qwen3.5: kernel_dim = 4 (linear_conv_kernel_dim)
+
+    Reference: "Linear Transformers Are Secretly Fast Weight Programmers"
+    https://arxiv.org/abs/2006.16236
+
+    Args:
+        query: Shape (batch, num_heads, seq_len, head_dim)
+        key: Shape (batch, num_kv_heads, seq_len, head_dim)
+        value: Shape (batch, num_kv_heads, seq_len, head_dim)
+        kernel_dim: Feature map dimension (default: 4 for Qwen3.5)
+        is_causal: Whether causal mask (default: True)
+        dtype: Data type string
+
+    Returns:
+        KernelResult with performance metrics
+    """
+    dtype_size = _compute_dtype_size(dtype)
+
+    batch, num_heads, seq_len, head_dim = query
+    _, num_kv_heads, kv_seq_len, _ = key
+
+    output_shape = (batch, num_heads, seq_len, head_dim)
+
+    feature_flops_per_elem = kernel_dim * 2
+    q_feature_flops = batch * num_heads * seq_len * head_dim * feature_flops_per_elem
+    k_feature_flops = batch * num_kv_heads * kv_seq_len * head_dim * feature_flops_per_elem
+    v_feature_flops = batch * num_kv_heads * kv_seq_len * head_dim * feature_flops_per_elem
+
+    kv_state_flops = 2 * batch * num_kv_heads * head_dim * head_dim * kv_seq_len
+
+    q_state_flops = 2 * batch * num_heads * seq_len * head_dim * head_dim
+
+    flops = q_feature_flops + k_feature_flops + v_feature_flops + kv_state_flops + q_state_flops
+
+    bytes_accessed = (
+        batch * num_heads * seq_len * head_dim * dtype_size
+        + batch * num_kv_heads * kv_seq_len * head_dim * dtype_size
+        + batch * num_kv_heads * kv_seq_len * head_dim * dtype_size
+        + batch * num_heads * seq_len * head_dim * dtype_size
+    )
+
+    state_bytes = batch * num_kv_heads * head_dim * head_dim * dtype_size
+    bytes_accessed += state_bytes
+
+    params = 0
+    param_bytes = 0
+
+    feature_backward_flops = (q_feature_flops + k_feature_flops + v_feature_flops) * 2
+    kv_state_backward_flops = kv_state_flops * 2
+    q_state_backward_flops = q_state_flops * 2
+
+    flops_backward = feature_backward_flops + kv_state_backward_flops + q_state_backward_flops
+
+    bytes_accessed_backward = bytes_accessed * 2
+
+    return KernelResult(
+        output=output_shape,
+        flops=flops,
+        bytes_accessed=bytes_accessed,
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
+        memory_bound=False,
+        input_shapes=[query, key, value],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube",
+        dtype=dtype,
+        flops_backward=flops_backward,
+        bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["query", "key", "value"],
+    )

@@ -473,3 +473,193 @@ class TestKVSeqLenInDecodeAttention:
             f"Decode time should increase with longer kv_seq_len: "
             f"short={decode_short.single_time_sec:.6f}, long={decode_long.single_time_sec:.6f}"
         )
+
+
+class TestLinearAttentionKernel:
+    """Test Linear Attention kernel FLOPs and memory characteristics."""
+
+    def test_linear_attention_flops_linear_in_seq(self):
+        """Linear Attention FLOPs should be O(seq), not O(seq^2)."""
+        from llm_perf.kernels.functional import linear_attention, flash_attention
+
+        batch = 1
+        num_heads = 16
+        num_kv_heads = 32
+        head_dim = 128
+        kernel_dim = 4
+
+        seq_short = 512
+        seq_long = 2048
+
+        linear_result_short = linear_attention(
+            (batch, num_heads, seq_short, head_dim),
+            (batch, num_kv_heads, seq_short, head_dim),
+            (batch, num_kv_heads, seq_short, head_dim),
+            kernel_dim=kernel_dim,
+        )
+
+        linear_result_long = linear_attention(
+            (batch, num_heads, seq_long, head_dim),
+            (batch, num_kv_heads, seq_long, head_dim),
+            (batch, num_kv_heads, seq_long, head_dim),
+            kernel_dim=kernel_dim,
+        )
+
+        linear_ratio = linear_result_long.flops / linear_result_short.flops
+
+        assert linear_ratio == seq_long / seq_short, (
+            f"Linear Attention FLOPs ratio should be {seq_long/seq_short} (linear), got {linear_ratio}"
+        )
+
+        flash_result_short = flash_attention(
+            (batch, num_heads, seq_short, head_dim),
+            (batch, num_kv_heads, seq_short, head_dim),
+            (batch, num_kv_heads, seq_short, head_dim),
+        )
+
+        flash_result_long = flash_attention(
+            (batch, num_heads, seq_long, head_dim),
+            (batch, num_kv_heads, seq_long, head_dim),
+            (batch, num_kv_heads, seq_long, head_dim),
+        )
+
+        flash_ratio = flash_result_long.flops / flash_result_short.flops
+
+        assert flash_ratio > linear_ratio, (
+            f"Flash Attention FLOPs growth ({flash_ratio}) should exceed Linear Attention ({linear_ratio})"
+        )
+
+    def test_linear_attention_memory_no_seq_growth(self):
+        """Linear Attention memory should NOT have seq^2 term (no KV cache growth)."""
+        from llm_perf.kernels.functional import linear_attention
+
+        batch = 1
+        num_heads = 16
+        num_kv_heads = 32
+        head_dim = 128
+        kernel_dim = 4
+
+        seq = 4096
+        dtype_size = 2
+
+        result = linear_attention(
+            (batch, num_heads, seq, head_dim),
+            (batch, num_kv_heads, seq, head_dim),
+            (batch, num_kv_heads, seq, head_dim),
+            kernel_dim=kernel_dim,
+        )
+
+        seq_linear_term = (
+            batch * num_heads * seq * head_dim * dtype_size  # Q
+            + batch * num_kv_heads * seq * head_dim * dtype_size  # K
+            + batch * num_kv_heads * seq * head_dim * dtype_size  # V
+            + batch * num_heads * seq * head_dim * dtype_size  # Output
+        )
+        state_term = batch * num_kv_heads * head_dim * head_dim * dtype_size
+
+        expected_bytes = seq_linear_term + state_term
+
+        assert result.bytes_accessed == expected_bytes, (
+            f"Linear Attention bytes should be {expected_bytes} (linear + state), got {result.bytes_accessed}"
+        )
+
+        seq_squared_term = batch * num_heads * seq * seq
+        squared_bytes = seq_squared_term * dtype_size
+
+        assert result.bytes_accessed < squared_bytes, (
+            f"Linear Attention bytes ({result.bytes_accessed}) should be less than seq^2 term ({squared_bytes})"
+        )
+
+    def test_linear_attention_backward_metrics(self):
+        """Linear Attention backward metrics should be ~2x forward."""
+        from llm_perf.kernels.functional import linear_attention
+
+        batch = 1
+        num_heads = 16
+        num_kv_heads = 32
+        seq = 512
+        head_dim = 128
+        kernel_dim = 4
+
+        result = linear_attention(
+            (batch, num_heads, seq, head_dim),
+            (batch, num_kv_heads, seq, head_dim),
+            (batch, num_kv_heads, seq, head_dim),
+            kernel_dim=kernel_dim,
+        )
+
+        assert result.flops_backward > 0
+        assert result.bytes_accessed_backward > 0
+
+        assert result.flops_backward >= result.flops * 1.5
+        assert result.bytes_accessed_backward >= result.bytes_accessed * 1.5
+
+    def test_linear_attention_op_purity(self):
+        """LinearAttentionOp should not have phase/workload parameters."""
+        from llm_perf.kernels.op import LinearAttentionOp
+        from llm_perf.modeling.tensor import ShardedTensor
+
+        query = ShardedTensor(shape=(1, 16, 512, 128))
+        key = ShardedTensor(shape=(1, 32, 512, 128))
+        value = ShardedTensor(shape=(1, 32, 512, 128))
+        output = ShardedTensor(shape=(1, 16, 512, 128))
+
+        op = LinearAttentionOp(
+            query=query,
+            key=key,
+            value=value,
+            output=output,
+            kernel_dim=4,
+        )
+
+        assert not hasattr(op, "phase"), "LinearAttentionOp should not have 'phase' attribute"
+        assert not hasattr(op, "kv_cache_config"), "LinearAttentionOp should not have 'kv_cache_config' attribute"
+        assert not hasattr(op, "kv_seq_len"), "LinearAttentionOp should not have 'kv_seq_len' attribute"
+
+        assert hasattr(op, "kernel_name")
+        assert hasattr(op, "kernel_dim")
+        assert hasattr(op, "is_causal")
+        assert op.kernel_name == "linear_attention"
+
+    def test_linear_attention_sharded_module(self):
+        """ShardedLinearAttention module should work correctly."""
+        from llm_perf.modeling.layers import ShardedLinearAttention
+        from llm_perf.modeling.tensor import ShardedTensor
+
+        attn = ShardedLinearAttention(
+            hidden_size=4096,
+            num_heads=16,
+            num_kv_heads=32,
+            head_dim=128,
+            kernel_dim=4,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 4096))
+        output = attn(hidden)
+
+        assert output.shape == (1, 512, 4096)
+        assert "q_proj" in attn._activations
+        assert "k_proj" in attn._activations
+        assert "v_proj" in attn._activations
+        assert "output" in attn._activations
+
+    def test_linear_attention_tp_sharding(self):
+        """ShardedLinearAttention should support TP sharding."""
+        from llm_perf.modeling.layers import ShardedLinearAttention
+        from llm_perf.modeling import ParallelContext
+
+        attn = ShardedLinearAttention(
+            hidden_size=4096,
+            num_heads=16,
+            num_kv_heads=32,
+            head_dim=128,
+            kernel_dim=4,
+        )
+
+        ctx = ParallelContext(tp_degree=8)
+        instance = attn.bind(ctx)
+
+        assert instance.params_count_physical < attn.params_count()
+
+        q_weight_physical = instance._weight_instances["q_weight"].physical_shape
+        assert q_weight_physical[1] == (16 * 128) // 8, "Q weight should be TP-sharded on heads dimension"

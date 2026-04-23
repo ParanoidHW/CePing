@@ -10,6 +10,7 @@ from llm_perf.kernels.op import (
     Op,
     MatmulOp,
     AttentionOp,
+    LinearAttentionOp,
     RMSNormOp,
     EmbeddingOp,
     ActivationOp,
@@ -25,6 +26,7 @@ from llm_perf.kernels.op import (
 from .layers import (
     ShardedEmbedding,
     ShardedAttention,
+    ShardedLinearAttention,
     ShardedFFN,
     ShardedLMHead,
     ShardedMoE,
@@ -32,6 +34,7 @@ from .layers import (
     gelu,
     relu,
     flash_attention,
+    linear_attention,
 )
 
 from .mla import ShardedMLA
@@ -96,6 +99,7 @@ __all__ = [
     "Op",
     "MatmulOp",
     "AttentionOp",
+    "LinearAttentionOp",
     "RMSNormOp",
     "EmbeddingOp",
     "ActivationOp",
@@ -108,6 +112,7 @@ __all__ = [
     "GroupNormOp",
     "ShardedEmbedding",
     "ShardedAttention",
+    "ShardedLinearAttention",
     "ShardedFFN",
     "ShardedLMHead",
     "ShardedMoE",
@@ -118,6 +123,7 @@ __all__ = [
     "gelu",
     "relu",
     "flash_attention",
+    "linear_attention",
     "LlamaModel",
     "DeepSeekModel",
     "ShardedConv2d",

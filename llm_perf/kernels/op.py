@@ -5,8 +5,7 @@ input/output tensors and kernel semantic.
 """
 
 from dataclasses import dataclass, field
-from typing import Tuple, List, Any, Dict, Optional
-import math
+from typing import Tuple, List, Any, Dict
 
 
 @dataclass
@@ -366,3 +365,60 @@ class GroupNormOp(Op):
     def __post_init__(self):
         if self.inputs is None:
             self.inputs = [self.input, self.weight]
+
+
+@dataclass
+class LinearAttentionOp(Op):
+    """Linear Attention operation.
+
+    Linear Attention reformulates standard attention to achieve O(seq) complexity:
+    - Standard: softmax(QK^T)V - O(seq^2) memory and compute
+    - Linear: Q(K^T V) with kernel feature map - O(seq) compute, fixed state size
+
+    Uses kernel trick (e.g., elu(x)+1) to approximate softmax denominator.
+    No KV cache needed - maintains fixed-size state per head.
+
+    Reference: "Linear Transformers Are Secretly Fast Weight Programmers"
+    https://arxiv.org/abs/2006.16236
+
+    Attributes:
+        query: Query tensor (batch, num_heads, seq, head_dim)
+        key: Key tensor (batch, num_kv_heads, seq, head_dim)
+        value: Value tensor (batch, num_kv_heads, seq, head_dim)
+        output: Output tensor (batch, num_heads, seq, head_dim)
+        kernel_dim: Feature map dimension (e.g., 4 for Qwen3.5)
+        is_causal: Whether causal mask
+    """
+
+    kernel_name: str = "linear_attention"
+    dtype: str = "fp16"
+    query: Any = None
+    key: Any = None
+    value: Any = None
+    output: Any = None
+    inputs: List[Any] = field(default_factory=list)
+    kernel_dim: int = 4
+    is_causal: bool = True
+
+    def __post_init__(self):
+        if not self.inputs:
+            self.inputs = [self.query, self.key, self.value]
+
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        Linear Attention backward:
+        - Need Q, K, V for gradient computation
+        - State is fixed-size, no seq-dependent storage
+
+        Returns:
+            [self.query, self.key, self.value] - save for backward
+        """
+        tensors = []
+        if self.query:
+            tensors.append(self.query)
+        if self.key:
+            tensors.append(self.key)
+        if self.value:
+            tensors.append(self.value)
+        return tensors
