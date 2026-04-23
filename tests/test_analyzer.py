@@ -695,7 +695,7 @@ class TestConvDecoderEstimation:
 
     def test_vae_decoder_flops_reasonable(self):
         """Verify VAE decoder FLOPs are calculated using kernel API, not simplified formula."""
-        from llm_perf.modeling.vision import ShardedVAEDecoder
+        from llm_perf.modeling.encoder import ShardedVAEDecoder
 
         decoder = ShardedVAEDecoder(
             out_channels=3,
@@ -730,7 +730,7 @@ class TestConvDecoderEstimation:
 
     def test_vae_decoder_time_reasonable(self):
         """Verify VAE decoder time is reasonable, not near-zero."""
-        from llm_perf.modeling.vision import ShardedVAEDecoder
+        from llm_perf.modeling.encoder import ShardedVAEDecoder
 
         decoder = ShardedVAEDecoder(
             out_channels=3,
@@ -760,7 +760,7 @@ class TestConvDecoderEstimation:
 
     def test_vae_decoder_backward(self):
         """Verify VAE decoder backward estimation."""
-        from llm_perf.modeling.vision import ShardedVAEDecoder
+        from llm_perf.modeling.encoder import ShardedVAEDecoder
 
         decoder = ShardedVAEDecoder(
             out_channels=3,

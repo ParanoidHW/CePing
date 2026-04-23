@@ -464,9 +464,10 @@ class ShardedWanDiT(ShardedModule):
 
 
 class ShardedWanVAE(ShardedModule):
-    """Wan 3D Causal VAE.
+    """Wan 3D Causal VAE (deprecated).
 
-    Simplified version using ShardedVAE components.
+    DEPRECATED: Use ShardedVAE from encoder.py instead.
+    This class is kept for backward compatibility only.
 
     Args:
         in_channels: Input channels (3 for RGB)
@@ -484,34 +485,26 @@ class ShardedWanVAE(ShardedModule):
     ):
         super().__init__()
 
-        from llm_perf.modeling.vision import ShardedVAEEncoder, ShardedVAEDecoder
+        from llm_perf.modeling.encoder import ShardedVAE
 
-        self.encoder = ShardedVAEEncoder(
+        self._vae = ShardedVAE(
             in_channels=in_channels,
-            latent_channels=latent_channels,
-            block_out_channels=block_out_channels,
-            use_3d=True,
-            dtype=dtype,
-        )
-
-        self.decoder = ShardedVAEDecoder(
             out_channels=in_channels,
             latent_channels=latent_channels,
             block_out_channels=block_out_channels,
             use_3d=True,
+            use_attention=False,
             dtype=dtype,
         )
 
     def encode(self, video: ShardedTensor) -> ShardedTensor:
         """Encode video to latent."""
-        return self.encoder(video)
+        return self._vae.encode(video)
 
     def decode(self, latent: ShardedTensor) -> ShardedTensor:
         """Decode latent to video."""
-        return self.decoder(latent)
+        return self._vae.decode(latent)
 
     def forward(self, video: ShardedTensor) -> ShardedTensor:
         """VAE forward."""
-        latent = self.encode(video)
-        reconstructed = self.decode(latent)
-        return reconstructed
+        return self._vae(video)

@@ -54,10 +54,13 @@ from .vision import (
     ShardedResNetBlock3d,
     ShardedAttentionBlock2d,
     ShardedAttentionBlock3d,
+    ShardedResNet,
+)
+from .encoder import (
     ShardedVAEEncoder,
     ShardedVAEDecoder,
     ShardedVAE,
-    ShardedResNet,
+    ShardedViTEncoder,
 )
 
 from .wan import (
@@ -66,7 +69,6 @@ from .wan import (
     ShardedWanTextEncoder,
     ShardedWanDiTBlock,
     ShardedWanDiT,
-    ShardedWanVAE,
 )
 
 from .qwen3_5 import (

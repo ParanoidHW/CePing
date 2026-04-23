@@ -1,26 +1,39 @@
-"""Vision Transformer (ViT) Encoder for multimodal models.
+"""Vision encoders and decoders for multimodal models.
 
-ShardedViTEncoder is an independent module that can be used with
-different backbones (Qwen3.5, Llama, etc.) through out_hidden_size parameter.
+Includes:
+- ShardedViTEncoder: Vision Transformer encoder (independent module)
+- ShardedVAEEncoder: VAE encoder for image/video latent representation
+- ShardedVAEDecoder: VAE decoder for reconstructing image/video from latent
+- ShardedVAE: Complete VAE model with encoder and decoder
 
-Reference: Qwen2-VL Vision Encoder configuration
-- depth: 27 transformer layers
-- hidden_size: 1152
-- num_heads: 16
-- patch_size: 16
-- intermediate_size: 4304
-- out_hidden_size: 2048 (aligns with backbone)
-- spatial_merge_size: 2
+VAE components:
+- Encoder: Down-sampling (8x spatial compression)
+- Decoder: Up-sampling (8x spatial restoration)
+
+Reference:
+- Qwen2-VL Vision Encoder: depth=27, hidden_size=1152, patch_size=16
+- Wan VAE: 3D causal VAE for video generation
 """
 
+from typing import Tuple
 from llm_perf.modeling.module import ShardedModule
 from llm_perf.modeling.tensor import ShardedTensor, ShardedParameter
 from llm_perf.modeling.layers import (
     ShardedAttention,
     ShardedFFN,
+    silu,
 )
 from llm_perf.kernels.op import RMSNormOp, Conv2dOp
 from llm_perf.utils.constants import FFNActType
+from llm_perf.modeling.vision import (
+    ShardedConv2d,
+    ShardedConv3d,
+    ShardedGroupNorm,
+    ShardedResNetBlock2d,
+    ShardedResNetBlock3d,
+    ShardedAttentionBlock2d,
+    ShardedAttentionBlock3d,
+)
 
 
 class ShardedViTBlock(ShardedModule):
@@ -506,3 +519,353 @@ class ShardedViTEncoder(ShardedModule):
         self._activations["video_final_output"] = output
 
         return output
+
+
+class ShardedVAEEncoder(ShardedModule):
+    """VAE Encoder for image/video latent representation.
+
+    Down-sampling encoder that compresses spatial dimensions by 8x.
+    
+    Args:
+        in_channels: Input channels (typically 3 for RGB)
+        latent_channels: Latent channels
+        block_out_channels: Channel progression (default: 128 -> 256 -> 512 -> 512)
+        use_3d: Use 3D conv for video (True) or 2D for image (False)
+        use_attention: Add attention blocks in later stages
+        attention_head_dim: Attention head dimension
+        dtype: Data type
+    
+    Spatial compression:
+        - 4 downsampling stages (stride=2 each)
+        - Total compression: 2^4 = 16x spatial (adjustable via block_out_channels length)
+        - Typical VAE: 8x spatial compression (3 downsampling stages)
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 3,
+        latent_channels: int = 4,
+        block_out_channels: Tuple[int, ...] = (128, 256, 512, 512),
+        use_3d: bool = True,
+        use_attention: bool = False,
+        attention_head_dim: int = 64,
+        dtype: str = "fp16",
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.latent_channels = latent_channels
+        self.block_out_channels = block_out_channels
+        self.use_3d = use_3d
+        self.use_attention = use_attention
+
+        ConvCls = ShardedConv3d if use_3d else ShardedConv2d
+        ResBlockCls = ShardedResNetBlock3d if use_3d else ShardedResNetBlock2d
+        AttnBlockCls = ShardedAttentionBlock3d if use_3d else ShardedAttentionBlock2d
+        kernel_size = (3, 3, 3) if use_3d else (3, 3)
+
+        self.conv_in = ConvCls(
+            in_channels,
+            block_out_channels[0],
+            kernel_size,
+            (1, 1, 1) if use_3d else (1, 1),
+            (1, 1, 1) if use_3d else (1, 1),
+            dtype=dtype,
+        )
+
+        self.down_blocks = []
+        for i, out_ch in enumerate(block_out_channels):
+            in_ch = block_out_channels[i - 1] if i > 0 else out_ch
+            for j in range(2):
+                self.down_blocks.append(ResBlockCls(in_ch if j == 0 else out_ch, out_ch, dtype=dtype))
+                setattr(self, f"down_{i}_block_{j}", self.down_blocks[-1])
+
+            if use_attention and i >= len(block_out_channels) - 2:
+                num_heads = max(1, out_ch // attention_head_dim)
+                self.down_blocks.append(AttnBlockCls(out_ch, num_heads, attention_head_dim, dtype=dtype))
+                setattr(self, f"down_{i}_attn", self.down_blocks[-1])
+
+            if i < len(block_out_channels) - 1:
+                self.down_blocks.append(
+                    ConvCls(
+                        out_ch,
+                        out_ch,
+                        kernel_size,
+                        (1, 2, 2) if use_3d else (2, 2),
+                        (1, 1, 1) if use_3d else (1, 1),
+                        dtype=dtype,
+                    )
+                )
+                setattr(self, f"down_{i}_conv", self.down_blocks[-1])
+
+        self.mid_block_0 = ResBlockCls(block_out_channels[-1], block_out_channels[-1], dtype=dtype)
+
+        if use_attention:
+            num_heads = max(1, block_out_channels[-1] // attention_head_dim)
+            self.mid_attn = AttnBlockCls(block_out_channels[-1], num_heads, attention_head_dim, dtype=dtype)
+
+        self.mid_block_1 = ResBlockCls(block_out_channels[-1], block_out_channels[-1], dtype=dtype)
+
+        self.conv_out = ConvCls(
+            block_out_channels[-1],
+            latent_channels * 2,
+            kernel_size,
+            (1, 1, 1) if use_3d else (1, 1),
+            (1, 1, 1) if use_3d else (1, 1),
+            dtype=dtype,
+        )
+
+    def forward(self, video: ShardedTensor) -> ShardedTensor:
+        """Encode video/image to latent representation.
+
+        Args:
+            video: (batch, channels, height, width) for 2D
+                   (batch, channels, frames, height, width) for 3D
+
+        Returns:
+            latent: Compressed latent representation (height/8, width/8)
+        """
+        hidden = self.conv_in(video)
+
+        for block in self.down_blocks:
+            hidden = block(hidden)
+
+        hidden = self.mid_block_0(hidden)
+
+        if self.use_attention:
+            hidden = self.mid_attn(hidden)
+
+        hidden = self.mid_block_1(hidden)
+
+        latent = self.conv_out(hidden)
+        return latent
+
+
+class ShardedVAEDecoder(ShardedModule):
+    """VAE Decoder for reconstructing image/video from latent.
+
+    Up-sampling decoder that restores spatial dimensions by 8x.
+    
+    Args:
+        out_channels: Output channels (typically 3 for RGB)
+        latent_channels: Latent channels
+        block_out_channels: Channel progression (reversed from encoder)
+        use_3d: Use 3D conv for video (True) or 2D for image (False)
+        use_attention: Add attention blocks in early stages
+        attention_head_dim: Attention head dimension
+        dtype: Data type
+    
+    Spatial restoration:
+        - 4 upsampling stages (reverse of encoder)
+        - Total restoration: 8x spatial (height*8, width*8)
+    """
+
+    def __init__(
+        self,
+        out_channels: int = 3,
+        latent_channels: int = 4,
+        block_out_channels: Tuple[int, ...] = (128, 256, 512, 512),
+        use_3d: bool = True,
+        use_attention: bool = False,
+        attention_head_dim: int = 64,
+        dtype: str = "fp16",
+    ):
+        super().__init__()
+        self.out_channels = out_channels
+        self.latent_channels = latent_channels
+        self.block_out_channels = block_out_channels
+        self.use_3d = use_3d
+        self.use_attention = use_attention
+
+        ConvCls = ShardedConv3d if use_3d else ShardedConv2d
+        ResBlockCls = ShardedResNetBlock3d if use_3d else ShardedResNetBlock2d
+        AttnBlockCls = ShardedAttentionBlock3d if use_3d else ShardedAttentionBlock2d
+        kernel_size = (3, 3, 3) if use_3d else (3, 3)
+
+        reverse_channels = list(reversed(block_out_channels))
+
+        self.conv_in = ConvCls(
+            latent_channels,
+            reverse_channels[0],
+            kernel_size,
+            (1, 1, 1) if use_3d else (1, 1),
+            (1, 1, 1) if use_3d else (1, 1),
+            dtype=dtype,
+        )
+
+        self.mid_block_0 = ResBlockCls(reverse_channels[0], reverse_channels[0], dtype=dtype)
+
+        if use_attention:
+            num_heads = max(1, reverse_channels[0] // attention_head_dim)
+            self.mid_attn = AttnBlockCls(reverse_channels[0], num_heads, attention_head_dim, dtype=dtype)
+
+        self.mid_block_1 = ResBlockCls(reverse_channels[0], reverse_channels[0], dtype=dtype)
+
+        self.up_blocks = []
+        for i, out_ch in enumerate(reverse_channels):
+            in_ch = reverse_channels[i - 1] if i > 0 else out_ch
+            for j in range(3):
+                self.up_blocks.append(ResBlockCls(in_ch if j == 0 else out_ch, out_ch, dtype=dtype))
+                setattr(self, f"up_{i}_block_{j}", self.up_blocks[-1])
+
+            if use_attention and i < 2:
+                num_heads = max(1, out_ch // attention_head_dim)
+                self.up_blocks.append(AttnBlockCls(out_ch, num_heads, attention_head_dim, dtype=dtype))
+                setattr(self, f"up_{i}_attn", self.up_blocks[-1])
+
+            if i < len(reverse_channels) - 1:
+                self.up_blocks.append(
+                    ConvCls(
+                        out_ch,
+                        out_ch,
+                        kernel_size,
+                        (1, 1, 1) if use_3d else (1, 1),
+                        (1, 1, 1) if use_3d else (1, 1),
+                        dtype=dtype,
+                    )
+                )
+                setattr(self, f"up_{i}_conv", self.up_blocks[-1])
+
+        self.norm_out = ShardedGroupNorm(32, reverse_channels[-1], dtype=dtype)
+        self.conv_out = ConvCls(
+            reverse_channels[-1],
+            out_channels,
+            kernel_size,
+            (1, 1, 1) if use_3d else (1, 1),
+            (1, 1, 1) if use_3d else (1, 1),
+            dtype=dtype,
+        )
+
+    def forward(self, latent: ShardedTensor) -> ShardedTensor:
+        """Decode latent to video/image.
+
+        Args:
+            latent: Compressed latent representation (height/8, width/8)
+
+        Returns:
+            video: Reconstructed video/image (height*8, width*8)
+        """
+        hidden = self.conv_in(latent)
+
+        hidden = self.mid_block_0(hidden)
+
+        if self.use_attention:
+            hidden = self.mid_attn(hidden)
+
+        hidden = self.mid_block_1(hidden)
+
+        for block in self.up_blocks:
+            hidden = block(hidden)
+
+        hidden = self.norm_out(hidden)
+        hidden = silu(hidden)
+        video = self.conv_out(hidden)
+
+        return video
+
+
+class ShardedVAE(ShardedModule):
+    """Complete VAE model with Encoder and Decoder.
+
+    Independent encoder/decoder module for image/video compression.
+    
+    Args:
+        in_channels: Input channels
+        out_channels: Output channels
+        latent_channels: Latent channels
+        block_out_channels: Channel progression
+        use_3d: Use 3D conv for video (True) or 2D for image (False)
+        use_attention: Add attention blocks
+        attention_head_dim: Attention head dimension
+        dtype: Data type
+    
+    Usage:
+        # For video generation models (e.g., Wan)
+        vae = ShardedVAE(
+            in_channels=3,
+            latent_channels=16,
+            use_3d=True,
+            use_attention=True,
+        )
+        
+        # For image generation models (e.g., Stable Diffusion)
+        vae = ShardedVAE(
+            in_channels=3,
+            latent_channels=4,
+            use_3d=False,
+            use_attention=False,
+        )
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 3,
+        out_channels: int = 3,
+        latent_channels: int = 4,
+        block_out_channels: Tuple[int, ...] = (128, 256, 512, 512),
+        use_3d: bool = True,
+        use_attention: bool = False,
+        attention_head_dim: int = 64,
+        dtype: str = "fp16",
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.latent_channels = latent_channels
+        self.block_out_channels = block_out_channels
+        self.use_3d = use_3d
+        self.use_attention = use_attention
+
+        self.encoder = ShardedVAEEncoder(
+            in_channels=in_channels,
+            latent_channels=latent_channels,
+            block_out_channels=block_out_channels,
+            use_3d=use_3d,
+            use_attention=use_attention,
+            attention_head_dim=attention_head_dim,
+            dtype=dtype,
+        )
+
+        self.decoder = ShardedVAEDecoder(
+            out_channels=out_channels,
+            latent_channels=latent_channels,
+            block_out_channels=block_out_channels,
+            use_3d=use_3d,
+            use_attention=use_attention,
+            attention_head_dim=attention_head_dim,
+            dtype=dtype,
+        )
+
+    def encode(self, video: ShardedTensor) -> ShardedTensor:
+        """Encode video/image to latent representation.
+
+        Args:
+            video: Input video/image
+
+        Returns:
+            latent: Compressed latent (height/8, width/8)
+        """
+        return self.encoder(video)
+
+    def decode(self, latent: ShardedTensor) -> ShardedTensor:
+        """Decode latent to video/image.
+
+        Args:
+            latent: Compressed latent representation
+
+        Returns:
+            video: Reconstructed video/image (height*8, width*8)
+        """
+        return self.decoder(latent)
+
+    def forward(self, video: ShardedTensor) -> ShardedTensor:
+        """Full VAE forward pass (encode + decode).
+
+        Args:
+            video: Input video/image
+
+        Returns:
+            reconstructed: Reconstructed video/image
+        """
+        latent = self.encode(video)
+        reconstructed = self.decode(latent)
+        return reconstructed

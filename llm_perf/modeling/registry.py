@@ -13,7 +13,8 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 import yaml
 
 from llm_perf.modeling.models import LlamaModel, DeepSeekModel
-from llm_perf.modeling.vision import ShardedVAE, ShardedResNet
+from llm_perf.modeling.vision import ShardedResNet
+from llm_perf.modeling.encoder import ShardedVAE
 from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
 from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel
 
