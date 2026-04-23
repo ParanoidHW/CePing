@@ -186,8 +186,8 @@ class TestQwen3_5MoEConfig:
             num_experts=256,
         )
 
-        linear_blocks = [l for l in model.layers if isinstance(l.attention, ShardedLinearAttention)]
-        full_blocks = [l for l in model.layers if isinstance(l.attention, ShardedAttention)]
+        linear_blocks = [layer for layer in model.layers if isinstance(layer.attention, ShardedLinearAttention)]
+        full_blocks = [layer for layer in model.layers if isinstance(layer.attention, ShardedAttention)]
 
         assert len(linear_blocks) == 30
         assert len(full_blocks) == 10
@@ -425,3 +425,140 @@ class TestQwen3_5MoEBreakdown:
 
         moe_params = sum(v for k, v in breakdown.items() if "moe" in k)
         assert moe_params > 0
+
+
+class TestQwen3_5MTP:
+    """Test Qwen3.5 MTP (Multi-Token Prediction) layers."""
+
+    def test_qwen3_5_with_mtp_layers(self):
+        """Test creating Qwen3.5 with MTP layers."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=40,
+            num_heads=16,
+            num_experts=256,
+            mtp_num_layers=1,
+        )
+
+        assert model.mtp_num_layers == 1
+        assert len(model.mtp_layers) == 1
+        assert model.config.mtp_num_layers == 1
+
+    def test_qwen3_5_mtp_params_count(self):
+        """Test MTP params count calculation.
+
+        MTP adds 1 Transformer Layer weights, but shares embedding and lm_head.
+        So MTP extra params = 1 Transformer Block weight.
+        """
+        model_no_mtp = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            num_experts=256,
+            mtp_num_layers=0,
+        )
+
+        model_with_mtp = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            num_experts=256,
+            mtp_num_layers=1,
+        )
+
+        no_mtp_params = model_no_mtp.params_count()
+        with_mtp_params = model_with_mtp.params_count()
+
+        mtp_layer_params = model_with_mtp.mtp_layers[0].params_count()
+        expected_diff = mtp_layer_params
+
+        actual_diff = with_mtp_params - no_mtp_params
+        assert actual_diff == expected_diff, (
+            f"MTP should add {expected_diff} params, but added {actual_diff}"
+        )
+
+    def test_qwen3_5_mtp_share_embeddings(self):
+        """Test MTP shares embedding and lm_head with main model.
+
+        When mtp_share_embeddings=True, MTP does not create extra embedding/lm_head.
+        """
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            num_experts=256,
+            mtp_num_layers=1,
+            mtp_share_embeddings=True,
+        )
+
+        assert model.mtp_share_embeddings == True
+
+        mtp_layer_params = model.mtp_layers[0].params_count()
+
+        embedding_params = model.embedding.params_count()
+        lm_head_params = model.lm_head.params_count()
+
+        assert embedding_params > 0
+        assert lm_head_params > 0
+
+        mtp_only_params = mtp_layer_params
+        assert mtp_only_params > 0
+        assert mtp_only_params < embedding_params + lm_head_params
+
+    def test_qwen3_5_mtp_layer_type(self):
+        """Test MTP uses last layer's configuration (full_attention)."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=40,
+            num_heads=16,
+            num_experts=256,
+            mtp_num_layers=1,
+        )
+
+        last_layer_type = model.layer_types[-1]
+        assert last_layer_type == "full_attention"
+
+        mtp_layer = model.mtp_layers[0]
+        assert mtp_layer.layer_type == last_layer_type
+
+    def test_qwen3_5_forward_with_mtp(self):
+        """Test forward_with_mtp produces correct outputs."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            num_experts=256,
+            shared_expert_intermediate=512,
+            mtp_num_layers=2,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        logits_list = model.forward_with_mtp(input_ids)
+
+        assert len(logits_list) == 3
+        assert logits_list[0].shape == (1, 512, 248320)
+        assert logits_list[1].shape == (1, 512, 248320)
+        assert logits_list[2].shape == (1, 512, 248320)
+
+        assert "mtp_layer_0_output" in model._activations
+        assert "mtp_layer_1_output" in model._activations
+
+    def test_qwen3_5_mtp_zero_layers(self):
+        """Test model with mtp_num_layers=0 has no MTP layers."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=40,
+            num_heads=16,
+            num_experts=256,
+            mtp_num_layers=0,
+        )
+
+        assert model.mtp_num_layers == 0
+        assert len(model.mtp_layers) == 0

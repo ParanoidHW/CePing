@@ -205,11 +205,13 @@ class Qwen3_5MoEModel(ShardedModule):
     - N x ShardedQwen3_5MoEBlock (hybrid linear/full attention + MoE)
     - Final RMSNorm
     - LM Head
+    - MTP Layers (optional, for speculative decoding)
 
     Key features:
     - layer_types: 3 linear + 1 full per 4-layer cycle
     - Linear attention: O(seq) complexity
     - MoE: 256 experts, top-8 routing, shared expert
+    - MTP: Multi-Token Prediction layers for speculative decoding
 
     Args:
         vocab_size: Vocabulary size
@@ -230,6 +232,8 @@ class Qwen3_5MoEModel(ShardedModule):
         layer_types: List of layer types (optional, auto-generated if None)
         max_seq_len: Maximum sequence length
         dtype: Data type
+        mtp_num_layers: Number of MTP layers (default: 0)
+        mtp_share_embeddings: Share embedding/lm_head with main model (default: True)
     """
 
     def __init__(
@@ -252,11 +256,13 @@ class Qwen3_5MoEModel(ShardedModule):
         layer_types: Optional[List[str]] = None,
         max_seq_len: int = 4096,
         dtype: str = "fp16",
+        mtp_num_layers: int = 0,
+        mtp_share_embeddings: bool = True,
     ):
         super().__init__()
         logger.debug(
             f"[QWEN3_5_INIT] num_layers={num_layers}, num_experts={num_experts}, "
-            f"linear_kernel_dim={linear_kernel_dim}"
+            f"linear_kernel_dim={linear_kernel_dim}, mtp_num_layers={mtp_num_layers}"
         )
 
         if num_kv_heads is None:
@@ -283,6 +289,8 @@ class Qwen3_5MoEModel(ShardedModule):
         self.shared_expert_intermediate = shared_expert_intermediate
         self.max_seq_len = max_seq_len
         self.dtype = dtype
+        self.mtp_num_layers = mtp_num_layers
+        self.mtp_share_embeddings = mtp_share_embeddings
 
         if layer_types is None:
             self.layer_types = generate_layer_types(num_layers)
@@ -306,6 +314,8 @@ class Qwen3_5MoEModel(ShardedModule):
             dtype=dtype,
             num_experts=num_experts,
             num_experts_per_token=num_experts_per_token,
+            mtp_num_layers=mtp_num_layers,
+            mtp_share_embeddings=mtp_share_embeddings,
         )
 
         self.embedding = ShardedEmbedding(
@@ -350,6 +360,11 @@ class Qwen3_5MoEModel(ShardedModule):
             dtype=dtype,
         )
 
+        if mtp_num_layers > 0:
+            self.mtp_layers = self._build_mtp_layers()
+        else:
+            self.mtp_layers = []
+
     def forward(self, input_ids: ShardedTensor) -> ShardedTensor:
         """Qwen3.5 MoE forward.
 
@@ -392,3 +407,73 @@ class Qwen3_5MoEModel(ShardedModule):
         ]
         self._track_intermediate("rmsnorm_output", output)
         return output
+
+    def _build_mtp_layers(self) -> List[ShardedQwen3_5MoEBlock]:
+        """Build MTP layers for speculative decoding.
+
+        MTP uses the last layer's configuration (full_attention).
+        Each MTP layer is an independent Transformer Block.
+
+        Returns:
+            List of MTP Transformer Blocks
+        """
+        if self.num_layers == 0:
+            raise ValueError("Cannot build MTP layers for model with 0 main layers")
+
+        last_layer_type = self.layer_types[-1]
+
+        mtp_layers = []
+        for i in range(self.mtp_num_layers):
+            mtp_layer = ShardedQwen3_5MoEBlock(
+                hidden_size=self.hidden_size,
+                layer_type=last_layer_type,
+                num_heads=self.num_heads,
+                num_kv_heads=self.num_kv_heads,
+                head_dim=self.head_dim,
+                linear_num_heads=self.linear_num_heads,
+                linear_num_kv_heads=self.linear_num_kv_heads,
+                linear_key_head_dim=self.linear_key_head_dim,
+                linear_value_head_dim=self.linear_value_head_dim,
+                linear_kernel_dim=self.linear_kernel_dim,
+                intermediate_size=self.intermediate_size,
+                num_experts=self.num_experts,
+                num_experts_per_token=self.num_experts_per_token,
+                shared_expert_intermediate=self.shared_expert_intermediate,
+                dtype=self.dtype,
+            )
+            mtp_layers.append(mtp_layer)
+
+        return mtp_layers
+
+    def forward_with_mtp(self, input_ids: ShardedTensor) -> List[ShardedTensor]:
+        """Forward with MTP for speculative decoding.
+
+        Args:
+            input_ids: (batch, seq)
+
+        Returns:
+            List of logits: [main_logits, mtp_logits_1, mtp_logits_2, ...]
+        """
+        hidden = self.embedding(input_ids)
+        self._activations["embedding_output"] = hidden
+
+        for i, layer in enumerate(self.layers):
+            hidden = layer(hidden)
+            self._activations[f"layer_{i}_output"] = hidden
+
+        hidden = self._rms_norm(hidden, self.final_norm_weight)
+        self._activations["final_norm_output"] = hidden
+
+        logits = self.lm_head(hidden)
+        self._activations["lm_head_output"] = logits
+
+        mtp_logits_list = [logits]
+
+        for i, mtp_layer in enumerate(self.mtp_layers):
+            mtp_hidden = mtp_layer(hidden)
+            mtp_normed = self._rms_norm(mtp_hidden, self.final_norm_weight)
+            mtp_logits = self.lm_head(mtp_normed)
+            self._activations[f"mtp_layer_{i}_output"] = mtp_logits
+            mtp_logits_list.append(mtp_logits)
+
+        return mtp_logits_list

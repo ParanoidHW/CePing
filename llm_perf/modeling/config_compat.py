@@ -24,3 +24,5 @@ class SimpleModelConfig:
     dtype: str = "fp16"
     num_experts: int = 0
     num_experts_per_token: int = 0
+    mtp_num_layers: int = 0
+    mtp_share_embeddings: bool = True
