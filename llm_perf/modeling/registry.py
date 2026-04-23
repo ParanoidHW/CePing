@@ -16,7 +16,7 @@ from llm_perf.modeling.models import LlamaModel, DeepSeekModel
 from llm_perf.modeling.vision import ShardedResNet
 from llm_perf.modeling.encoder import ShardedVAE
 from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
-from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel
+from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel, Qwen3_5Model
 
 if TYPE_CHECKING:
     pass
@@ -263,6 +263,31 @@ def register_all_models() -> None:
             "num_experts": 256,
             "num_experts_per_token": 8,
             "shared_expert_intermediate": 512,
+            "max_seq_len": 4096,
+            "dtype": "fp16",
+        },
+    )
+
+    registry.register(
+        name="qwen3_5",
+        model_class=Qwen3_5Model,
+        description="Qwen3.5 Dense with hybrid linear/full attention and SwiGLU FFN",
+        architecture="qwen3_5",
+        sparse_type="dense",
+        attention_features=["linear_attention", "gqa"],
+        default_config={
+            "vocab_size": 248320,
+            "hidden_size": 4096,
+            "num_layers": 32,
+            "num_heads": 16,
+            "num_kv_heads": 4,
+            "intermediate_size": 12288,
+            "linear_num_heads": 16,
+            "linear_num_kv_heads": 32,
+            "linear_key_head_dim": 256,
+            "linear_value_head_dim": 256,
+            "linear_kernel_dim": 4,
+            "tie_word_embeddings": False,
             "max_seq_len": 4096,
             "dtype": "fp16",
         },

@@ -1,9 +1,12 @@
-"""Tests for Qwen3.5 MoE Model.
+"""Tests for Qwen3.5 Models.
 
-Qwen3.5-35B-A3B features:
+Qwen3.5 family includes:
+- Dense models: Qwen3.5-0.8B/2B/4B/9B/27B (SwiGLU FFN)
+- MoE models: Qwen3.5-35B-A3B (256 experts, top-8 routing, shared expert)
+
+All models feature:
 - Hybrid attention: 3 linear + 1 full per 4-layer cycle
-- MoE: 256 experts, top-8 routing, shared expert
-- 40 layers, ~36B params
+- Linear attention: O(seq) complexity
 """
 
 import pytest
@@ -15,10 +18,12 @@ from llm_perf.modeling import (
 )
 from llm_perf.modeling.qwen3_5 import (
     Qwen3_5MoEModel,
+    Qwen3_5Model,
     ShardedQwen3_5MoEBlock,
+    ShardedQwen3_5DenseBlock,
     generate_layer_types,
 )
-from llm_perf.modeling.layers import ShardedLinearAttention, ShardedAttention
+from llm_perf.modeling.layers import ShardedLinearAttention, ShardedAttention, ShardedFFN
 
 
 class TestGenerateLayerTypes:
@@ -562,3 +567,514 @@ class TestQwen3_5MTP:
 
         assert model.mtp_num_layers == 0
         assert len(model.mtp_layers) == 0
+
+
+class TestShardedQwen3_5DenseBlock:
+    """Test ShardedQwen3_5DenseBlock."""
+
+    def test_linear_attention_block_creation(self):
+        """Test creating linear attention dense block."""
+        block = ShardedQwen3_5DenseBlock(
+            hidden_size=2048,
+            layer_type="linear_attention",
+            num_heads=16,
+            linear_num_heads=16,
+            linear_kernel_dim=4,
+            intermediate_size=6144,
+        )
+
+        assert block.layer_type == "linear_attention"
+        assert isinstance(block.attention, ShardedLinearAttention)
+        assert block.attention.kernel_dim == 4
+        assert isinstance(block.ffn, ShardedFFN)
+        assert block.ffn.ffn_act_type == "swiglu"
+
+    def test_full_attention_block_creation(self):
+        """Test creating full attention dense block."""
+        block = ShardedQwen3_5DenseBlock(
+            hidden_size=4096,
+            layer_type="full_attention",
+            num_heads=16,
+            num_kv_heads=4,
+            intermediate_size=12288,
+        )
+
+        assert block.layer_type == "full_attention"
+        assert isinstance(block.attention, ShardedAttention)
+        assert block.attention.num_kv_heads == 4
+
+    def test_block_submodules(self):
+        """Test block has correct submodules."""
+        block = ShardedQwen3_5DenseBlock(
+            hidden_size=2048,
+            layer_type="linear_attention",
+            num_heads=16,
+            intermediate_size=6144,
+        )
+
+        assert "attention" in block._submodules
+        assert "ffn" in block._submodules
+        assert "input_norm_weight" in block._weights
+        assert "post_attn_norm_weight" in block._weights
+
+    def test_block_forward(self):
+        """Test block forward."""
+        block = ShardedQwen3_5DenseBlock(
+            hidden_size=2048,
+            layer_type="linear_attention",
+            num_heads=16,
+            intermediate_size=6144,
+        )
+
+        hidden = ShardedTensor(shape=(1, 512, 2048))
+        output = block(hidden)
+
+        assert output.shape == (1, 512, 2048)
+        assert "attn_out" in block._activations
+        assert "ffn_out" in block._activations
+
+    def test_swiglu_ffn_params(self):
+        """Test SwiGLU FFN params calculation.
+
+        SwiGLU has gate_proj + up_proj + down_proj:
+        - gate_proj: hidden_size * intermediate_size
+        - up_proj: hidden_size * intermediate_size
+        - down_proj: intermediate_size * hidden_size
+        Total: 2 * hidden_size * intermediate_size + intermediate_size * hidden_size
+        """
+        hidden_size = 4096
+        intermediate_size = 12288
+
+        block = ShardedQwen3_5DenseBlock(
+            hidden_size=hidden_size,
+            layer_type="full_attention",
+            num_heads=16,
+            intermediate_size=intermediate_size,
+        )
+
+        ffn_params = block.ffn.params_count()
+        expected = 2 * hidden_size * intermediate_size + intermediate_size * hidden_size
+        assert ffn_params == expected
+
+
+class TestQwen3_5DenseConfig:
+    """Test Qwen3.5 Dense config validation."""
+
+    def test_qwen3_5_config_validation(self):
+        """Test creating Qwen3.5 Dense model with config."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=16,
+            num_kv_heads=4,
+            intermediate_size=12288,
+            linear_num_heads=16,
+            linear_num_kv_heads=32,
+            linear_key_head_dim=256,
+            linear_value_head_dim=256,
+            linear_kernel_dim=4,
+        )
+
+        assert model.vocab_size == 248320
+        assert model.hidden_size == 4096
+        assert model.num_layers == 32
+        assert model.linear_kernel_dim == 4
+
+    def test_qwen3_5_layer_types_mixed(self):
+        """Test Qwen3.5 Dense has mixed linear/full attention layers."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=16,
+        )
+
+        linear_count = sum(1 for lt in model.layer_types if lt == "linear_attention")
+        full_count = sum(1 for lt in model.layer_types if lt == "full_attention")
+
+        assert linear_count == 24
+        assert full_count == 8
+
+    def test_qwen3_5_custom_layer_types(self):
+        """Test Qwen3.5 Dense with custom layer_types."""
+        custom_types = ["full_attention", "linear_attention", "linear_attention", "linear_attention"]
+
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            layer_types=custom_types,
+        )
+
+        assert model.layer_types == custom_types
+        assert isinstance(model.layers[0].attention, ShardedAttention)
+        assert isinstance(model.layers[1].attention, ShardedLinearAttention)
+
+
+class TestQwen3_5DenseTieEmbeddings:
+    """Test tie_word_embeddings feature."""
+
+    def test_tie_word_embeddings_true(self):
+        """Test model with tie_word_embeddings=True.
+
+        Small models (0.8B, 2B, 4B) share embedding/lm_head weights.
+        lm_head is None, params_count accounts for sharing.
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=1024,
+            num_layers=24,
+            num_heads=8,
+            num_kv_heads=2,
+            intermediate_size=3584,
+            tie_word_embeddings=True,
+        )
+
+        assert model.tie_word_embeddings == True
+        assert model.lm_head is None
+
+    def test_tie_word_embeddings_false(self):
+        """Test model with tie_word_embeddings=False.
+
+        Large models (9B, 27B) have separate embedding/lm_head.
+        lm_head is ShardedLMHead instance.
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=16,
+            num_kv_heads=4,
+            intermediate_size=12288,
+            tie_word_embeddings=False,
+        )
+
+        assert model.tie_word_embeddings == False
+        assert model.lm_head is not None
+
+    def test_params_count_tie_difference(self):
+        """Test params_count difference between tie=True and tie=False.
+
+        When tie=False, model has extra vocab_size * hidden_size params.
+        """
+        vocab_size = 248320
+        hidden_size = 1024
+
+        model_tie = Qwen3_5Model(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_layers=4,
+            num_heads=8,
+            tie_word_embeddings=True,
+        )
+
+        model_no_tie = Qwen3_5Model(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_layers=4,
+            num_heads=8,
+            tie_word_embeddings=False,
+        )
+
+        tie_params = model_tie.params_count()
+        no_tie_params = model_no_tie.params_count()
+
+        expected_diff = vocab_size * hidden_size
+        actual_diff = no_tie_params - tie_params
+
+        assert actual_diff == expected_diff
+
+
+class TestQwen3_5DenseParams:
+    """Test Qwen3.5 Dense total params."""
+
+    def test_qwen3_5_0_8b_params(self):
+        """Test Qwen3.5-0.8B params ~0.9B.
+
+        Config from HuggingFace:
+        - hidden_size: 1024, num_layers: 24
+        - num_heads: 8, num_kv_heads: 2
+        - intermediate_size: 3584, head_dim: 256
+        - vocab_size: 248320, tie_word_embeddings: True
+        - linear_num_value_heads: 16
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=1024,
+            num_layers=24,
+            num_heads=8,
+            num_kv_heads=2,
+            head_dim=256,
+            intermediate_size=3584,
+            linear_num_heads=16,
+            linear_num_kv_heads=16,
+            linear_key_head_dim=256,
+            linear_value_head_dim=256,
+            tie_word_embeddings=True,
+        )
+
+        params = model.params_count()
+
+        assert params > 0.7e9, f"Qwen3.5-0.8B should have >0.7B params, got {params / 1e9:.2f}B"
+        assert params < 1.2e9, f"Qwen3.5-0.8B should have <1.2B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_2b_params(self):
+        """Test Qwen3.5-2B params ~2B.
+
+        Config from HuggingFace:
+        - hidden_size: 2048, num_layers: 24
+        - num_heads: 8, num_kv_heads: 2
+        - intermediate_size: 6144
+        - vocab_size: 248320, tie_word_embeddings: True
+        - linear_num_value_heads: 16
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=24,
+            num_heads=8,
+            num_kv_heads=2,
+            intermediate_size=6144,
+            linear_num_heads=16,
+            linear_num_kv_heads=16,
+            tie_word_embeddings=True,
+        )
+
+        params = model.params_count()
+
+        assert params > 1.5e9, f"Qwen3.5-2B should have >1.5B params, got {params / 1e9:.2f}B"
+        assert params < 3e9, f"Qwen3.5-2B should have <3B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_4b_params(self):
+        """Test Qwen3.5-4B params ~5B.
+
+        Config from HuggingFace:
+        - hidden_size: 2560, num_layers: 32
+        - num_heads: 16, num_kv_heads: 4
+        - intermediate_size: 9216
+        - vocab_size: 248320, tie_word_embeddings: True
+        - linear_num_value_heads: 32
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2560,
+            num_layers=32,
+            num_heads=16,
+            num_kv_heads=4,
+            intermediate_size=9216,
+            linear_num_heads=32,
+            linear_num_kv_heads=32,
+            tie_word_embeddings=True,
+        )
+
+        params = model.params_count()
+
+        assert params > 3e9, f"Qwen3.5-4B should have >3B params, got {params / 1e9:.2f}B"
+        assert params < 7e9, f"Qwen3.5-4B should have <7B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_9b_params(self):
+        """Test Qwen3.5-9B params ~10B.
+
+        Config from HuggingFace:
+        - hidden_size: 4096, num_layers: 32
+        - num_heads: 16, num_kv_heads: 4
+        - intermediate_size: 12288
+        - vocab_size: 248320, tie_word_embeddings: False
+        - linear_num_value_heads: 32
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=16,
+            num_kv_heads=4,
+            intermediate_size=12288,
+            linear_num_heads=32,
+            linear_num_kv_heads=32,
+            tie_word_embeddings=False,
+        )
+
+        params = model.params_count()
+
+        assert params > 8e9, f"Qwen3.5-9B should have >8B params, got {params / 1e9:.2f}B"
+        assert params < 12e9, f"Qwen3.5-9B should have <12B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_27b_params(self):
+        """Test Qwen3.5-27B params ~28B.
+
+        Config from HuggingFace:
+        - hidden_size: 5120, num_layers: 64
+        - num_heads: 24, num_kv_heads: 4
+        - intermediate_size: 17408
+        - vocab_size: 248320, tie_word_embeddings: False
+        - linear_num_value_heads: 48
+        """
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=5120,
+            num_layers=64,
+            num_heads=24,
+            num_kv_heads=4,
+            intermediate_size=17408,
+            linear_num_heads=48,
+            linear_num_kv_heads=48,
+            tie_word_embeddings=False,
+        )
+
+        params = model.params_count()
+
+        assert params > 25e9, f"Qwen3.5-27B should have >25B params, got {params / 1e9:.2f}B"
+        assert params < 35e9, f"Qwen3.5-27B should have <35B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_embedding_params(self):
+        """Test embedding params."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=32,
+            num_heads=16,
+        )
+
+        embedding_params = model.embedding.params_count()
+        expected = 248320 * 4096
+        assert embedding_params == expected
+
+
+class TestQwen3_5DenseInference:
+    """Test Qwen3.5 Dense inference."""
+
+    def test_qwen3_5_inference_eval(self):
+        """Test Qwen3.5 Dense forward pass."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            intermediate_size=6144,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        logits = model(input_ids)
+
+        assert logits.shape == (1, 512, 248320)
+        assert "embedding_output" in model._activations
+        assert "layer_0_output" in model._activations
+        assert "final_norm_output" in model._activations
+
+    def test_qwen3_5_module_instance(self):
+        """Test Qwen3.5 Dense module instance with TP."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+        )
+
+        ctx = ParallelContext(tp_degree=8)
+        instance = model.bind(ctx)
+
+        assert instance.params_count_logical == model.params_count()
+        assert instance.params_count_physical < instance.params_count_logical
+
+    def test_qwen3_5_forward_with_op_history(self):
+        """Test forward produces op history."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=2,
+            num_heads=16,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 128))
+        logits = model(input_ids)
+
+        assert len(logits._op_history) > 0
+
+    def test_qwen3_5_tie_forward(self):
+        """Test forward with tie_word_embeddings=True."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=1024,
+            num_layers=4,
+            num_heads=8,
+            tie_word_embeddings=True,
+        )
+
+        input_ids = ShardedTensor(shape=(1, 512))
+        logits = model(input_ids)
+
+        assert logits.shape == (1, 512, 248320)
+
+
+class TestQwen3_5DenseFromConfig:
+    """Test creating Qwen3.5 Dense from config."""
+
+    def test_create_from_preset(self):
+        """Test creating Qwen3.5 Dense from preset."""
+        presets = get_model_presets()
+        if "qwen3_5" not in presets:
+            pytest.skip("qwen3_5 preset not yet available")
+
+        model = create_model_from_config({"preset": "qwen3_5"})
+        assert isinstance(model, Qwen3_5Model)
+
+    def test_create_from_type(self):
+        """Test creating Qwen3.5 Dense from type field."""
+        presets = get_model_presets()
+        if "qwen3_5" not in presets:
+            pytest.skip("qwen3_5 preset not yet available")
+
+        model = create_model_from_config({"type": "qwen3_5"})
+        assert isinstance(model, Qwen3_5Model)
+
+
+class TestQwen3_5DenseBreakdown:
+    """Test Qwen3.5 Dense params breakdown."""
+
+    def test_qwen3_5_attention_breakdown(self):
+        """Test attention params breakdown."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+        )
+
+        breakdown = model.params_count_breakdown()
+
+        attention_params = sum(
+            v for k, v in breakdown.items() if "attention" in k and "ffn" not in k
+        )
+        assert attention_params > 0
+
+    def test_qwen3_5_ffn_breakdown(self):
+        """Test FFN params breakdown."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            intermediate_size=6144,
+        )
+
+        breakdown = model.params_count_breakdown()
+
+        ffn_params = sum(v for k, v in breakdown.items() if "ffn" in k)
+        assert ffn_params > 0
+
+    def test_qwen3_5_tie_breakdown(self):
+        """Test params breakdown with tie_word_embeddings."""
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=1024,
+            num_layers=4,
+            num_heads=8,
+            tie_word_embeddings=True,
+        )
+
+        breakdown = model.params_count_breakdown()
+
+        assert "lm_head (shared with embedding)" in breakdown
+        assert breakdown["lm_head (shared with embedding)"] == 0

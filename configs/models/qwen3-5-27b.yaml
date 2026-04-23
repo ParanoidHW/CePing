@@ -1,0 +1,45 @@
+description: Qwen3.5-27B Dense with Hybrid Attention
+preset_type: model
+architecture: qwen3_5
+sparse_type: dense
+attention_features:
+  - linear_attention
+  - gqa
+
+config:
+  vocab_size: 248320
+  hidden_size: 5120
+  num_layers: 64
+  num_heads: 24
+  num_kv_heads: 4
+  intermediate_size: 17408
+  linear_num_heads: 48
+  linear_num_kv_heads: 48
+  linear_kernel_dim: 4
+  tie_word_embeddings: false
+  max_seq_len: 4096
+  dtype: fp16
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: seq_len
+      label: Sequence Length
+      type: number
+      default: 4096
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: prompt_len
+      label: Prompt Length
+      type: number
+      default: 1024
+    - name: generation_len
+      label: Generation Length
+      type: number
+      default: 128

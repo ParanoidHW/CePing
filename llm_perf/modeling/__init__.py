@@ -73,7 +73,9 @@ from .wan import (
 
 from .qwen3_5 import (
     Qwen3_5MoEModel,
+    Qwen3_5Model,
     ShardedQwen3_5MoEBlock,
+    ShardedQwen3_5DenseBlock,
     generate_layer_types,
 )
 
@@ -161,7 +163,9 @@ __all__ = [
     "ShardedWanDiT",
     "ShardedWanVAE",
     "Qwen3_5MoEModel",
+    "Qwen3_5Model",
     "ShardedQwen3_5MoEBlock",
+    "ShardedQwen3_5DenseBlock",
     "generate_layer_types",
     "ShardedViTEncoder",
     "ShardedViTBlock",
