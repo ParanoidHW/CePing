@@ -83,22 +83,60 @@
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Prefill 设备数</label>
-                                <input type="number" id="prefill-devices" value="32">
-                            </div>
-                            <div class="form-group">
-                                <label>Decode 设备数</label>
-                                <input type="number" id="decode-devices" value="32">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
                                 <label>输入 Tokens (input_tokens)</label>
                                 <input type="number" id="pd-input-tokens" value="1000">
                             </div>
                             <div class="form-group">
                                 <label>输出 Tokens (output_tokens)</label>
                                 <input type="number" id="pd-output-tokens" value="100">
+                            </div>
+                        </div>
+                        
+                        <div class="section-hint">Prefill 实例并行策略</div>
+                        <div class="parallel-grid-wide">
+                            <div class="form-group">
+                                <label>TP_p</label>
+                                <input type="number" id="pd-tp-prefill" value="8" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>PP_p</label>
+                                <input type="number" id="pd-pp-prefill" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>EP_p</label>
+                                <input type="number" id="pd-ep-prefill" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Prefill 设备数</label>
+                                <input type="number" id="prefill-devices" value="32" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>DP_p <span class="auto-calc-hint">自动</span></label>
+                                <div class="readonly-display" id="pd-dp-prefill-display">4</div>
+                            </div>
+                        </div>
+                        
+                        <div class="section-hint">Decode 实例并行策略</div>
+                        <div class="parallel-grid-wide">
+                            <div class="form-group">
+                                <label>TP_d</label>
+                                <input type="number" id="pd-tp-decode" value="4" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>PP_d</label>
+                                <input type="number" id="pd-pp-decode" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>EP_d</label>
+                                <input type="number" id="pd-ep-decode" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Decode 设备数</label>
+                                <input type="number" id="decode-devices" value="32" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>DP_d <span class="auto-calc-hint">自动</span></label>
+                                <div class="readonly-display" id="pd-dp-decode-display">8</div>
                             </div>
                         </div>
                     </div>
@@ -125,6 +163,66 @@
                                 <input type="number" id="ppo-epochs" value="4">
                             </div>
                         </div>
+                        
+                        <div class="section-hint">阶段切换</div>
+                        <div class="mode-selector">
+                            <div class="tabs" id="rl-phase-tabs">
+                                <button type="button" class="tab active" data-phase="train">训练阶段</button>
+                                <button type="button" class="tab" data-phase="infer">推理阶段 (Rollout)</button>
+                            </div>
+                        </div>
+                        
+                        <div id="rl-strategy-train" class="rl-strategy-panel">
+                            <div class="section-hint">训练阶段并行策略</div>
+                            <div class="parallel-grid-wide">
+                                <div class="form-group">
+                                    <label>TP_train</label>
+                                    <input type="number" id="rl-tp-train" value="8" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>PP_train</label>
+                                    <input type="number" id="rl-pp-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>EP_train</label>
+                                    <input type="number" id="rl-ep-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>VPP_train</label>
+                                    <input type="number" id="rl-vpp-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>DP_train <span class="auto-calc-hint">自动</span></label>
+                                    <div class="readonly-display" id="rl-dp-train-display">-</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="rl-strategy-infer" class="rl-strategy-panel" style="display: none;">
+                            <div class="section-hint">推理阶段并行策略</div>
+                            <div class="parallel-grid-wide">
+                                <div class="form-group">
+                                    <label>TP_infer</label>
+                                    <input type="number" id="rl-tp-infer" value="4" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>PP_infer</label>
+                                    <input type="number" id="rl-pp-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>EP_infer</label>
+                                    <input type="number" id="rl-ep-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>VPP_infer</label>
+                                    <input type="number" id="rl-vpp-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>DP_infer <span class="auto-calc-hint">自动</span></label>
+                                    <div class="readonly-display" id="rl-dp-infer-display">-</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div id="workload-params-diffusion" class="workload-params" style="display: none;">
@@ -135,14 +233,51 @@
                                 <input type="number" id="diffusion-batch-size" value="1">
                             </div>
                             <div class="form-group">
-                                <label>图像分辨率</label>
-                                <input type="number" id="image-size" value="1024">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
                                 <label>Diffusion 步数</label>
                                 <input type="number" id="diffusion-steps" value="50">
+                            </div>
+                        </div>
+                        
+                        <div class="section-hint">生成模式</div>
+                        <div class="mode-selector">
+                            <div class="tabs" id="diffusion-mode-tabs">
+                                <button type="button" class="tab active" data-mode="T2I">T2I</button>
+                                <button type="button" class="tab" data-mode="T2V">T2V</button>
+                                <button type="button" class="tab" data-mode="I2I">I2I</button>
+                                <button type="button" class="tab" data-mode="I2V">I2V</button>
+                                <button type="button" class="tab" data-mode="V2V">V2V</button>
+                            </div>
+                        </div>
+                        
+                        <div id="diffusion-input-config">
+                            <div class="section-hint">输入配置</div>
+                            <div class="form-row" id="diffusion-input-row">
+                                <div class="form-group" id="diffusion-prompt-group">
+                                    <label>Prompt Tokens</label>
+                                    <input type="number" id="diffusion-prompt-tokens" value="512">
+                                </div>
+                                <div class="form-group" id="diffusion-input-image-group" style="display: none;">
+                                    <label>输入图像分辨率</label>
+                                    <input type="number" id="diffusion-input-image-size" value="1024">
+                                </div>
+                                <div class="form-group" id="diffusion-input-video-group" style="display: none;">
+                                    <label>输入视频帧数</label>
+                                    <input type="number" id="diffusion-input-video-frames" value="16">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="diffusion-output-config">
+                            <div class="section-hint">输出配置</div>
+                            <div class="form-row" id="diffusion-output-row">
+                                <div class="form-group" id="diffusion-output-image-group">
+                                    <label>输出图像分辨率</label>
+                                    <input type="number" id="image-size" value="1024">
+                                </div>
+                                <div class="form-group" id="diffusion-output-video-group" style="display: none;">
+                                    <label>输出视频帧数</label>
+                                    <input type="number" id="diffusion-output-video-frames" value="24">
+                                </div>
                             </div>
                         </div>
                     </div>

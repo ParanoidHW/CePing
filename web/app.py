@@ -290,6 +290,46 @@ def evaluate():
             params["width"] = data["width"]
         if "num_inference_steps" in data:
             params["num_inference_steps"] = data["num_inference_steps"]
+        
+        if workload_data and isinstance(workload_data, dict):
+            scenario = workload_data.get("scenario", "training")
+            
+            if scenario == "pd_disagg":
+                params["input_tokens"] = workload_data.get("input_tokens", 1000)
+                params["output_tokens"] = workload_data.get("output_tokens", 100)
+                params["prefill_devices"] = workload_data.get("prefill_devices", 32)
+                params["decode_devices"] = workload_data.get("decode_devices", 32)
+                if data.get("strategy_prefill"):
+                    params["strategy_prefill"] = data["strategy_prefill"]
+                if data.get("strategy_decode"):
+                    params["strategy_decode"] = data["strategy_decode"]
+            
+            elif scenario == "rl_training":
+                params["seq_len"] = workload_data.get("seq_len", 4096)
+                params["num_rollouts"] = workload_data.get("num_rollouts", 100)
+                params["ppo_epochs"] = workload_data.get("ppo_epochs", 4)
+                if data.get("strategy_train"):
+                    params["strategy_train"] = data["strategy_train"]
+                if data.get("strategy_infer"):
+                    params["strategy_infer"] = data["strategy_infer"]
+            
+            elif scenario == "diffusion":
+                params["generation_mode"] = workload_data.get("generation_mode", "T2I")
+                params["diffusion_steps"] = workload_data.get("diffusion_steps", 50)
+                
+                if workload_data.get("prompt_tokens"):
+                    params["prompt_tokens"] = workload_data.get("prompt_tokens")
+                if workload_data.get("input_image_size"):
+                    params["input_image_size"] = workload_data.get("input_image_size")
+                if workload_data.get("input_video_frames"):
+                    params["input_video_frames"] = workload_data.get("input_video_frames")
+                if workload_data.get("output_image_size"):
+                    params["output_image_size"] = workload_data.get("output_image_size")
+                    params["height"] = workload_data.get("output_image_size")
+                    params["width"] = workload_data.get("output_image_size")
+                if workload_data.get("output_video_frames"):
+                    params["output_video_frames"] = workload_data.get("output_video_frames")
+                    params["num_frames"] = workload_data.get("output_video_frames")
 
         result = analyzer.analyze(workload, **params)
 

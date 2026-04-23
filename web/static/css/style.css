@@ -586,3 +586,45 @@ footer {
 * {
     transition: background-color 0.2s ease, border-color 0.2s ease;
 }
+
+.multi-stage-config {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--gray-50);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gray-200);
+}
+
+.stage-header {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stage-header .stage-badge {
+    display: inline-flex;
+    padding: 0.25rem 0.5rem;
+    background: var(--primary-light);
+    color: var(--white);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.rl-strategy-panel {
+    padding: 0.75rem 0;
+}
+
+.diffusion-input-config,
+.diffusion-output-config {
+    padding: 0.5rem 0;
+}
+
+#diffusion-mode-tabs .tab {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+}

@@ -17,7 +17,9 @@ const state = {
     modelPresets: {},
     topologyPresets: {},
     currentPipeline: null,
-    videoParams: null
+    videoParams: null,
+    rlCurrentPhase: 'train',
+    diffusionCurrentMode: 'T2I',
 };
 
 const elements = {
@@ -163,6 +165,117 @@ function switchWorkloadScenario(scenario) {
     if (targetParams) {
         targetParams.style.display = 'block';
     }
+    
+    if (scenario === 'pd_disagg') {
+        setupPDDisaggListeners();
+        calculatePDDP();
+    } else if (scenario === 'rl_training') {
+        setupRLPhaseTabs();
+        calculateRLDP('train');
+        calculateRLDP('infer');
+    } else if (scenario === 'diffusion') {
+        setupDiffusionModeTabs();
+        updateDiffusionModeUI(state.diffusionCurrentMode);
+    }
+}
+
+function setupPDDisaggListeners() {
+    const prefillInputs = ['pd-tp-prefill', 'pd-pp-prefill', 'pd-ep-prefill', 'prefill-devices'];
+    const decodeInputs = ['pd-tp-decode', 'pd-pp-decode', 'pd-ep-decode', 'decode-devices'];
+    
+    prefillInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => calculatePDDP('prefill'));
+    });
+    
+    decodeInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => calculatePDDP('decode'));
+    });
+}
+
+function calculatePDDP(phase) {
+    if (phase === 'prefill') {
+        const tp = parseInt(document.getElementById('pd-tp-prefill')?.value) || 1;
+        const pp = parseInt(document.getElementById('pd-pp-prefill')?.value) || 1;
+        const ep = parseInt(document.getElementById('pd-ep-prefill')?.value) || 1;
+        const devices = parseInt(document.getElementById('prefill-devices')?.value) || 32;
+        const dp = Math.floor(devices / (tp * pp * ep));
+        const display = document.getElementById('pd-dp-prefill-display');
+        if (display) display.textContent = dp > 0 ? dp : 'N/A';
+    } else {
+        const tp = parseInt(document.getElementById('pd-tp-decode')?.value) || 1;
+        const pp = parseInt(document.getElementById('pd-pp-decode')?.value) || 1;
+        const ep = parseInt(document.getElementById('pd-ep-decode')?.value) || 1;
+        const devices = parseInt(document.getElementById('decode-devices')?.value) || 32;
+        const dp = Math.floor(devices / (tp * pp * ep));
+        const display = document.getElementById('pd-dp-decode-display');
+        if (display) display.textContent = dp > 0 ? dp : 'N/A';
+    }
+}
+
+function setupRLPhaseTabs() {
+    const tabs = document.querySelectorAll('#rl-phase-tabs .tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', (e) => {
+            tabs.forEach(t => t.classList.remove('active'));
+            e.target.classList.add('active');
+            const phase = e.target.dataset.phase;
+            state.rlCurrentPhase = phase;
+            
+            document.getElementById('rl-strategy-train').style.display = phase === 'train' ? 'block' : 'none';
+            document.getElementById('rl-strategy-infer').style.display = phase === 'infer' ? 'block' : 'none';
+        });
+    });
+    
+    const trainInputs = ['rl-tp-train', 'rl-pp-train', 'rl-ep-train', 'rl-vpp-train'];
+    trainInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => calculateRLDP('train'));
+    });
+    
+    const inferInputs = ['rl-tp-infer', 'rl-pp-infer', 'rl-ep-infer', 'rl-vpp-infer'];
+    inferInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => calculateRLDP('infer'));
+    });
+}
+
+function calculateRLDP(phase) {
+    const tp = parseInt(document.getElementById(`rl-tp-${phase}`)?.value) || 1;
+    const pp = parseInt(document.getElementById(`rl-pp-${phase}`)?.value) || 1;
+    const ep = parseInt(document.getElementById(`rl-ep-${phase}`)?.value) || 1;
+    const totalDevices = parseInt(elements.totalDevices?.value) || 64;
+    const dp = Math.floor(totalDevices / (tp * pp * ep));
+    const display = document.getElementById(`rl-dp-${phase}-display`);
+    if (display) display.textContent = dp > 0 ? dp : 'N/A';
+}
+
+function setupDiffusionModeTabs() {
+    const tabs = document.querySelectorAll('#diffusion-mode-tabs .tab');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', (e) => {
+            tabs.forEach(t => t.classList.remove('active'));
+            e.target.classList.add('active');
+            const mode = e.target.dataset.mode;
+            state.diffusionCurrentMode = mode;
+            updateDiffusionModeUI(mode);
+        });
+    });
+}
+
+function updateDiffusionModeUI(mode) {
+    const promptGroup = document.getElementById('diffusion-prompt-group');
+    const inputImageGroup = document.getElementById('diffusion-input-image-group');
+    const inputVideoGroup = document.getElementById('diffusion-input-video-group');
+    const outputImageGroup = document.getElementById('diffusion-output-image-group');
+    const outputVideoGroup = document.getElementById('diffusion-output-video-group');
+    
+    if (promptGroup) promptGroup.style.display = (mode === 'T2I' || mode === 'T2V') ? 'block' : 'none';
+    if (inputImageGroup) inputImageGroup.style.display = (mode === 'I2I' || mode === 'I2V') ? 'block' : 'none';
+    if (inputVideoGroup) inputVideoGroup.style.display = mode === 'V2V' ? 'block' : 'none';
+    if (outputImageGroup) outputImageGroup.style.display = (mode === 'T2I' || mode === 'I2I') ? 'block' : 'none';
+    if (outputVideoGroup) outputVideoGroup.style.display = (mode === 'T2V' || mode === 'I2V' || mode === 'V2V') ? 'block' : 'none';
 }
 
 function loadModelPreset() {
@@ -487,7 +600,7 @@ function collectConfig() {
     
     const scenario = elements.workloadScenario ? elements.workloadScenario.value : 'training';
     
-    const config = {
+    const baseConfig = {
         cluster: {
             topology: topologyType,
             total_devices: parseInt(elements.totalDevices.value),
@@ -505,7 +618,11 @@ function collectConfig() {
         device: elements.deviceModel.value,
         num_devices: parseInt(elements.totalDevices.value),
         topology: topology,
-        strategy: {
+        workload: collectWorkloadConfig(scenario),
+    };
+    
+    if (scenario === 'pd_disagg') {
+        baseConfig.strategy = {
             tp: parseInt(elements.tpDegree.value),
             pp: parseInt(elements.ppDegree.value),
             vpp: parseInt(elements.vppDegree?.value || 1),
@@ -517,11 +634,46 @@ function collectConfig() {
             megatron_sp_enabled: elements.megatronSpEnabled.checked,
             activation_checkpointing: document.getElementById('activation-checkpointing').checked,
             zero_stage: parseInt(document.getElementById('zero-stage').value)
-        },
-        workload: collectWorkloadConfig(scenario),
-    };
+        };
+        baseConfig.strategy_prefill = baseConfig.workload.strategy_prefill;
+        baseConfig.strategy_decode = baseConfig.workload.strategy_decode;
+        delete baseConfig.workload.strategy_prefill;
+        delete baseConfig.workload.strategy_decode;
+    } else if (scenario === 'rl_training') {
+        baseConfig.strategy = {
+            tp: parseInt(elements.tpDegree.value),
+            pp: parseInt(elements.ppDegree.value),
+            vpp: parseInt(elements.vppDegree?.value || 1),
+            pipeline_schedule: elements.pipelineSchedule?.value || '1f1b',
+            dp: parseInt(elements.dpDegree.value),
+            ep: parseInt(elements.epDegree.value),
+            ulysses_degree: parseInt(elements.ulyssesDegree.value),
+            ring_degree: parseInt(elements.ringDegree.value),
+            megatron_sp_enabled: elements.megatronSpEnabled.checked,
+            activation_checkpointing: document.getElementById('activation-checkpointing').checked,
+            zero_stage: parseInt(document.getElementById('zero-stage').value)
+        };
+        baseConfig.strategy_train = baseConfig.workload.strategy_train;
+        baseConfig.strategy_infer = baseConfig.workload.strategy_infer;
+        delete baseConfig.workload.strategy_train;
+        delete baseConfig.workload.strategy_infer;
+    } else {
+        baseConfig.strategy = {
+            tp: parseInt(elements.tpDegree.value),
+            pp: parseInt(elements.ppDegree.value),
+            vpp: parseInt(elements.vppDegree?.value || 1),
+            pipeline_schedule: elements.pipelineSchedule?.value || '1f1b',
+            dp: parseInt(elements.dpDegree.value),
+            ep: parseInt(elements.epDegree.value),
+            ulysses_degree: parseInt(elements.ulyssesDegree.value),
+            ring_degree: parseInt(elements.ringDegree.value),
+            megatron_sp_enabled: elements.megatronSpEnabled.checked,
+            activation_checkpointing: document.getElementById('activation-checkpointing').checked,
+            zero_stage: parseInt(document.getElementById('zero-stage').value)
+        };
+    }
     
-    return config;
+    return baseConfig;
 }
 
 function collectWorkloadConfig(scenario) {
@@ -541,21 +693,59 @@ function collectWorkloadConfig(scenario) {
             break;
         case 'pd_disagg':
             workload.batch_size = parseInt(document.getElementById('pd-batch-size')?.value || 1);
-            workload.prefill_devices = parseInt(document.getElementById('prefill-devices')?.value || 32);
-            workload.decode_devices = parseInt(document.getElementById('decode-devices')?.value || 32);
             workload.input_tokens = parseInt(document.getElementById('pd-input-tokens')?.value || 1000);
             workload.output_tokens = parseInt(document.getElementById('pd-output-tokens')?.value || 100);
+            workload.prefill_devices = parseInt(document.getElementById('prefill-devices')?.value || 32);
+            workload.decode_devices = parseInt(document.getElementById('decode-devices')?.value || 32);
+            workload.strategy_prefill = {
+                tp: parseInt(document.getElementById('pd-tp-prefill')?.value || 8),
+                pp: parseInt(document.getElementById('pd-pp-prefill')?.value || 1),
+                ep: parseInt(document.getElementById('pd-ep-prefill')?.value || 1),
+            };
+            workload.strategy_decode = {
+                tp: parseInt(document.getElementById('pd-tp-decode')?.value || 4),
+                pp: parseInt(document.getElementById('pd-pp-decode')?.value || 1),
+                ep: parseInt(document.getElementById('pd-ep-decode')?.value || 1),
+            };
             break;
         case 'rl_training':
             workload.batch_size = parseInt(document.getElementById('rl-batch-size')?.value || 32);
             workload.seq_len = parseInt(document.getElementById('rl-seq-len')?.value || 4096);
             workload.num_rollouts = parseInt(document.getElementById('num-rollouts')?.value || 100);
             workload.ppo_epochs = parseInt(document.getElementById('ppo-epochs')?.value || 4);
+            workload.strategy_train = {
+                tp: parseInt(document.getElementById('rl-tp-train')?.value || 8),
+                pp: parseInt(document.getElementById('rl-pp-train')?.value || 1),
+                ep: parseInt(document.getElementById('rl-ep-train')?.value || 1),
+                vpp: parseInt(document.getElementById('rl-vpp-train')?.value || 1),
+            };
+            workload.strategy_infer = {
+                tp: parseInt(document.getElementById('rl-tp-infer')?.value || 4),
+                pp: parseInt(document.getElementById('rl-pp-infer')?.value || 1),
+                ep: parseInt(document.getElementById('rl-ep-infer')?.value || 1),
+                vpp: parseInt(document.getElementById('rl-vpp-infer')?.value || 1),
+            };
             break;
         case 'diffusion':
             workload.batch_size = parseInt(document.getElementById('diffusion-batch-size')?.value || 1);
-            workload.image_size = parseInt(document.getElementById('image-size')?.value || 1024);
             workload.diffusion_steps = parseInt(document.getElementById('diffusion-steps')?.value || 50);
+            workload.generation_mode = state.diffusionCurrentMode || 'T2I';
+            
+            if (workload.generation_mode === 'T2I' || workload.generation_mode === 'T2V') {
+                workload.prompt_tokens = parseInt(document.getElementById('diffusion-prompt-tokens')?.value || 512);
+            }
+            if (workload.generation_mode === 'I2I' || workload.generation_mode === 'I2V') {
+                workload.input_image_size = parseInt(document.getElementById('diffusion-input-image-size')?.value || 1024);
+            }
+            if (workload.generation_mode === 'V2V') {
+                workload.input_video_frames = parseInt(document.getElementById('diffusion-input-video-frames')?.value || 16);
+            }
+            if (workload.generation_mode === 'T2I' || workload.generation_mode === 'I2I') {
+                workload.output_image_size = parseInt(document.getElementById('image-size')?.value || 1024);
+            }
+            if (workload.generation_mode === 'T2V' || workload.generation_mode === 'I2V' || workload.generation_mode === 'V2V') {
+                workload.output_video_frames = parseInt(document.getElementById('diffusion-output-video-frames')?.value || 24);
+            }
             break;
     }
     
