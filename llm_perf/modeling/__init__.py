@@ -75,6 +75,15 @@ from .qwen3_5 import (
     generate_layer_types,
 )
 
+from .encoder import (
+    ShardedViTEncoder,
+    ShardedViTBlock,
+    ShardedPatchEmbedding,
+    ShardedPositionalEmbedding,
+    ShardedSpatialMerge,
+    ShardedOutputProjection,
+)
+
 from llm_perf.strategy import (
     ParallelContext,
     SPType,
@@ -152,6 +161,12 @@ __all__ = [
     "Qwen3_5MoEModel",
     "ShardedQwen3_5MoEBlock",
     "generate_layer_types",
+    "ShardedViTEncoder",
+    "ShardedViTBlock",
+    "ShardedPatchEmbedding",
+    "ShardedPositionalEmbedding",
+    "ShardedSpatialMerge",
+    "ShardedOutputProjection",
     "ParallelContext",
     "SPType",
     "CommDomain",
