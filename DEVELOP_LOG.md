@@ -1,5 +1,40 @@
 # 开发日志
 
+## 2026-04-23: 修复 Attention kv_seq_len 问题，decode 阶段计算量正确评估
+
+### 问题描述
+- decode 阶段 input tensor seq_len=1
+- 但 K/V tensor 应该是 kv_seq_len 长度
+- Attention 计算量应为 O(kv_seq_len × hidden_size)，当前低估
+
+### 根因分析
+1. `unified.py:517-518`: decode phase seq_len=1
+2. `layers.py:356-367`: `ShardedAttention.forward` 使用 `hidden.shape[1]` 创建 K/V tensor
+3. `module.py:527-531`: `_infer_physical_flops` 使用 `op.key.shape` 计算 flops
+
+### 修复方案
+遵循架构原则：kernel 层保持纯粹，shape 由上层定义
+
+1. 在 `ShardedModule` 基类添加 `_kv_seq_len` 属性
+2. 在 `ShardedAttention.forward` 和 `ShardedMLA.forward` 中使用 `_kv_seq_len`
+3. 在 `unified.py` 的 `_analyze_phase_with_submodules` 中设置 `_kv_seq_len`
+
+### 修改文件
+- `llm_perf/modeling/module.py`: 添加 `_kv_seq_len` 属性
+- `llm_perf/modeling/layers.py`: `ShardedAttention.forward` 使用 `_kv_seq_len`
+- `llm_perf/modeling/mla.py`: `ShardedMLA.forward` 使用 `_kv_seq_len`
+- `llm_perf/analyzer/unified.py`: 添加 `_set_kv_seq_len` 方法
+- `tests/test_framework_overhead.py`: 新增测试用例
+
+### 测试结果
+- 所有测试通过：554 passed (3 new tests added)
+
+### 参考来源
+- Transformer decode 阶段特性：Q长度=1，K/V长度=kv_seq_len
+- `flash_attention` 公式：FLOPs = O(batch * num_heads * seq_len * kv_seq_len * head_dim)
+
+---
+
 ## 2026-04-23: 修复 TPOT 时间计算，加入 KV Cache 访存时间
 
 ### 问题描述
