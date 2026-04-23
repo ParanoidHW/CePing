@@ -323,9 +323,23 @@ class UnifiedAnalyzer:
                 component, phase, compute_pattern, params, seq_len_factor, workload
             )
 
-            total_time = single_time * repeat_count
-
             framework_overhead_bytes = self._calculate_framework_overhead(phase, params, component)
+            
+            kv_cache_time_sec = 0.0
+            if framework_overhead_bytes > 0:
+                bandwidth_gbps = self.device.get_memory_bw_gbps()
+                memory_bandwidth = bandwidth_gbps * 1e9
+                kv_cache_time_sec = framework_overhead_bytes / memory_bandwidth
+                logger.debug(
+                    f"[KV_CACHE_TIME] phase={phase.name}, "
+                    f"framework_overhead_bytes={framework_overhead_bytes:.2e}, "
+                    f"bandwidth_gbps={bandwidth_gbps:.2f}, "
+                    f"kv_cache_time_sec={kv_cache_time_sec:.6f}"
+                )
+            
+            single_time += kv_cache_time_sec
+
+            total_time = single_time * repeat_count
             framework_overhead_gb = framework_overhead_bytes / 1e9
 
             memory_breakdown = {
