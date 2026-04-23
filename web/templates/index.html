@@ -244,8 +244,7 @@
                 <section class="card parallelism-config">
                     <h2>并行切分配置</h2>
                     
-                    <div class="section-hint">基础并行策略</div>
-                    <div class="parallel-grid">
+                    <div class="parallel-grid-wide">
                         <div class="form-group">
                             <label>TP (Tensor)</label>
                             <input type="number" id="tp-degree" value="8" min="1">
@@ -259,26 +258,9 @@
                             <input type="number" id="vpp-degree" value="1" min="1">
                         </div>
                         <div class="form-group">
-                            <label>Pipeline Schedule</label>
-                            <select id="pipeline-schedule">
-                                <option value="1f1b">1F1B</option>
-                                <option value="gpipe">GPipe</option>
-                                <option value="interleaved">Interleaved</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
                             <label>EP (Expert)</label>
                             <input type="number" id="ep-degree" value="1" min="1">
                         </div>
-                        <div class="form-group">
-                            <label>DP (Data) <span class="auto-calc-hint">自动计算</span></label>
-                            <div class="readonly-display" id="dp-degree-display">1</div>
-                            <input type="hidden" id="dp-degree" value="1">
-                        </div>
-                    </div>
-
-                    <div class="section-hint">序列并行策略</div>
-                    <div class="parallel-grid">
                         <div class="form-group">
                             <label>Ulysses-SP</label>
                             <input type="number" id="ulysses-degree" value="1" min="1">
@@ -287,29 +269,45 @@
                             <label>Ring-SP（含CP）</label>
                             <input type="number" id="ring-degree" value="1" min="1">
                         </div>
-                    </div>
-
-                    <div class="form-check">
-                        <input type="checkbox" id="megatron-sp-enabled">
-                        <label for="megatron-sp-enabled">启用 Megatron-SP（需配合 TP 使用，作为 Ulysses/Ring 之外的补充）</label>
+                        <div class="form-group">
+                            <label>Pipeline Schedule</label>
+                            <select id="pipeline-schedule">
+                                <option value="1f1b">1F1B</option>
+                                <option value="gpipe">GPipe</option>
+                                <option value="interleaved">Interleaved</option>
+                            </select>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label>Megatron-SP</label>
+                            <div class="checkbox-wrapper">
+                                <input type="checkbox" id="megatron-sp-enabled">
+                                <span class="checkbox-label">启用</span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>DP (Data) <span class="auto-calc-hint">自动计算</span></label>
+                            <div class="readonly-display" id="dp-degree-display">1</div>
+                            <input type="hidden" id="dp-degree" value="1">
+                        </div>
                     </div>
 
                     <div id="dp-validation-error" class="validation-error" style="display: none;"></div>
 
                     <div class="section-hint">内存优化</div>
-                    <div class="form-check">
-                        <input type="checkbox" id="activation-checkpointing">
-                        <label for="activation-checkpointing">Activation Checkpointing</label>
-                    </div>
-
-                    <div class="form-group">
-                        <label>ZeRO Stage</label>
-                        <select id="zero-stage">
-                            <option value="0">Disabled</option>
-                            <option value="1">Stage 1 (Optimizer States)</option>
-                            <option value="2">Stage 2 (Gradients)</option>
-                            <option value="3">Stage 3 (Parameters)</option>
-                        </select>
+                    <div class="memory-opts">
+                        <div class="form-check">
+                            <input type="checkbox" id="activation-checkpointing">
+                            <label for="activation-checkpointing">Activation Checkpointing</label>
+                        </div>
+                        <div class="form-group inline-group">
+                            <label>ZeRO Stage</label>
+                            <select id="zero-stage">
+                                <option value="0">Disabled</option>
+                                <option value="1">Stage 1</option>
+                                <option value="2">Stage 2</option>
+                                <option value="3">Stage 3</option>
+                            </select>
+                        </div>
                     </div>
                 </section>
             </div>
