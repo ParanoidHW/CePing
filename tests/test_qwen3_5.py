@@ -1078,3 +1078,166 @@ class TestQwen3_5DenseBreakdown:
 
         assert "lm_head (shared with embedding)" in breakdown
         assert breakdown["lm_head (shared with embedding)"] == 0
+
+
+class TestQwen3_5MoE122B_A10B:
+    """Test Qwen3.5-122B-A10B MoE configuration."""
+
+    def test_qwen3_5_122b_a10b_params(self):
+        """Test Qwen3.5-122B-A10B params ~122B total, ~10B active.
+
+        Config from HuggingFace:
+        - hidden_size: 3072, num_layers: 48
+        - num_heads: 32, num_kv_heads: 2, head_dim: 256
+        - num_experts: 256, num_experts_per_token: 8
+        - intermediate_size: 1024, shared_expert_intermediate: 1024
+        - vocab_size: 248320, linear_num_value_heads: 64
+        """
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=3072,
+            num_layers=48,
+            num_heads=32,
+            num_kv_heads=2,
+            head_dim=256,
+            linear_num_heads=32,
+            linear_num_kv_heads=64,
+            linear_key_head_dim=128,
+            linear_value_head_dim=128,
+            linear_kernel_dim=4,
+            intermediate_size=1024,
+            num_experts=256,
+            num_experts_per_token=8,
+            shared_expert_intermediate=1024,
+        )
+
+        params = model.params_count()
+
+        assert params > 100e9, f"Qwen3.5-122B should have >100B params, got {params / 1e9:.2f}B"
+        assert params < 150e9, f"Qwen3.5-122B should have <150B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_122b_a10b_config(self):
+        """Test Qwen3.5-122B-A10B configuration."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=3072,
+            num_layers=48,
+            num_heads=32,
+            num_experts=256,
+            num_experts_per_token=8,
+        )
+
+        assert model.hidden_size == 3072
+        assert model.num_layers == 48
+        assert model.num_heads == 32
+        assert model.num_experts == 256
+        assert model.num_experts_per_token == 8
+
+    def test_qwen3_5_122b_a10b_from_preset(self):
+        """Test creating Qwen3.5-122B-A10B from preset."""
+        presets = get_model_presets()
+        if "qwen3-5-122b-a10b" not in presets:
+            pytest.skip("qwen3-5-122b-a10b preset not yet available")
+
+        model = create_model_from_config({"preset": "qwen3-5-122b-a10b"})
+        assert isinstance(model, Qwen3_5MoEModel)
+        assert model.hidden_size == 3072
+        assert model.num_layers == 48
+        assert model.num_experts == 256
+
+
+class TestQwen3_5MoE397B_A17B:
+    """Test Qwen3.5-397B-A17B MoE configuration."""
+
+    def test_qwen3_5_397b_a17b_params(self):
+        """Test Qwen3.5-397B-A17B params ~397B total, ~17B active.
+
+        Config from HuggingFace:
+        - hidden_size: 4096, num_layers: 60
+        - num_heads: 32, num_kv_heads: 2, head_dim: 256
+        - num_experts: 512, num_experts_per_token: 10
+        - intermediate_size: 1024, shared_expert_intermediate: 1024
+        - vocab_size: 248320, linear_num_value_heads: 64
+        """
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=60,
+            num_heads=32,
+            num_kv_heads=2,
+            head_dim=256,
+            linear_num_heads=32,
+            linear_num_kv_heads=64,
+            linear_key_head_dim=128,
+            linear_value_head_dim=128,
+            linear_kernel_dim=4,
+            intermediate_size=1024,
+            num_experts=512,
+            num_experts_per_token=10,
+            shared_expert_intermediate=1024,
+        )
+
+        params = model.params_count()
+
+        assert params > 350e9, f"Qwen3.5-397B should have >350B params, got {params / 1e9:.2f}B"
+        assert params < 450e9, f"Qwen3.5-397B should have <450B params, got {params / 1e9:.2f}B"
+
+    def test_qwen3_5_397b_num_experts_512(self):
+        """Test Qwen3.5-397B uses 512 experts (vs 256 for smaller models)."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=60,
+            num_heads=32,
+            num_experts=512,
+            num_experts_per_token=10,
+        )
+
+        assert model.num_experts == 512
+        for layer in model.layers:
+            assert layer.moe.num_experts == 512
+
+    def test_qwen3_5_397b_top_k_10(self):
+        """Test Qwen3.5-397B uses top-10 routing (vs top-8 for smaller models)."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=60,
+            num_heads=32,
+            num_experts=512,
+            num_experts_per_token=10,
+        )
+
+        assert model.num_experts_per_token == 10
+        for layer in model.layers:
+            assert layer.moe.num_experts_per_token == 10
+
+    def test_qwen3_5_397b_a17b_config(self):
+        """Test Qwen3.5-397B-A17B configuration."""
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=4096,
+            num_layers=60,
+            num_heads=32,
+            num_experts=512,
+            num_experts_per_token=10,
+        )
+
+        assert model.hidden_size == 4096
+        assert model.num_layers == 60
+        assert model.num_heads == 32
+        assert model.num_experts == 512
+        assert model.num_experts_per_token == 10
+
+    def test_qwen3_5_397b_a17b_from_preset(self):
+        """Test creating Qwen3.5-397B-A17B from preset."""
+        presets = get_model_presets()
+        if "qwen3-5-397b-a17b" not in presets:
+            pytest.skip("qwen3-5-397b-a17b preset not yet available")
+
+        model = create_model_from_config({"preset": "qwen3-5-397b-a17b"})
+        assert isinstance(model, Qwen3_5MoEModel)
+        assert model.hidden_size == 4096
+        assert model.num_layers == 60
+        assert model.num_experts == 512
+        assert model.num_experts_per_token == 10

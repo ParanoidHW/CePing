@@ -1,0 +1,50 @@
+description: Qwen3.5-397B-A17B MoE with Hybrid Attention
+preset_type: model
+architecture: qwen3_5_moe
+sparse_type: qwen3_5_moe
+attention_features:
+  - linear_attention
+  - gqa
+
+config:
+  vocab_size: 248320
+  hidden_size: 4096
+  num_layers: 60
+  num_heads: 32
+  num_kv_heads: 2
+  head_dim: 256
+  linear_num_heads: 32
+  linear_num_kv_heads: 64
+  linear_key_head_dim: 128
+  linear_value_head_dim: 128
+  linear_kernel_dim: 4
+  intermediate_size: 1024
+  num_experts: 512
+  num_experts_per_token: 10
+  shared_expert_intermediate: 1024
+  max_seq_len: 4096
+  dtype: fp16
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: seq_len
+      label: Sequence Length
+      type: number
+      default: 4096
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: prompt_len
+      label: Prompt Length
+      type: number
+      default: 1024
+    - name: generation_len
+      label: Generation Length
+      type: number
+      default: 128
