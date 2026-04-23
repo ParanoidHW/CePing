@@ -45,6 +45,7 @@ class ShardedModule:
         self._name: str = ""
         self._last_forward_input: Optional[ShardedTensor] = None
         self._last_forward_output: Optional[ShardedTensor] = None
+        self._kv_seq_len: Optional[int] = None
 
     def __setattr__(self, name: str, value: Any):
         """Auto-register submodules and parameters."""

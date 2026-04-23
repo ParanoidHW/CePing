@@ -8,6 +8,8 @@ from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.topology import NetworkTopology
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.modeling import LlamaModel
+from llm_perf.modeling.layers import ShardedAttention
+from llm_perf.kernels.functional import flash_attention
 
 
 def create_test_cluster(device: Device, num_devices: int = 1) -> Cluster:
@@ -366,3 +368,108 @@ class TestAttentionOpPurity:
         assert hasattr(op, "is_causal")
         assert op.kernel_name == "flash_attention"
         assert op.is_causal == True
+
+
+class TestKVSeqLenInDecodeAttention:
+    """Test that decode phase attention uses kv_seq_len for K/V tensor shape."""
+
+    def test_attention_kv_seq_len_forward(self):
+        """ShardedAttention forward should use _kv_seq_len for K/V tensor shape."""
+        from llm_perf.modeling.tensor import ShardedTensor
+
+        attn = ShardedAttention(
+            hidden_size=4096,
+            num_heads=32,
+            num_kv_heads=8,
+            head_dim=128,
+        )
+
+        attn._kv_seq_len = 640
+
+        hidden = ShardedTensor(shape=(1, 1, 4096))
+        output = attn(hidden)
+
+        assert output is not None
+
+        for op in output._op_history:
+            if hasattr(op, "key"):
+                assert op.key.shape[2] == 640, f"K tensor kv_seq_len should be 640, got {op.key.shape[2]}"
+            if hasattr(op, "value"):
+                assert op.value.shape[2] == 640, f"V tensor kv_seq_len should be 640, got {op.value.shape[2]}"
+
+    def test_attention_flops_scales_with_kv_seq_len(self):
+        """Attention FLOPs should scale linearly with kv_seq_len."""
+        batch = 1
+        num_heads = 32
+        kv_num_heads = 8
+        seq_len = 1
+        head_dim = 128
+
+        kv_seq_len_short = 128
+        kv_seq_len_long = 1024
+
+        result_short = flash_attention(
+            (batch, num_heads, seq_len, head_dim),
+            (batch, kv_num_heads, kv_seq_len_short, head_dim),
+            (batch, kv_num_heads, kv_seq_len_short, head_dim),
+        )
+
+        result_long = flash_attention(
+            (batch, num_heads, seq_len, head_dim),
+            (batch, kv_num_heads, kv_seq_len_long, head_dim),
+            (batch, kv_num_heads, kv_seq_len_long, head_dim),
+        )
+
+        ratio = result_long.flops / result_short.flops
+        expected_ratio = kv_seq_len_long / kv_seq_len_short
+
+        assert ratio == expected_ratio, f"FLOPs ratio should be {expected_ratio}, got {ratio}"
+
+    def test_decode_attention_time_differs_with_kv_seq_len(self):
+        """Decode phase attention time should differ with different kv_seq_len."""
+        device = Device(DeviceConfig(
+            name="H100",
+            memory_gb=80,
+            memory_bandwidth_gbps=3352,
+            fp16_tflops_cube=1000
+        ))
+        cluster = create_test_cluster(device, num_devices=1)
+        strategy = StrategyConfig(tp_degree=1)
+
+        model_short = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=2,
+            num_heads=32,
+            num_kv_heads=8,
+        )
+
+        model_long = LlamaModel(
+            vocab_size=32000,
+            hidden_size=4096,
+            num_layers=2,
+            num_heads=32,
+            num_kv_heads=8,
+        )
+
+        workload = WorkloadConfig(
+            name="inference",
+            workload_type=WorkloadType.INFERENCE,
+            phases=[
+                Phase(name="decode", compute_type=ComputeType.FORWARD, component="main", repeat=1),
+            ],
+        )
+
+        analyzer_short = UnifiedAnalyzer(model_short, device, cluster, strategy)
+        result_short = analyzer_short.analyze(workload, batch_size=1, prompt_len=512, generated_tokens=128)
+
+        analyzer_long = UnifiedAnalyzer(model_long, device, cluster, strategy)
+        result_long = analyzer_long.analyze(workload, batch_size=1, prompt_len=512, generated_tokens=512)
+
+        decode_short = result_short.phases[0]
+        decode_long = result_long.phases[0]
+
+        assert decode_long.single_time_sec > decode_short.single_time_sec, (
+            f"Decode time should increase with longer kv_seq_len: "
+            f"short={decode_short.single_time_sec:.6f}, long={decode_long.single_time_sec:.6f}"
+        )

@@ -148,6 +148,7 @@ class ShardedMLA(ShardedModule):
         """
         batch = hidden.shape[0] if len(hidden.shape) >= 1 else 1
         seq = hidden.shape[1] if len(hidden.shape) >= 2 else 1
+        kv_seq = self._kv_seq_len if self._kv_seq_len is not None else seq
 
         if self.q_lora_rank > 0:
             q_down = hidden @ self.q_down_weight
@@ -183,13 +184,18 @@ class ShardedMLA(ShardedModule):
         k_nope_reshaped = k_up.view(batch, seq, self.num_kv_heads, self.qk_nope_head_dim).transpose(1, 2)
         k_rope_reshaped = k_rope.view(batch, seq, self.num_kv_heads, self.qk_rope_head_dim).transpose(1, 2)
         k = ShardedTensor(
-            shape=(batch, self.num_kv_heads, seq, self.head_dim),
+            shape=(batch, self.num_kv_heads, kv_seq, self.head_dim),
             shardable=k_nope_reshaped.shardable,
             dtype=hidden.dtype,
             name="k_concat",
         )
 
-        v_reshaped = v_up.view(batch, seq, self.num_kv_heads, self.v_head_dim).transpose(1, 2)
+        v_reshaped = ShardedTensor(
+            shape=(batch, self.num_kv_heads, kv_seq, self.v_head_dim),
+            shardable={1: "tp"},
+            dtype=hidden.dtype,
+            name="v_reshaped",
+        )
 
         attn_out = flash_attention(q, k, v_reshaped, is_causal=is_causal)
 

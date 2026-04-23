@@ -426,6 +426,22 @@ class UnifiedAnalyzer:
         """
         return ComputePattern.TRANSFORMER_BLOCK
 
+    def _set_kv_seq_len(self, component: ShardedModule, kv_seq_len: int) -> None:
+        """Recursively set _kv_seq_len for all attention submodules.
+
+        Args:
+            component: ShardedModule (may contain attention submodules)
+            kv_seq_len: KV sequence length for decode phase
+        """
+        from llm_perf.modeling.layers import ShardedAttention
+        from llm_perf.modeling.mla import ShardedMLA
+
+        if isinstance(component, (ShardedAttention, ShardedMLA)):
+            component._kv_seq_len = kv_seq_len
+
+        for submodule in component._submodules.values():
+            self._set_kv_seq_len(submodule, kv_seq_len)
+
     def _calculate_framework_overhead(
         self,
         phase: Phase,
@@ -516,8 +532,14 @@ class UnifiedAnalyzer:
             seq_len = params.get("prompt_len", params.get("seq_len", 512))
         elif phase.name == "decode":
             seq_len = 1
+            prompt_len = params.get("prompt_len", 512)
+            generated_tokens = params.get("generated_tokens", 0)
+            kv_seq_len = prompt_len + generated_tokens
         else:
             seq_len = params.get("seq_len", params.get("prompt_len", 512))
+        
+        if phase.name == "decode":
+            self._set_kv_seq_len(component, kv_seq_len)
         
         logger.debug(
             f"[SUBMODULE_ANALYZE] tp={ctx.tp_degree}, pp={ctx.pp_degree}, "
