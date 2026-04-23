@@ -91,52 +91,14 @@
                                 <input type="number" id="pd-output-tokens" value="100">
                             </div>
                         </div>
-                        
-                        <div class="section-hint">Prefill 实例并行策略</div>
-                        <div class="parallel-grid-wide">
-                            <div class="form-group">
-                                <label>TP_p</label>
-                                <input type="number" id="pd-tp-prefill" value="8" min="1">
-                            </div>
-                            <div class="form-group">
-                                <label>PP_p</label>
-                                <input type="number" id="pd-pp-prefill" value="1" min="1">
-                            </div>
-                            <div class="form-group">
-                                <label>EP_p</label>
-                                <input type="number" id="pd-ep-prefill" value="1" min="1">
-                            </div>
+                        <div class="form-row">
                             <div class="form-group">
                                 <label>Prefill 设备数</label>
                                 <input type="number" id="prefill-devices" value="32" min="1">
                             </div>
                             <div class="form-group">
-                                <label>DP_p <span class="auto-calc-hint">自动</span></label>
-                                <div class="readonly-display" id="pd-dp-prefill-display">4</div>
-                            </div>
-                        </div>
-                        
-                        <div class="section-hint">Decode 实例并行策略</div>
-                        <div class="parallel-grid-wide">
-                            <div class="form-group">
-                                <label>TP_d</label>
-                                <input type="number" id="pd-tp-decode" value="4" min="1">
-                            </div>
-                            <div class="form-group">
-                                <label>PP_d</label>
-                                <input type="number" id="pd-pp-decode" value="1" min="1">
-                            </div>
-                            <div class="form-group">
-                                <label>EP_d</label>
-                                <input type="number" id="pd-ep-decode" value="1" min="1">
-                            </div>
-                            <div class="form-group">
                                 <label>Decode 设备数</label>
                                 <input type="number" id="decode-devices" value="32" min="1">
-                            </div>
-                            <div class="form-group">
-                                <label>DP_d <span class="auto-calc-hint">自动</span></label>
-                                <div class="readonly-display" id="pd-dp-decode-display">8</div>
                             </div>
                         </div>
                     </div>
@@ -161,66 +123,6 @@
                             <div class="form-group">
                                 <label>PPO Epochs</label>
                                 <input type="number" id="ppo-epochs" value="4">
-                            </div>
-                        </div>
-                        
-                        <div class="section-hint">阶段切换</div>
-                        <div class="mode-selector">
-                            <div class="tabs" id="rl-phase-tabs">
-                                <button type="button" class="tab active" data-phase="train">训练阶段</button>
-                                <button type="button" class="tab" data-phase="infer">推理阶段 (Rollout)</button>
-                            </div>
-                        </div>
-                        
-                        <div id="rl-strategy-train" class="rl-strategy-panel">
-                            <div class="section-hint">训练阶段并行策略</div>
-                            <div class="parallel-grid-wide">
-                                <div class="form-group">
-                                    <label>TP_train</label>
-                                    <input type="number" id="rl-tp-train" value="8" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>PP_train</label>
-                                    <input type="number" id="rl-pp-train" value="1" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>EP_train</label>
-                                    <input type="number" id="rl-ep-train" value="1" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>VPP_train</label>
-                                    <input type="number" id="rl-vpp-train" value="1" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>DP_train <span class="auto-calc-hint">自动</span></label>
-                                    <div class="readonly-display" id="rl-dp-train-display">-</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div id="rl-strategy-infer" class="rl-strategy-panel" style="display: none;">
-                            <div class="section-hint">推理阶段并行策略</div>
-                            <div class="parallel-grid-wide">
-                                <div class="form-group">
-                                    <label>TP_infer</label>
-                                    <input type="number" id="rl-tp-infer" value="4" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>PP_infer</label>
-                                    <input type="number" id="rl-pp-infer" value="1" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>EP_infer</label>
-                                    <input type="number" id="rl-ep-infer" value="1" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>VPP_infer</label>
-                                    <input type="number" id="rl-vpp-infer" value="1" min="1">
-                                </div>
-                                <div class="form-group">
-                                    <label>DP_infer <span class="auto-calc-hint">自动</span></label>
-                                    <div class="readonly-display" id="rl-dp-infer-display">-</div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -257,12 +159,22 @@
                                     <input type="number" id="diffusion-prompt-tokens" value="512">
                                 </div>
                                 <div class="form-group" id="diffusion-input-image-group" style="display: none;">
-                                    <label>输入图像分辨率</label>
-                                    <input type="number" id="diffusion-input-image-size" value="1024">
+                                    <label>输入图像</label>
+                                    <div class="form-row">
+                                        <input type="number" id="diffusion-input-image-width" value="1024" placeholder="Width">
+                                        <input type="number" id="diffusion-input-image-height" value="1024" placeholder="Height">
+                                    </div>
                                 </div>
                                 <div class="form-group" id="diffusion-input-video-group" style="display: none;">
-                                    <label>输入视频帧数</label>
-                                    <input type="number" id="diffusion-input-video-frames" value="16">
+                                    <label>输入视频</label>
+                                    <div class="form-row">
+                                        <input type="number" id="diffusion-input-video-width" value="1920" placeholder="Width">
+                                        <input type="number" id="diffusion-input-video-height" value="1080" placeholder="Height">
+                                    </div>
+                                    <div class="form-group" style="margin-top: 0.5rem;">
+                                        <label>输入帧数</label>
+                                        <input type="number" id="diffusion-input-video-frames" value="16">
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -271,12 +183,22 @@
                             <div class="section-hint">输出配置</div>
                             <div class="form-row" id="diffusion-output-row">
                                 <div class="form-group" id="diffusion-output-image-group">
-                                    <label>输出图像分辨率</label>
-                                    <input type="number" id="image-size" value="1024">
+                                    <label>输出图像</label>
+                                    <div class="form-row">
+                                        <input type="number" id="diffusion-output-image-width" value="1024" placeholder="Width">
+                                        <input type="number" id="diffusion-output-image-height" value="1024" placeholder="Height">
+                                    </div>
                                 </div>
                                 <div class="form-group" id="diffusion-output-video-group" style="display: none;">
-                                    <label>输出视频帧数</label>
-                                    <input type="number" id="diffusion-output-video-frames" value="24">
+                                    <label>输出视频</label>
+                                    <div class="form-row">
+                                        <input type="number" id="diffusion-output-video-width" value="1920" placeholder="Width">
+                                        <input type="number" id="diffusion-output-video-height" value="1080" placeholder="Height">
+                                    </div>
+                                    <div class="form-group" style="margin-top: 0.5rem;">
+                                        <label>输出帧数</label>
+                                        <input type="number" id="diffusion-output-video-frames" value="24">
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -379,50 +301,192 @@
                 <section class="card parallelism-config">
                     <h2>并行切分配置</h2>
                     
-                    <div class="parallel-grid-wide">
-                        <div class="form-group">
-                            <label>TP (Tensor)</label>
-                            <input type="number" id="tp-degree" value="8" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>PP (Pipeline)</label>
-                            <input type="number" id="pp-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>VPP (Virtual PP)</label>
-                            <input type="number" id="vpp-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>EP (Expert)</label>
-                            <input type="number" id="ep-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>Ulysses-SP</label>
-                            <input type="number" id="ulysses-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>Ring-SP（含CP）</label>
-                            <input type="number" id="ring-degree" value="1" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>Pipeline Schedule</label>
-                            <select id="pipeline-schedule">
-                                <option value="1f1b">1F1B</option>
-                                <option value="gpipe">GPipe</option>
-                                <option value="interleaved">Interleaved</option>
-                            </select>
-                        </div>
-                        <div class="form-group checkbox-group">
-                            <label>Megatron-SP</label>
-                            <div class="checkbox-wrapper">
-                                <input type="checkbox" id="megatron-sp-enabled">
-                                <span class="checkbox-label">启用</span>
+                    <div id="parallel-single" class="parallel-mode">
+                        <div class="parallel-grid-wide">
+                            <div class="form-group">
+                                <label>TP (Tensor)</label>
+                                <input type="number" id="tp-degree" value="8" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>PP (Pipeline)</label>
+                                <input type="number" id="pp-degree" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>VPP (Virtual PP)</label>
+                                <input type="number" id="vpp-degree" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>EP (Expert)</label>
+                                <input type="number" id="ep-degree" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Ulysses-SP</label>
+                                <input type="number" id="ulysses-degree" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Ring-SP（含CP）</label>
+                                <input type="number" id="ring-degree" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Pipeline Schedule</label>
+                                <select id="pipeline-schedule">
+                                    <option value="1f1b">1F1B</option>
+                                    <option value="gpipe">GPipe</option>
+                                    <option value="interleaved">Interleaved</option>
+                                </select>
+                            </div>
+                            <div class="form-group checkbox-group">
+                                <label>Megatron-SP</label>
+                                <div class="checkbox-wrapper">
+                                    <input type="checkbox" id="megatron-sp-enabled">
+                                    <span class="checkbox-label">启用</span>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>DP (Data) <span class="auto-calc-hint">自动计算</span></label>
+                                <div class="readonly-display" id="dp-degree-display">1</div>
+                                <input type="hidden" id="dp-degree" value="1">
                             </div>
                         </div>
-                        <div class="form-group">
-                            <label>DP (Data) <span class="auto-calc-hint">自动计算</span></label>
-                            <div class="readonly-display" id="dp-degree-display">1</div>
-                            <input type="hidden" id="dp-degree" value="1">
+                    </div>
+                    
+                    <div id="parallel-pd-disagg" class="parallel-mode" style="display: none;">
+                        <div class="dual-strategy-container">
+                            <div class="strategy-panel">
+                                <div class="section-hint">Prefill 实例策略</div>
+                                <div class="parallel-grid-wide">
+                                    <div class="form-group">
+                                        <label>TP_p</label>
+                                        <input type="number" id="pd-tp-prefill" value="8" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>PP_p</label>
+                                        <input type="number" id="pd-pp-prefill" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>EP_p</label>
+                                        <input type="number" id="pd-ep-prefill" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Ulysses_p</label>
+                                        <input type="number" id="pd-ulysses-prefill" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Ring_p</label>
+                                        <input type="number" id="pd-ring-prefill" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>DP_p <span class="auto-calc-hint">自动</span></label>
+                                        <div class="readonly-display" id="pd-dp-prefill-display">4</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="strategy-panel">
+                                <div class="section-hint">Decode 实例策略</div>
+                                <div class="parallel-grid-wide">
+                                    <div class="form-group">
+                                        <label>TP_d</label>
+                                        <input type="number" id="pd-tp-decode" value="4" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>PP_d</label>
+                                        <input type="number" id="pd-pp-decode" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>EP_d</label>
+                                        <input type="number" id="pd-ep-decode" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Ulysses_d</label>
+                                        <input type="number" id="pd-ulysses-decode" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Ring_d</label>
+                                        <input type="number" id="pd-ring-decode" value="1" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>DP_d <span class="auto-calc-hint">自动</span></label>
+                                        <div class="readonly-display" id="pd-dp-decode-display">8</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="parallel-rl-training" class="parallel-mode" style="display: none;">
+                        <div class="mode-selector">
+                            <div class="tabs" id="rl-phase-tabs">
+                                <button type="button" class="tab active" data-phase="train">训练阶段</button>
+                                <button type="button" class="tab" data-phase="infer">推理阶段 (Rollout)</button>
+                            </div>
+                        </div>
+                        
+                        <div id="rl-strategy-train" class="rl-strategy-panel">
+                            <div class="section-hint">训练阶段并行策略</div>
+                            <div class="parallel-grid-wide">
+                                <div class="form-group">
+                                    <label>TP_train</label>
+                                    <input type="number" id="rl-tp-train" value="8" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>PP_train</label>
+                                    <input type="number" id="rl-pp-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>VPP_train</label>
+                                    <input type="number" id="rl-vpp-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>EP_train</label>
+                                    <input type="number" id="rl-ep-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Ulysses_train</label>
+                                    <input type="number" id="rl-ulysses-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Ring_train</label>
+                                    <input type="number" id="rl-ring-train" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>DP_train <span class="auto-calc-hint">自动</span></label>
+                                    <div class="readonly-display" id="rl-dp-train-display">-</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="rl-strategy-infer" class="rl-strategy-panel" style="display: none;">
+                            <div class="section-hint">推理阶段并行策略</div>
+                            <div class="parallel-grid-wide">
+                                <div class="form-group">
+                                    <label>TP_infer</label>
+                                    <input type="number" id="rl-tp-infer" value="4" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>PP_infer</label>
+                                    <input type="number" id="rl-pp-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>VPP_infer</label>
+                                    <input type="number" id="rl-vpp-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>EP_infer</label>
+                                    <input type="number" id="rl-ep-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Ulysses_infer</label>
+                                    <input type="number" id="rl-ulysses-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Ring_infer</label>
+                                    <input type="number" id="rl-ring-infer" value="1" min="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>DP_infer <span class="auto-calc-hint">自动</span></label>
+                                    <div class="readonly-display" id="rl-dp-infer-display">-</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

@@ -166,22 +166,41 @@ function switchWorkloadScenario(scenario) {
         targetParams.style.display = 'block';
     }
     
+    const allParallelModes = document.querySelectorAll('.parallel-mode');
+    allParallelModes.forEach(el => el.style.display = 'none');
+    
+    const parallelSingle = document.getElementById('parallel-single');
+    const parallelPDDisagg = document.getElementById('parallel-pd-disagg');
+    const parallelRLTraining = document.getElementById('parallel-rl-training');
+    
+    if (parallelSingle) parallelSingle.style.display = 'none';
+    if (parallelPDDisagg) parallelPDDisagg.style.display = 'none';
+    if (parallelRLTraining) parallelRLTraining.style.display = 'none';
+    
     if (scenario === 'pd_disagg') {
+        if (parallelPDDisagg) parallelPDDisagg.style.display = 'block';
         setupPDDisaggListeners();
-        calculatePDDP();
+        calculatePDDP('prefill');
+        calculatePDDP('decode');
     } else if (scenario === 'rl_training') {
+        if (parallelRLTraining) parallelRLTraining.style.display = 'block';
         setupRLPhaseTabs();
         calculateRLDP('train');
         calculateRLDP('infer');
-    } else if (scenario === 'diffusion') {
+    } else {
+        if (parallelSingle) parallelSingle.style.display = 'block';
+        calculateDP();
+    }
+    
+    if (scenario === 'diffusion') {
         setupDiffusionModeTabs();
         updateDiffusionModeUI(state.diffusionCurrentMode);
     }
 }
 
 function setupPDDisaggListeners() {
-    const prefillInputs = ['pd-tp-prefill', 'pd-pp-prefill', 'pd-ep-prefill', 'prefill-devices'];
-    const decodeInputs = ['pd-tp-decode', 'pd-pp-decode', 'pd-ep-decode', 'decode-devices'];
+    const prefillInputs = ['pd-tp-prefill', 'pd-pp-prefill', 'pd-ep-prefill', 'pd-ulysses-prefill', 'pd-ring-prefill', 'prefill-devices'];
+    const decodeInputs = ['pd-tp-decode', 'pd-pp-decode', 'pd-ep-decode', 'pd-ulysses-decode', 'pd-ring-decode', 'decode-devices'];
     
     prefillInputs.forEach(id => {
         const el = document.getElementById(id);
@@ -195,23 +214,16 @@ function setupPDDisaggListeners() {
 }
 
 function calculatePDDP(phase) {
-    if (phase === 'prefill') {
-        const tp = parseInt(document.getElementById('pd-tp-prefill')?.value) || 1;
-        const pp = parseInt(document.getElementById('pd-pp-prefill')?.value) || 1;
-        const ep = parseInt(document.getElementById('pd-ep-prefill')?.value) || 1;
-        const devices = parseInt(document.getElementById('prefill-devices')?.value) || 32;
-        const dp = Math.floor(devices / (tp * pp * ep));
-        const display = document.getElementById('pd-dp-prefill-display');
-        if (display) display.textContent = dp > 0 ? dp : 'N/A';
-    } else {
-        const tp = parseInt(document.getElementById('pd-tp-decode')?.value) || 1;
-        const pp = parseInt(document.getElementById('pd-pp-decode')?.value) || 1;
-        const ep = parseInt(document.getElementById('pd-ep-decode')?.value) || 1;
-        const devices = parseInt(document.getElementById('decode-devices')?.value) || 32;
-        const dp = Math.floor(devices / (tp * pp * ep));
-        const display = document.getElementById('pd-dp-decode-display');
-        if (display) display.textContent = dp > 0 ? dp : 'N/A';
-    }
+    const tp = parseInt(document.getElementById(`pd-tp-${phase}`)?.value) || 1;
+    const pp = parseInt(document.getElementById(`pd-pp-${phase}`)?.value) || 1;
+    const ep = parseInt(document.getElementById(`pd-ep-${phase}`)?.value) || 1;
+    const ulysses = parseInt(document.getElementById(`pd-ulysses-${phase}`)?.value) || 1;
+    const ring = parseInt(document.getElementById(`pd-ring-${phase}`)?.value) || 1;
+    const devices = parseInt(document.getElementById(`${phase === 'prefill' ? 'prefill' : 'decode'}-devices`)?.value) || 32;
+    const product = tp * pp * ep * ulysses * ring;
+    const dp = Math.floor(devices / product);
+    const display = document.getElementById(`pd-dp-${phase}-display`);
+    if (display) display.textContent = dp > 0 ? dp : 'N/A';
 }
 
 function setupRLPhaseTabs() {
@@ -228,13 +240,13 @@ function setupRLPhaseTabs() {
         });
     });
     
-    const trainInputs = ['rl-tp-train', 'rl-pp-train', 'rl-ep-train', 'rl-vpp-train'];
+    const trainInputs = ['rl-tp-train', 'rl-pp-train', 'rl-ep-train', 'rl-vpp-train', 'rl-ulysses-train', 'rl-ring-train'];
     trainInputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener('input', () => calculateRLDP('train'));
     });
     
-    const inferInputs = ['rl-tp-infer', 'rl-pp-infer', 'rl-ep-infer', 'rl-vpp-infer'];
+    const inferInputs = ['rl-tp-infer', 'rl-pp-infer', 'rl-ep-infer', 'rl-vpp-infer', 'rl-ulysses-infer', 'rl-ring-infer'];
     inferInputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener('input', () => calculateRLDP('infer'));
@@ -245,8 +257,11 @@ function calculateRLDP(phase) {
     const tp = parseInt(document.getElementById(`rl-tp-${phase}`)?.value) || 1;
     const pp = parseInt(document.getElementById(`rl-pp-${phase}`)?.value) || 1;
     const ep = parseInt(document.getElementById(`rl-ep-${phase}`)?.value) || 1;
+    const ulysses = parseInt(document.getElementById(`rl-ulysses-${phase}`)?.value) || 1;
+    const ring = parseInt(document.getElementById(`rl-ring-${phase}`)?.value) || 1;
     const totalDevices = parseInt(elements.totalDevices?.value) || 64;
-    const dp = Math.floor(totalDevices / (tp * pp * ep));
+    const product = tp * pp * ep * ulysses * ring;
+    const dp = Math.floor(totalDevices / product);
     const display = document.getElementById(`rl-dp-${phase}-display`);
     if (display) display.textContent = dp > 0 ? dp : 'N/A';
 }
@@ -622,41 +637,37 @@ function collectConfig() {
     };
     
     if (scenario === 'pd_disagg') {
-        baseConfig.strategy = {
-            tp: parseInt(elements.tpDegree.value),
-            pp: parseInt(elements.ppDegree.value),
-            vpp: parseInt(elements.vppDegree?.value || 1),
-            pipeline_schedule: elements.pipelineSchedule?.value || '1f1b',
-            dp: parseInt(elements.dpDegree.value),
-            ep: parseInt(elements.epDegree.value),
-            ulysses_degree: parseInt(elements.ulyssesDegree.value),
-            ring_degree: parseInt(elements.ringDegree.value),
-            megatron_sp_enabled: elements.megatronSpEnabled.checked,
-            activation_checkpointing: document.getElementById('activation-checkpointing').checked,
-            zero_stage: parseInt(document.getElementById('zero-stage').value)
+        baseConfig.strategy_prefill = {
+            tp: parseInt(document.getElementById('pd-tp-prefill')?.value || 8),
+            pp: parseInt(document.getElementById('pd-pp-prefill')?.value || 1),
+            ep: parseInt(document.getElementById('pd-ep-prefill')?.value || 1),
+            ulysses_degree: parseInt(document.getElementById('pd-ulysses-prefill')?.value || 1),
+            ring_degree: parseInt(document.getElementById('pd-ring-prefill')?.value || 1),
         };
-        baseConfig.strategy_prefill = baseConfig.workload.strategy_prefill;
-        baseConfig.strategy_decode = baseConfig.workload.strategy_decode;
-        delete baseConfig.workload.strategy_prefill;
-        delete baseConfig.workload.strategy_decode;
+        baseConfig.strategy_decode = {
+            tp: parseInt(document.getElementById('pd-tp-decode')?.value || 4),
+            pp: parseInt(document.getElementById('pd-pp-decode')?.value || 1),
+            ep: parseInt(document.getElementById('pd-ep-decode')?.value || 1),
+            ulysses_degree: parseInt(document.getElementById('pd-ulysses-decode')?.value || 1),
+            ring_degree: parseInt(document.getElementById('pd-ring-decode')?.value || 1),
+        };
     } else if (scenario === 'rl_training') {
-        baseConfig.strategy = {
-            tp: parseInt(elements.tpDegree.value),
-            pp: parseInt(elements.ppDegree.value),
-            vpp: parseInt(elements.vppDegree?.value || 1),
-            pipeline_schedule: elements.pipelineSchedule?.value || '1f1b',
-            dp: parseInt(elements.dpDegree.value),
-            ep: parseInt(elements.epDegree.value),
-            ulysses_degree: parseInt(elements.ulyssesDegree.value),
-            ring_degree: parseInt(elements.ringDegree.value),
-            megatron_sp_enabled: elements.megatronSpEnabled.checked,
-            activation_checkpointing: document.getElementById('activation-checkpointing').checked,
-            zero_stage: parseInt(document.getElementById('zero-stage').value)
+        baseConfig.strategy_train = {
+            tp: parseInt(document.getElementById('rl-tp-train')?.value || 8),
+            pp: parseInt(document.getElementById('rl-pp-train')?.value || 1),
+            vpp: parseInt(document.getElementById('rl-vpp-train')?.value || 1),
+            ep: parseInt(document.getElementById('rl-ep-train')?.value || 1),
+            ulysses_degree: parseInt(document.getElementById('rl-ulysses-train')?.value || 1),
+            ring_degree: parseInt(document.getElementById('rl-ring-train')?.value || 1),
         };
-        baseConfig.strategy_train = baseConfig.workload.strategy_train;
-        baseConfig.strategy_infer = baseConfig.workload.strategy_infer;
-        delete baseConfig.workload.strategy_train;
-        delete baseConfig.workload.strategy_infer;
+        baseConfig.strategy_infer = {
+            tp: parseInt(document.getElementById('rl-tp-infer')?.value || 4),
+            pp: parseInt(document.getElementById('rl-pp-infer')?.value || 1),
+            vpp: parseInt(document.getElementById('rl-vpp-infer')?.value || 1),
+            ep: parseInt(document.getElementById('rl-ep-infer')?.value || 1),
+            ulysses_degree: parseInt(document.getElementById('rl-ulysses-infer')?.value || 1),
+            ring_degree: parseInt(document.getElementById('rl-ring-infer')?.value || 1),
+        };
     } else {
         baseConfig.strategy = {
             tp: parseInt(elements.tpDegree.value),
@@ -697,34 +708,12 @@ function collectWorkloadConfig(scenario) {
             workload.output_tokens = parseInt(document.getElementById('pd-output-tokens')?.value || 100);
             workload.prefill_devices = parseInt(document.getElementById('prefill-devices')?.value || 32);
             workload.decode_devices = parseInt(document.getElementById('decode-devices')?.value || 32);
-            workload.strategy_prefill = {
-                tp: parseInt(document.getElementById('pd-tp-prefill')?.value || 8),
-                pp: parseInt(document.getElementById('pd-pp-prefill')?.value || 1),
-                ep: parseInt(document.getElementById('pd-ep-prefill')?.value || 1),
-            };
-            workload.strategy_decode = {
-                tp: parseInt(document.getElementById('pd-tp-decode')?.value || 4),
-                pp: parseInt(document.getElementById('pd-pp-decode')?.value || 1),
-                ep: parseInt(document.getElementById('pd-ep-decode')?.value || 1),
-            };
             break;
         case 'rl_training':
             workload.batch_size = parseInt(document.getElementById('rl-batch-size')?.value || 32);
             workload.seq_len = parseInt(document.getElementById('rl-seq-len')?.value || 4096);
             workload.num_rollouts = parseInt(document.getElementById('num-rollouts')?.value || 100);
             workload.ppo_epochs = parseInt(document.getElementById('ppo-epochs')?.value || 4);
-            workload.strategy_train = {
-                tp: parseInt(document.getElementById('rl-tp-train')?.value || 8),
-                pp: parseInt(document.getElementById('rl-pp-train')?.value || 1),
-                ep: parseInt(document.getElementById('rl-ep-train')?.value || 1),
-                vpp: parseInt(document.getElementById('rl-vpp-train')?.value || 1),
-            };
-            workload.strategy_infer = {
-                tp: parseInt(document.getElementById('rl-tp-infer')?.value || 4),
-                pp: parseInt(document.getElementById('rl-pp-infer')?.value || 1),
-                ep: parseInt(document.getElementById('rl-ep-infer')?.value || 1),
-                vpp: parseInt(document.getElementById('rl-vpp-infer')?.value || 1),
-            };
             break;
         case 'diffusion':
             workload.batch_size = parseInt(document.getElementById('diffusion-batch-size')?.value || 1);
@@ -735,15 +724,21 @@ function collectWorkloadConfig(scenario) {
                 workload.prompt_tokens = parseInt(document.getElementById('diffusion-prompt-tokens')?.value || 512);
             }
             if (workload.generation_mode === 'I2I' || workload.generation_mode === 'I2V') {
-                workload.input_image_size = parseInt(document.getElementById('diffusion-input-image-size')?.value || 1024);
+                workload.input_image_width = parseInt(document.getElementById('diffusion-input-image-width')?.value || 1024);
+                workload.input_image_height = parseInt(document.getElementById('diffusion-input-image-height')?.value || 1024);
             }
             if (workload.generation_mode === 'V2V') {
+                workload.input_video_width = parseInt(document.getElementById('diffusion-input-video-width')?.value || 1920);
+                workload.input_video_height = parseInt(document.getElementById('diffusion-input-video-height')?.value || 1080);
                 workload.input_video_frames = parseInt(document.getElementById('diffusion-input-video-frames')?.value || 16);
             }
             if (workload.generation_mode === 'T2I' || workload.generation_mode === 'I2I') {
-                workload.output_image_size = parseInt(document.getElementById('image-size')?.value || 1024);
+                workload.output_image_width = parseInt(document.getElementById('diffusion-output-image-width')?.value || 1024);
+                workload.output_image_height = parseInt(document.getElementById('diffusion-output-image-height')?.value || 1024);
             }
             if (workload.generation_mode === 'T2V' || workload.generation_mode === 'I2V' || workload.generation_mode === 'V2V') {
+                workload.output_video_width = parseInt(document.getElementById('diffusion-output-video-width')?.value || 1920);
+                workload.output_video_height = parseInt(document.getElementById('diffusion-output-video-height')?.value || 1080);
                 workload.output_video_frames = parseInt(document.getElementById('diffusion-output-video-frames')?.value || 24);
             }
             break;

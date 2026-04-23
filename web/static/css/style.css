@@ -615,8 +615,24 @@ footer {
     font-weight: 500;
 }
 
+.dual-strategy-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+.strategy-panel {
+    padding: 0.5rem;
+}
+
 .rl-strategy-panel {
     padding: 0.75rem 0;
+}
+
+@media (max-width: 640px) {
+    .dual-strategy-container {
+        grid-template-columns: 1fr;
+    }
 }
 
 .diffusion-input-config,
