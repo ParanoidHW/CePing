@@ -411,14 +411,7 @@ async function evaluate() {
         if (state.currentPipeline === 'diffusion-video') {
             endpoint = '/api/evaluate/pipeline/diffusion-video';
         } else {
-            const endpointMap = {
-                'training': '/api/evaluate/training',
-                'inference': '/api/evaluate/inference',
-                'pd_disagg': '/api/evaluate/inference',
-                'rl_training': '/api/evaluate/training',
-                'diffusion': '/api/evaluate/inference',
-            };
-            endpoint = endpointMap[scenario] || '/api/evaluate/training';
+            endpoint = '/api/evaluate';
         }
         
         const response = await fetch(endpoint, {

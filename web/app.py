@@ -220,12 +220,22 @@ def evaluate():
             zero_stage=data["strategy"].get("zero_stage", 0),
         )
 
-        workload = data.get("workload")
+        workload_data = data.get("workload")
+        workload = None
+        mode = "inference"
+        
+        if workload_data:
+            if isinstance(workload_data, str):
+                workload = workload_data
+                mode = "training" if workload.endswith("-training") or "training" in workload else "inference"
+            elif isinstance(workload_data, dict):
+                scenario = workload_data.get("scenario", "training")
+                mode = "training" if scenario in ("training", "rl_training") else "inference"
+                workload = infer_workload(model_type, mode)
+        
         if not workload:
             mode = data.get("mode", "inference")
             workload = infer_workload(model_type, mode)
-        else:
-            mode = "training" if workload.endswith("-training") or "training" in workload else "inference"
 
         logger.info(
             f"[PARSED_PARAMS] model_type={model_type}, device={device.config.name}, "

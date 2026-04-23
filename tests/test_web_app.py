@@ -9,6 +9,105 @@ from llm_perf.app import Evaluator
 from web.app import app
 
 
+class TestWorkloadScenarios:
+    """Test workload scenario selection and parameter handling."""
+
+    def test_workload_training_scenario(self):
+        """Test training workload scenario via /api/evaluate."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {"scenario": "training", "batch_size": 32, "seq_len": 4096},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["result"]["peak_memory_gb"] > 0
+
+    def test_workload_inference_scenario(self):
+        """Test inference workload scenario via /api/evaluate."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {"scenario": "inference", "batch_size": 1, "input_tokens": 1000, "output_tokens": 100},
+                "batch_size": 1,
+                "prompt_len": 1000,
+                "generation_len": 100,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["result"]["prefill"] is not None
+        assert data["result"]["decode"] is not None
+
+    def test_workload_rl_training_scenario(self):
+        """Test rl_training workload scenario via /api/evaluate."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {"scenario": "rl_training", "batch_size": 32, "seq_len": 4096},
+                "batch_size": 32,
+                "seq_len": 4096,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["result"]["peak_memory_gb"] > 0
+
+    def test_workload_string_format(self):
+        """Test workload as string (legacy format)."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["result"]["peak_memory_gb"] > 0
+
+
 class TestWebHTTPAPI:
     """Test web app HTTP API responses using Flask test client."""
 
