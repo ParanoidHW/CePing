@@ -15,6 +15,7 @@ import yaml
 from llm_perf.modeling.models import LlamaModel, DeepSeekModel
 from llm_perf.modeling.vision import ShardedVAE, ShardedResNet
 from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
+from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel
 
 if TYPE_CHECKING:
     pass
@@ -235,6 +236,34 @@ def register_all_models() -> None:
             "in_channels": 3,
             "latent_channels": 16,
             "dtype": "fp32",
+        },
+    )
+
+    registry.register(
+        name="qwen3_5_moe",
+        model_class=Qwen3_5MoEModel,
+        description="Qwen3.5 MoE with hybrid linear/full attention",
+        architecture="qwen3_5_moe",
+        sparse_type="qwen3_5_moe",
+        attention_features=["linear_attention", "gqa"],
+        default_config={
+            "vocab_size": 248320,
+            "hidden_size": 2048,
+            "num_layers": 40,
+            "num_heads": 16,
+            "num_kv_heads": 2,
+            "head_dim": 256,
+            "linear_num_heads": 16,
+            "linear_num_kv_heads": 32,
+            "linear_key_head_dim": 128,
+            "linear_value_head_dim": 128,
+            "linear_kernel_dim": 4,
+            "intermediate_size": 512,
+            "num_experts": 256,
+            "num_experts_per_token": 8,
+            "shared_expert_intermediate": 512,
+            "max_seq_len": 4096,
+            "dtype": "fp16",
         },
     )
 
@@ -494,6 +523,7 @@ def get_presets_by_sparse_type() -> dict:
         "dense": [],
         "sparse_standard_moe": [],
         "sparse_deepseek_moe": [],
+        "sparse_qwen3_5_moe": [],
     }
 
     for name, config in presets.items():
@@ -505,6 +535,8 @@ def get_presets_by_sparse_type() -> dict:
             result["sparse_standard_moe"].append(preset_info)
         elif sparse_type == "deepseek_moe":
             result["sparse_deepseek_moe"].append(preset_info)
+        elif sparse_type == "qwen3_5_moe":
+            result["sparse_qwen3_5_moe"].append(preset_info)
 
     return result
 

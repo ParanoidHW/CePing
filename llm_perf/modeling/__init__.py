@@ -69,6 +69,12 @@ from .wan import (
     ShardedWanVAE,
 )
 
+from .qwen3_5 import (
+    Qwen3_5MoEModel,
+    ShardedQwen3_5MoEBlock,
+    generate_layer_types,
+)
+
 from llm_perf.strategy import (
     ParallelContext,
     SPType,
@@ -143,6 +149,9 @@ __all__ = [
     "ShardedWanDiTBlock",
     "ShardedWanDiT",
     "ShardedWanVAE",
+    "Qwen3_5MoEModel",
+    "ShardedQwen3_5MoEBlock",
+    "generate_layer_types",
     "ParallelContext",
     "SPType",
     "CommDomain",
