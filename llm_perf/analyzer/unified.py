@@ -256,6 +256,10 @@ class UnifiedAnalyzer:
 
         module_breakdown = generate_module_breakdown(phase_results, workload.workload_type.value, global_comm_bytes)
 
+        total_kv_cache_gb = sum(
+            p.memory_breakdown.get("kv_cache_gb", 0.0) for p in phase_results
+        )
+
         topology_dict = None
         if hasattr(self.cluster, "topology") and self.cluster.topology:
             topology_dict = self.cluster.topology.to_dict()
@@ -279,7 +283,7 @@ class UnifiedAnalyzer:
                 "pp_degree": self.strategy.pp_degree,
                 "dp_degree": self.strategy.dp_degree,
                 "ep_degree": self.strategy.ep_degree,
-                "kv_cache_gb": 0.0,
+                "kv_cache_gb": total_kv_cache_gb,
                 "topology": topology_dict,
             },
             breakdown=breakdown,
@@ -321,12 +325,15 @@ class UnifiedAnalyzer:
 
             total_time = single_time * repeat_count
 
-            # Aggregate memory breakdown from submodules
+            framework_overhead_bytes = self._calculate_framework_overhead(phase, params, component)
+            framework_overhead_gb = framework_overhead_bytes / 1e9
+
             memory_breakdown = {
                 "weight_gb": 0.0,
                 "gradient_gb": 0.0,
                 "optimizer_gb": 0.0,
-                "activation_gb": memory,  # Use activation memory from estimate_phase
+                "activation_gb": memory,
+                "kv_cache_gb": framework_overhead_gb,
             }
 
             # Only add gradient/optimizer for training (backward phase)
@@ -405,6 +412,43 @@ class UnifiedAnalyzer:
         """
         return ComputePattern.TRANSFORMER_BLOCK
 
+    def _calculate_framework_overhead(
+        self,
+        phase: Phase,
+        params: Dict[str, Any],
+        component: ShardedModule,
+    ) -> float:
+        """Calculate framework scheduling overhead (e.g., KV cache read/write).
+
+        Only applies to decode phase in inference workloads.
+
+        Returns:
+            Framework overhead in bytes
+        """
+        if phase.name != "decode":
+            return 0
+
+        batch_size = params.get("batch_size", 1)
+        prompt_len = params.get("prompt_len", 512)
+        generated_tokens = params.get("generated_tokens", 0)
+
+        kv_seq_len = prompt_len + generated_tokens
+
+        num_heads = getattr(component, "num_heads", 32)
+        num_kv_heads = getattr(component, "num_kv_heads", num_heads)
+        head_dim = getattr(component, "head_dim", getattr(component, "hidden_size", 4096) // num_heads)
+        num_layers = getattr(component, "num_layers", 32)
+        dtype = getattr(component, "dtype", "fp16")
+
+        dtype_size = DTYPE_SIZES.get(dtype, 2)
+
+        kv_cache_read = batch_size * kv_seq_len * num_kv_heads * head_dim * dtype_size * 2
+        kv_cache_write = batch_size * 1 * num_kv_heads * head_dim * dtype_size * 2
+
+        total_overhead = (kv_cache_read + kv_cache_write) * num_layers
+
+        return total_overhead
+
     def _compute_structure_signature(self, sub_inst: ModuleInstance) -> str:
         """计算子模块结构签名（类名+关键配置参数）.
 
@@ -453,11 +497,18 @@ class UnifiedAnalyzer:
         """
         ctx = self._create_parallel_context(params)
         batch_size = params.get("batch_size", 1)
-        seq_len = params.get("seq_len", params.get("prompt_len", 512))
+        
+        if phase.name == "prefill":
+            seq_len = params.get("prompt_len", params.get("seq_len", 512))
+        elif phase.name == "decode":
+            seq_len = 1
+        else:
+            seq_len = params.get("seq_len", params.get("prompt_len", 512))
+        
         logger.debug(
             f"[SUBMODULE_ANALYZE] tp={ctx.tp_degree}, pp={ctx.pp_degree}, "
             f"dp={ctx.dp_degree}, ep={ctx.ep_degree}, dtype={ctx.dtype}, "
-            f"batch_size={batch_size}, seq_len={seq_len}"
+            f"batch_size={batch_size}, seq_len={seq_len}, phase={phase.name}"
         )
 
         hidden_size = getattr(component, "hidden_size", 4096)

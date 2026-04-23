@@ -8,12 +8,16 @@ phases:
     component: main
     compute_pattern: transformer_block
     repeat: 1
+    extra_params:
+      seq_len: prompt_len
     
   - name: decode
     compute_type: forward
     component: main
     compute_pattern: transformer_block
     repeat: generation_len
+    extra_params:
+      seq_len: 1
 
 default_params:
   batch_size: 1

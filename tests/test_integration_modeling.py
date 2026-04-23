@@ -973,58 +973,6 @@ class TestKVCacheModel:
         assert total > 0
         assert total == per_token * config.batch_size * config.max_seq_len * config.num_layers
 
-    def test_kv_cache_memory_property(self):
-        """Test ModuleInstance.kv_cache_memory property."""
-        model = LlamaModel(
-            vocab_size=32000,
-            hidden_size=4096,
-            num_layers=2,
-            num_heads=32,
-        )
-
-        input_ids = ShardedTensor(shape=(1, 512))
-        model(input_ids)
-
-        ctx = ParallelContext(tp_degree=8)
-
-        instance_train = model.bind(ctx, mode="forward_backward")
-        instance_infer = model.bind(ctx, mode="forward")
-
-        kv_train = instance_train.kv_cache_memory
-        kv_infer = instance_infer.kv_cache_memory
-
-        assert kv_train == 0
-        assert kv_infer >= 0
-
-    def test_attention_op_with_kv_cache(self):
-        """Test AttentionOp with KV cache configuration."""
-        from llm_perf.kernels.op import AttentionOp, KVCacheConfig
-
-        config = KVCacheConfig(
-            max_seq_len=2048,
-            num_layers=1,
-            num_heads=32,
-            head_dim=128,
-        )
-
-        query = ShardedTensor(shape=(1, 32, 512, 128))
-        key = ShardedTensor(shape=(1, 8, 512, 128))
-        value = ShardedTensor(shape=(1, 8, 512, 128))
-        output = ShardedTensor(shape=(1, 32, 512, 128))
-
-        op = AttentionOp(
-            query=query,
-            key=key,
-            value=value,
-            output=output,
-            kv_cache_config=config,
-            phase="prefill",
-        )
-
-        kv_memory = op.kv_cache_memory()
-
-        assert kv_memory > 0
-
     def test_kv_cache_size_calculation(self):
         """Test KV cache size calculation accuracy."""
         from llm_perf.kernels.op import KVCacheConfig

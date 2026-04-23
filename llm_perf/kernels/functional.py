@@ -1214,31 +1214,22 @@ def embedding(
 
     output_shape = (*input_shape, embedding_dim)
 
-    # Forward FLOPs: mostly memory lookup, minimal compute
     numel = math.prod(input_shape)
-    flops = numel  # index lookup
+    flops = numel
 
-    # Forward memory accessed
     bytes_accessed = (
-        num_embeddings * embedding_dim * dtype_size  # embedding table
-        + numel * embedding_dim * dtype_size  # output
+        num_embeddings * embedding_dim * dtype_size
+        + numel * embedding_dim * dtype_size
     )
 
-    # Calculate params: embedding table
     params = num_embeddings * embedding_dim
     param_bytes = params * dtype_size
 
-    # Backward computation for Embedding:
-    # Forward: Y = Embedding[X] - lookup
-    # Backward: gradient accumulation into embedding table (sparse update)
-    # FLOPs ≈ numel * embedding_dim (gradient scatter)
     flops_backward = numel * embedding_dim
 
-    # Backward memory: read gradient, update embedding table
-    # Only update the accessed embeddings (sparse)
     bytes_accessed_backward = (
-        numel * embedding_dim * dtype_size  # dY (gradient)
-        + numel * embedding_dim * dtype_size * 2  # read + write accessed embeddings
+        numel * embedding_dim * dtype_size
+        + numel * embedding_dim * dtype_size * 2
     )
 
     return KernelResult(
@@ -1254,5 +1245,93 @@ def embedding(
         dtype=dtype,
         flops_backward=flops_backward,
         bytes_accessed_backward=bytes_accessed_backward,
-        saved_inputs=["input_ids"],  # backward: need indices to update embedding rows
+        saved_inputs=["input_ids"],
+    )
+
+
+def moe_expert(
+    hidden_shape: Tuple[int, ...],
+    intermediate_size: int,
+    num_experts_per_token: int = 1,
+    dtype: str = "fp16",
+) -> KernelResult:
+    """MoE expert computation.
+
+    MoE expert contains three linear projections:
+    1. gate projection: hidden -> intermediate_size (SiLU activation)
+    2. up projection: hidden -> intermediate_size
+    3. down projection: intermediate_size -> hidden
+
+    The computation is:
+    output = down(silu(gate(x)) * up(x))
+
+    Args:
+        hidden_shape: Shape of hidden tensor (batch, ..., hidden_size)
+        intermediate_size: Intermediate dimension
+        num_experts_per_token: Number of experts activated per token
+        dtype: Data type string
+
+    Returns:
+        KernelResult with performance metrics
+    """
+    dtype_size = _compute_dtype_size(dtype)
+
+    hidden_size = hidden_shape[-1]
+    batch_size = math.prod(hidden_shape[:-1]) if len(hidden_shape) > 1 else 1
+
+    output_shape = hidden_shape
+
+    gate_flops = 2 * batch_size * hidden_size * intermediate_size
+    gate_activation_flops = batch_size * intermediate_size * 10
+    up_flops = 2 * batch_size * hidden_size * intermediate_size
+    gate_up_mul_flops = batch_size * intermediate_size
+    down_flops = 2 * batch_size * intermediate_size * hidden_size
+
+    flops = (gate_flops + gate_activation_flops + up_flops + gate_up_mul_flops + down_flops) * num_experts_per_token
+
+    gate_bytes = (
+        batch_size * hidden_size * dtype_size
+        + hidden_size * intermediate_size * dtype_size
+        + batch_size * intermediate_size * dtype_size
+    )
+    up_bytes = (
+        batch_size * hidden_size * dtype_size
+        + hidden_size * intermediate_size * dtype_size
+        + batch_size * intermediate_size * dtype_size
+    )
+    down_bytes = (
+        batch_size * intermediate_size * dtype_size
+        + intermediate_size * hidden_size * dtype_size
+        + batch_size * hidden_size * dtype_size
+    )
+
+    bytes_accessed = (gate_bytes + up_bytes + down_bytes) * num_experts_per_token
+
+    params_per_expert = hidden_size * intermediate_size * 3
+    params = params_per_expert
+    param_bytes = params * dtype_size
+
+    gate_backward = 4 * batch_size * hidden_size * intermediate_size
+    gate_activation_backward = batch_size * intermediate_size * 20
+    up_backward = 4 * batch_size * hidden_size * intermediate_size
+    down_backward = 4 * batch_size * intermediate_size * hidden_size
+
+    flops_backward = (gate_backward + gate_activation_backward + up_backward + down_backward) * num_experts_per_token
+
+    bytes_accessed_backward = bytes_accessed * 2
+
+    return KernelResult(
+        output=output_shape,
+        flops=flops,
+        bytes_accessed=bytes_accessed,
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
+        memory_bound=bytes_accessed > flops / 100,
+        input_shapes=[hidden_shape],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="cube",
+        dtype=dtype,
+        flops_backward=flops_backward,
+        bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=["hidden"],
     )

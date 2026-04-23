@@ -116,8 +116,6 @@ class AttentionOp(Op):
         value: Value tensor
         output: Output tensor
         is_causal: Whether causal mask
-        kv_cache_config: Optional KV cache configuration for inference
-        phase: "prefill" or "decode" phase
     """
 
     kernel_name: str = "flash_attention"
@@ -128,8 +126,6 @@ class AttentionOp(Op):
     output: Any = None
     inputs: List[Any] = field(default_factory=list)
     is_causal: bool = True
-    kv_cache_config: Optional[KVCacheConfig] = None
-    phase: str = "prefill"
 
     def __post_init__(self):
         if not self.inputs:
@@ -147,14 +143,6 @@ class AttentionOp(Op):
             [] - Q, K, V are views, save projections at module level instead
         """
         return []
-
-    def kv_cache_memory(self) -> int:
-        """KV cache memory for this attention operation."""
-        if self.kv_cache_config is None:
-            return 0
-
-        seq_len = self.query.shape[2] if self.query and len(self.query.shape) >= 3 else 0
-        return self.kv_cache_config.cache_size_for_seq_len(seq_len)
 
 
 @dataclass
