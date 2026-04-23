@@ -330,6 +330,13 @@ def evaluate():
                 if workload_data.get("output_video_frames"):
                     params["output_video_frames"] = workload_data.get("output_video_frames")
                     params["num_frames"] = workload_data.get("output_video_frames")
+            
+            elif scenario == "inference":
+                params["prompt_len"] = workload_data.get("input_tokens", 512)
+                params["generation_len"] = workload_data.get("output_tokens", 100)
+                params["generated_tokens"] = workload_data.get("output_tokens", 100)
+                if "batch_size" in workload_data:
+                    params["batch_size"] = workload_data["batch_size"]
 
         result = analyzer.analyze(workload, **params)
 
