@@ -453,6 +453,30 @@ def _infer_view_shardable(self, new_shape):
 - [ ] 集成测试
 - [ ] 存量测试通过
 
+---
+
+## 测试执行规范
+
+### 分布式测试
+
+默认使用 pytest-xdist 进行分布式测试，自动检测 CPU 核数：
+
+```bash
+# 自动检测 CPU 核数（推荐）
+python -m pytest tests/
+
+# 固定 worker 数量
+python -m pytest tests/ -n 4
+
+# 禁用分布式（单进程调试）
+python -m pytest tests/ -n 0
+```
+
+配置已在 `pyproject.toml` 中设置：
+- `-n auto`：自动使用所有可用 CPU 核心
+- `-v`：详细输出
+- `--tb=short`：简洁的错误追溯
+
 ### 提交阶段
 - [ ] 小步提交（每个特性一个commit）
 - [ ] commit message清晰
