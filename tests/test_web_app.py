@@ -1261,3 +1261,205 @@ class TestFirstEvaluateDeepSeekV3:
 
         result = data["result"]
         assert result.get("peak_memory_gb") > 0
+
+
+class TestWebFrontendDisplay:
+    """测试前端显示功能"""
+
+    def test_model_spec_display_with_preset(self):
+        """测试预设模型选择后返回规格参数"""
+        client = app.test_client()
+
+        response = client.get("/api/model/presets")
+        assert response.status_code == 200
+
+        data = response.get_json()
+        presets = data.get("presets", {})
+        assert len(presets) > 0
+
+        llama7b = presets.get("llama-7b")
+        assert llama7b is not None
+        assert llama7b.get("hidden_size") == 4096
+        assert llama7b.get("num_layers") == 32
+        assert llama7b.get("num_heads") == 32
+
+    def test_time_breakdown_absolute_values(self):
+        """测试耗时分解返回绝对时间"""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+        assert detailed is not None
+
+        by_submodule_type = detailed.get("by_submodule_type", {})
+        assert len(by_submodule_type) > 0
+
+        total_compute_sec = 0
+        total_comm_sec = 0
+
+        for submodule_type, data in by_submodule_type.items():
+            compute_time = data.get("compute", {}).get("time_sec", 0)
+            comm_time = data.get("communication", {}).get("time_sec", 0)
+
+            assert isinstance(compute_time, (int, float))
+            assert isinstance(comm_time, (int, float))
+            assert compute_time >= 0
+            assert comm_time >= 0
+
+            total_compute_sec += compute_time
+            total_comm_sec += comm_time
+
+        assert total_compute_sec > 0, "计算时间总和应 > 0"
+        assert total_comm_sec >= 0, "通信时间总和应 >= 0"
+
+    def test_time_breakdown_percentage_sum(self):
+        """测试占比总和应为100%"""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+
+        breakdown = result.get("breakdown", {})
+        time_breakdown = breakdown.get("time_breakdown", {})
+
+        if time_breakdown:
+            percentages = [
+                time_breakdown.get("compute_percent", 0),
+                time_breakdown.get("backward_percent", 0),
+                time_breakdown.get("optimizer_percent", 0),
+                time_breakdown.get("communication_percent", 0),
+            ]
+            total_pct = sum(percentages)
+            assert abs(total_pct - 100.0) < 1.0, f"占比总和应为100%，实际{total_pct}"
+
+    def test_detailed_breakdown_table_structure(self):
+        """测试分解表格结构包含所有列"""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        assert detailed is not None
+        by_submodule_type = detailed.get("by_submodule_type", {})
+        assert len(by_submodule_type) > 0
+
+        required_fields = {
+            "memory": ["activations_gb"],
+            "compute": ["time_sec", "flops"],
+            "communication": ["time_sec", "bytes"],
+        }
+
+        for submodule_type, data in by_submodule_type.items():
+            for category, fields in required_fields.items():
+                assert category in data, f"{submodule_type} 缺少 {category}"
+                for field in fields:
+                    assert field in data[category], f"{submodule_type}.{category} 缺少 {field}"
+
+    def test_memory_by_type_total_matches_sum(self):
+        """测试内存分解总和匹配"""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        mem = detailed.get("memory", {})
+        by_type = mem.get("by_type", {})
+
+        if by_type:
+            breakdown_keys = ["weight", "gradient", "optimizer", "activation"]
+            breakdown_sum = sum(by_type.get(k, 0) for k in breakdown_keys)
+            total = by_type.get("total", 0)
+
+            assert abs(total - breakdown_sum) < 0.01, (
+                f"内存总和 {total} != 分解总和 {breakdown_sum}"
+            )
+
+    def test_compute_time_greater_than_zero(self):
+        """测试计算时间不为零"""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-training",
+                "batch_size": 32,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+        detailed = result.get("detailed_breakdown")
+
+        by_submodule_type = detailed.get("by_submodule_type", {})
+
+        transformer_block = by_submodule_type.get("transformer_block")
+        if transformer_block:
+            compute_time = transformer_block.get("compute", {}).get("time_sec", 0)
+            assert compute_time > 0, "transformer_block计算时间应 > 0"

@@ -351,65 +351,36 @@ function updateModelSpecDisplay(config, presetKey) {
     if (!displayEl) return;
 
     if (!config) {
-        displayEl.innerHTML = '<p class="hint-text">选择预设模型后，将显示模型规格参数</p>';
+        displayEl.innerHTML = '<p class="hint-text">选择预设后显示规格</p>';
         return;
     }
 
     const numKVHeads = config.num_kv_heads || config.num_heads || 32;
     const headDim = config.head_dim || (config.hidden_size ? config.hidden_size / config.num_heads : 128);
-    const ffnType = config.num_experts ? 'MoE' : 'Dense SwiGLU';
-    const attentionType = config.layer_types_mode === 'mixed' ? 'Hybrid (Linear+Full)' : 'Full';
+    const ffnType = config.num_experts ? 'MoE' : 'Dense';
 
-    const rows = [
-        ['模型名称', config.description || presetKey],
-        ['架构类型', config.architecture || 'llama'],
-        ['参数量', estimateModelParams(config)],
-        ['层数 (num_layers)', config.num_layers || 'N/A'],
-        ['隐藏层大小 (hidden_size)', config.hidden_size || 'N/A'],
-        ['注意力头数 (num_heads)', config.num_heads || config.num_attention_heads || 'N/A'],
-        ['KV 头数 (num_kv_heads)', numKVHeads],
-        ['Head 维度', Math.round(headDim)],
-        ['FFN 类型', ffnType],
+    const compactRows = [
+        ['参数', estimateModelParams(config)],
+        ['层数', config.num_layers || '-'],
+        ['隐藏层', config.hidden_size || '-'],
+        ['头数', config.num_heads || '-'],
+        ['KV头', numKVHeads],
+        ['Head维', Math.round(headDim)],
+        ['FFN', ffnType],
     ];
 
     if (config.num_experts) {
-        rows.push(['专家数 (num_experts)', config.num_experts]);
-        rows.push(['Top-K', config.num_experts_per_token || 8]);
+        compactRows.push(['专家', `${config.num_experts}/${config.num_experts_per_token || 8}`]);
     }
 
-    if (config.intermediate_size) {
-        rows.push(['Intermediate size', config.intermediate_size]);
-    }
-
-    rows.push(['词汇表大小', config.vocab_size || 'N/A']);
-    rows.push(['最大序列长度', config.max_seq_len || 'N/A']);
-
-    if (config.tie_word_embeddings) {
-        rows.push(['权重共享', 'Embedding/LM_head 共享']);
-    }
-
-    if (config.attention_features && config.attention_features.length > 0) {
-        rows.push(['注意力特性', config.attention_features.join(', ')]);
-    }
-
-    if (config.first_k_dense_layers) {
-        rows.push(['前 k 层 Dense', config.first_k_dense_layers]);
-    }
-
-    rows.push(['Attention 类型', attentionType]);
-    rows.push(['数据类型', config.dtype || 'fp16']);
-
-    const tableHtml = rows.map(([label, value]) => 
-        `<tr><td class="spec-label">${label}</td><td class="spec-value">${value}</td></tr>`
+    const tableHtml = compactRows.map(([label, value]) => 
+        `<tr><td class="spec-label-compact">${label}</td><td class="spec-value-compact">${value}</td></tr>`
     ).join('');
 
     displayEl.innerHTML = `
-        <div class="model-spec-section">
-            <h4>模型规格参数</h4>
-            <table class="spec-table">
-                ${tableHtml}
-            </table>
-        </div>
+        <table class="spec-table-compact">
+            ${tableHtml}
+        </table>
     `;
 }
 
@@ -1088,6 +1059,11 @@ function renderDetailedBreakdown(detailed) {
     
     const progressBarHtml = totalTime > 0 ? `
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">时间占比</h3>
+        <div class="time-summary-row" style="margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">
+            <span>总时间: ${(totalTime * 1000).toFixed(1)} ms</span>
+            <span style="margin-left: 1rem;">计算: ${(totalComputeTime * 1000).toFixed(1)} ms</span>
+            <span style="margin-left: 1rem;">通信: ${(totalCommTime * 1000).toFixed(1)} ms</span>
+        </div>
         <div class="time-breakdown-bar">
             <div class="compute-bar" style="width: ${computeOverallPct}%;">
                 <span class="bar-label">计算: ${computeOverallPct.toFixed(1)}%</span>

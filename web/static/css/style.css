@@ -745,9 +745,94 @@ footer {
     color: var(--gray-800);
 }
 
+.spec-table-compact {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75rem;
+}
+
+.spec-table-compact td {
+    padding: 0.25rem 0.375rem;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.spec-table-compact td:last-child {
+    border-bottom: none;
+}
+
+.spec-label-compact {
+    font-weight: 500;
+    color: var(--gray-600);
+    width: 40%;
+}
+
+.spec-value-compact {
+    color: var(--gray-800);
+    text-align: right;
+}
+
 .hint-text {
     color: var(--gray-400);
     font-size: 0.8125rem;
     text-align: center;
     margin: 0.5rem 0;
+}
+
+.model-config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.model-config-col {
+    min-width: 0;
+}
+
+.model-config-col .form-group {
+    margin-bottom: 0.75rem;
+}
+
+.model-spec-compact {
+    padding: 0.75rem;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    background-color: var(--gray-50);
+    min-height: 100px;
+}
+
+.model-spec-compact .hint-text {
+    margin: 2rem 0;
+}
+
+.compact-inputs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem 0.75rem;
+}
+
+.compact-inputs .form-group.compact {
+    margin: 0;
+}
+
+.compact-inputs label {
+    font-size: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.compact-inputs .compact-input,
+.compact-inputs select.compact-input {
+    padding: 0.5rem 0.625rem;
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+@media (max-width: 1024px) {
+    .model-config-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .compact-inputs {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
