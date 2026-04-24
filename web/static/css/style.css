@@ -102,7 +102,7 @@ header h1 {
 
 @media (min-width: 1024px) {
     .grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 
@@ -579,14 +579,12 @@ footer {
 }
 
 /* Responsive */
-.card.parallelism-config {
+.card.model-config {
     grid-column: 1 / -1;
 }
 
-@media (max-width: 1024px) {
-    .card.parallelism-config {
-        grid-column: span 1;
-    }
+.card.parallelism-config {
+    grid-column: 1 / -1;
 }
 
 @media (max-width: 640px) {
