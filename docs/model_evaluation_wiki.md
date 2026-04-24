@@ -1477,259 +1477,716 @@ print(f"MTP throughput gain: {result.throughput_gain:.1f}%")
 
 ## 5. Attention FLOPs 计算详解
 
-本章节详细解释 Full Attention (Flash Attention) 和 Linear Attention 的计算量和内存访问差异。
+本章节详细分解 Full Attention (Standard + Flash) 和 Linear Attention 的计算量、内存访问、以及 Forward/Backward 阶段的逐层推导。
 
-### 5.1 Full Attention (Flash Attention)
+---
 
-#### 计算流程
+### 5.1 Full Attention 详细分解
 
-Full Attention 的核心计算公式: `Output = softmax(Q @ K^T / sqrt(d)) @ V`
+#### 5.1.1 Forward 阶段逐层计算
 
-**Forward 计算分解**:
+Full Attention 核心公式: `O = softmax(Q @ K^T / √d) @ V`
 
-1. **Q @ K^T**: 计算 attention scores
-   - 输入: Q (batch × heads × seq × head_dim), K (batch × kv_heads × kv_seq × head_dim)
-   - 输出: S (batch × heads × seq × kv_seq) - attention scores
+**Step 1: Q @ K^T 计算**
 
-2. **Softmax**: 归一化 attention scores
-   - 输入: S (batch × heads × seq × kv_seq)
-   - 输出: Attention weights (batch × heads × seq × kv_seq)
+```
+输入: Q (batch, heads, seq, head_dim)
+     K (batch, kv_heads, kv_seq, head_dim)
 
-3. **Attention @ V**: 计算输出
-   - 输入: Attention weights, V (batch × kv_heads × kv_seq × head_dim)
-   - 输出: Output (batch × heads × seq × head_dim)
+输出: S = Q @ K^T (batch, heads, seq, kv_seq)
 
-#### FLOPs 公式推导
+计算:
+- 每个 (seq, kv_seq) 位置: head_dim 次乘法 + head_dim 次加法
+- FLOPs = seq × kv_seq × (head_dim × 2) = 2 × seq × kv_seq × head_dim
 
-根据 `llm_perf/kernels/functional.py:flash_attention` 函数:
-
-```python
-# 1. Q @ K^T: 矩阵乘法 (seq × head_dim) @ (head_dim × kv_seq)
-# FLOPs = 2 × M × K × N (multiply-add)
+总计:
 qk_flops = 2 × batch × heads × seq × kv_seq × head_dim
+```
 
-# 2. Softmax: exp + sum + div (每元素约 5 FLOPs)
-softmax_flops = 5 × batch × heads × seq × kv_seq
+**Step 2: Scale (/√d)**
 
-# 3. Attention @ V: (seq × kv_seq) @ (kv_seq × head_dim)
-attn_v_flops = 2 × batch × heads × seq × head_dim × kv_seq
+```
+FLOPs = batch × heads × seq × kv_seq  (每个元素一次除法)
 
-# Forward Total
+注: 通常与 softmax 合并计算，单独列出以展示完整流程
+```
+
+**Step 3: Softmax**
+
+```
+Softmax(x_i) = exp(x_i) / Σ exp(x_j)
+
+计算步骤:
+- exp: 7 FLOPs per element (泰勒展开近似)
+- sum: kv_seq 次加法
+- div: 1 FLOPs
+
+每行 (seq × heads × batch 行):
+- exp: kv_seq × 7 FLOPs
+- sum: kv_seq FLOPs
+- div: kv_seq FLOPs
+
+softmax_flops = batch × heads × seq × kv_seq × (7 + 1 + 1) = 9 × batch × heads × seq × kv_seq
+
+简化为: 5 × batch × heads × seq × kv_seq (保守估计)
+```
+
+**Step 4: Attention @ V**
+
+```
+输入: S (batch, heads, seq, kv_seq)
+     V (batch, kv_heads, kv_seq, head_dim)
+
+输出: O (batch, heads, seq, head_dim)
+
+计算:
+- 每个 (seq, head_dim) 位置: kv_seq 次乘法 + kv_seq 次加法
+- FLOPs = seq × head_dim × (kv_seq × 2)
+
+attn_v_flops = 2 × batch × heads × seq × kv_seq × head_dim
+```
+
+**Forward 总 FLOPs**:
+
+```
 forward_flops = qk_flops + softmax_flops + attn_v_flops
+             = 4 × batch × heads × seq × kv_seq × head_dim + 5 × batch × heads × seq × kv_seq
+             ≈ 4 × batch × heads × seq × kv_seq × head_dim (head_dim 通常 >> 5)
 ```
 
-**关键观察**: `qk_flops` 和 `attn_v_flops` 都包含 `seq × kv_seq` 项，即 **O(seq²)** 复杂度。
+---
 
-#### 计算示例
+#### 5.1.2 Forward 内存访问
 
-以 Qwen3.5-9B 为例 (batch=1, seq=4096, heads=16, kv_heads=4, head_dim=256):
-
-```
-qk_flops = 2 × 1 × 16 × 4096 × 4096 × 256 = 545 GFLOPs
-softmax_flops = 5 × 1 × 16 × 4096 × 4096 = 1.34 GFLOPs
-attn_v_flops = 2 × 1 × 16 × 4096 × 256 × 4096 = 545 GFLOPs
-forward_flops = 1.09 TFLOPs (per layer)
-
-# 注: GQA 模式下 kv_heads=4，实际计算量相同但内存访问减少
-```
-
-#### 内存访问分析
-
-**Standard SDPA**:
-- 需要存储 attention scores: `batch × heads × seq × kv_seq × dtype_size`
-- 内存: O(seq²)，seq=4096 时约 512 MB (fp16)
-
-**Flash Attention**:
-- 使用 tiling 策略，将 Q/K/V 分块加载到 SRAM
-- 在 SRAM 内完成 Q@K^T、softmax、@V 的融合计算
-- 避免将 attention scores 写回 HBM
-- 内存访问: O(seq)，仅需读写 Q/K/V 和 Output
-
-```python
-# Flash Attention HBM traffic
-bytes_accessed = batch × heads × seq × head_dim × dtype_size  # Q
-              + batch × kv_heads × kv_seq × head_dim × dtype_size × kv_loads  # K
-              + batch × kv_heads × kv_seq × head_dim × dtype_size × kv_loads  # V
-              + batch × heads × seq × head_dim × dtype_size  # Output
-# 注: kv_loads ~ (kv_seq / block_size)，O(seq)
-```
-
-**内存对比**:
-| Attention 类型 | HBM Traffic | 内存复杂度 |
-|----------------|-------------|-----------|
-| Standard SDPA | O(seq²) | 存储 attention scores |
-| Flash Attention | O(seq) | 不存储 attention scores |
-
-#### Backward 计算分解
-
-**Full Attention Backward**:
-- 需要保存 attention scores（或使用 Flash recompute）
-- 每个操作有对应的 backward matmul
+**Standard Attention 内存访问**:
 
 ```
-# Backward 分解
-# dV = S^T @ dO: 2 × batch × heads × seq × head_dim × kv_seq
-# dS = dO @ V^T: 2 × batch × heads × seq × kv_seq × head_dim
-# Softmax backward: ~5 × batch × heads × seq × kv_seq
-# dQ = dS @ K: 2 × batch × heads × seq × kv_seq × head_dim
-# dK = dS^T @ Q: 2 × batch × heads × seq × kv_seq × head_dim
+- 读 Q: batch × heads × seq × head_dim × dtype_size
+- 读 K: batch × kv_heads × kv_seq × head_dim × dtype_size
+- 读 V: batch × kv_heads × kv_seq × head_dim × dtype_size
+- 写 S (attention scores): batch × heads × seq × kv_seq × dtype_size ← 这是 O(seq²) 的关键!
+- 读 S: batch × heads × seq × kv_seq × dtype_size
+- 写 O: batch × heads × seq × head_dim × dtype_size
 
-backward_flops ≈ 2 × forward_flops
+bytes_accessed = (2 heads × seq × head_dim + 2 kv_heads × kv_seq × head_dim 
+                 + 2 heads × seq × kv_seq) × batch × dtype_size
+
+关键问题: S 是 seq² 大小，写入和读取两次
 ```
 
-**Backward Memory**:
-- Standard: 需存储 attention scores (seq² × dtype_size)
-- Flash: 通过 recompute 避免存储，内存 ≈ 2× forward bytes
+**Flash Attention 内存访问（优化）**:
 
-### 5.2 Linear Attention
-
-#### 核心思想
-
-Linear Attention 通过 kernel trick 重写 attention 公式:
-
-**标准 Attention**:
 ```
-Attention(Q, K, V) = softmax(QK^T / sqrt(d)) × V
+- 读 Q: batch × heads × seq × head_dim × dtype_size × block_loads
+- 读 K: batch × kv_heads × kv_seq × head_dim × dtype_size × block_loads
+- 读 V: batch × kv_heads × kv_seq × head_dim × dtype_size × block_loads
+- 写 O: batch × heads × seq × head_dim × dtype_size
+- 不写 S 到 HBM! (S 只在 SRAM 中)
+
+bytes_flash ≈ (heads × seq × head_dim + 2 kv_heads × kv_seq × head_dim) × batch × dtype_size
+             ≈ O(seq) 而非 O(seq²)
+```
+
+**内存访问对比表**:
+
+| 组件 | Standard Attention | Flash Attention | 说明 |
+|------|-------------------|----------------|------|
+| Q | 读 1 次 | 读 ~kv_seq/block_size 次 | Flash 分块加载 |
+| K | 读 1 次 | 读 ~seq/block_size 次 | Flash 分块加载 |
+| V | 读 1 次 | 读 ~seq/block_size 次 | Flash 分块加载 |
+| S (scores) | 写 + 读 = 2 次 | **不写 HBM** | Flash 关键优化 |
+| O | 写 1 次 | 写 1 次 | 相同 |
+| **总复杂度** | O(seq²) | O(seq) | Flash 避免 seq² 内存 |
+
+---
+
+#### 5.1.3 Backward 阶段逐层计算
+
+Forward: `O = softmax(Q @ K^T / √d) @ V`
+
+Backward 需要计算: `dQ, dK, dV`
+
+**Step B1: dV = S^T @ dO**
+
+```
+输入: S^T (batch, heads, kv_seq, seq)
+     dO (batch, heads, seq, head_dim)
+
+输出: dV (batch, kv_heads, kv_seq, head_dim)
+
+FLOPs: 2 × batch × heads × kv_seq × seq × head_dim
+
+Memory: 读 S + 读 dO + 写 dV
+```
+
+**Step B2: dS = dO @ V^T**
+
+```
+输入: dO (batch, heads, seq, head_dim)
+     V^T (batch, kv_heads, head_dim, kv_seq)
+
+输出: dS (batch, heads, seq, kv_seq)
+
+FLOPs: 2 × batch × heads × seq × head_dim × kv_seq
+
+Memory: 读 dO + 读 V + 写 dS
+```
+
+**Step B3: Softmax Backward**
+
+```
+Softmax backward 需要 S (attention scores):
+dS_raw = S × (dS - Σ(S × dS))
+
+计算:
+- S × dS: batch × heads × seq × kv_seq FLOPs
+- sum: batch × heads × seq × kv_seq FLOPs
+- S × (dS - sum): batch × heads × seq × kv_seq FLOPs
+
+softmax_backward_flops ≈ 3 × batch × heads × seq × kv_seq
+
+Memory: 读 S + 读 dS + 写 dS_grad
+```
+
+**Step B4: dQ = dS_grad @ K / √d**
+
+```
+输入: dS_grad (batch, heads, seq, kv_seq)
+     K (batch, kv_heads, kv_seq, head_dim)
+
+输出: dQ (batch, heads, seq, head_dim)
+
+FLOPs: 2 × batch × heads × seq × kv_seq × head_dim
+
+Memory: 读 dS + 读 K + 写 dQ
+```
+
+**Step B5: dK = dS_grad^T @ Q / √d**
+
+```
+输入: dS_grad^T (batch, heads, kv_seq, seq)
+     Q (batch, heads, seq, head_dim)
+
+输出: dK (batch, kv_heads, kv_seq, head_dim)
+
+FLOPs: 2 × batch × heads × kv_seq × seq × head_dim
+
+Memory: 读 dS + 读 Q + 写 dK
+```
+
+**Backward 总 FLOPs**:
+
+```
+backward_flops = dV + dS + softmax_bw + dQ + dK
+               ≈ 4 × 2 × batch × heads × seq × kv_seq × head_dim
+               ≈ 8 × batch × heads × seq × kv_seq × head_dim
+               ≈ 2 × forward_flops
+```
+
+---
+
+#### 5.1.4 Backward 内存访问（需要保存的 activation）
+
+**Standard Attention Saved Tensors**:
+
+```
+Saved tensors:
+- Q: batch × heads × seq × head_dim × dtype_size
+- K: batch × kv_heads × kv_seq × head_dim × dtype_size
+- V: batch × kv_heads × kv_seq × head_dim × dtype_size
+- S (standard): batch × heads × seq × kv_seq × dtype_size ← O(seq²)
+
+总计 ≈ (2 heads × seq × head_dim + 2 kv_heads × kv_seq × head_dim + heads × seq × kv_seq) × batch × dtype_size
+
+关键问题: 需要保存 S (seq²)，内存压力大
+```
+
+**Flash Attention Saved Tensors**:
+
+```
+Saved tensors:
+- Q: batch × heads × seq × head_dim × dtype_size
+- K: batch × kv_heads × kv_seq × head_dim × dtype_size
+- V: batch × kv_heads × kv_seq × head_dim × dtype_size
+- 不保存 S! backward 时 recompute
+
+总计 ≈ (heads × seq × head_dim + 2 kv_heads × kv_seq × head_dim) × batch × dtype_size
+
+关键优势: 不保存 S，通过 Q/K recompute，节省 seq² 内存
+代价: backward 需要额外 forward 计算，但节省内存更重要
+```
+
+**Saved Activation 内存对比表**:
+
+| 组件 | Standard | Flash | 说明 |
+|------|----------|-------|------|
+| Q | ✓ 保存 | ✓ 保存 | 相同 |
+| K | ✓ 保存 | ✓ 保存 | 相同 |
+| V | ✓ 保存 | ✓ 保存 | 相同 |
+| S (scores) | ✓ 保存 (seq²) | ✗ **不保存** | Flash 关键优化 |
+| **总内存** | O(seq²) | O(seq) | seq=4096 时差 1024x |
+
+---
+
+### 5.2 Linear Attention 详细分解
+
+#### 5.2.1 核心公式
+
+**Standard Attention**:
+```
+O = softmax(QK^T/√d) V
 ```
 
 **Linear Attention**:
 ```
-LinearAttention(Q, K, V) = φ(Q) × (φ(K)^T × φ(V))
+O = φ(Q) (φ(K)^T φ(V))
+
+其中 φ(x) 是 feature map，如 elu(x)+1 或随机特征
 ```
 
-关键优势:
-- `(φ(K)^T × φ(V))` 可以逐位置累加，形成固定大小的 **KV state**
+**关键优势**:
+- `(φ(K)^T φ(V))` 可以逐位置累加，形成固定大小的 **KV state**
 - 无需存储 O(seq²) 的 attention scores
 - 计算复杂度从 O(seq²) 降为 O(seq)
 
-#### 计算步骤
+---
 
-根据 `llm_perf/kernels/functional.py:linear_attention` 函数:
+#### 5.2.2 Forward 阶段逐层计算
 
-**1. Feature Map**: 对 Q, K, V 应用非线性映射 φ(x)
-   - Qwen3.5 使用 `kernel_dim = 4` 的 feature map
-   - φ(x) = elu(x) + 1 或类似的近似 softmax
+**Step 1: Feature Map φ(Q), φ(K), φ(V)**
 
-**2. KV State**: 计算 `φ(K)^T @ φ(V)`
-   - 输入: K, V (batch × heads × kv_seq × head_dim)
-   - 输出: KV state (batch × heads × head_dim × head_dim) - **固定大小**
+```
+假设使用 elu(x)+1 feature map:
+φ(x) = elu(x) + 1 = (exp(x)-1 if x<0 else x) + 1
 
-**3. Q State**: 计算 `φ(Q) @ KV_state`
-   - 输入: Q, KV state
-   - 输出: Output (batch × heads × seq × head_dim)
+每元素计算:
+- exp (x<0): 7 FLOPs
+- add/sub: 2 FLOPs
+- add 1: 1 FLOPs
+约 10 FLOPs per element
 
-#### FLOPs 公式推导
+对于 kernel_dim 特征（如 Qwen3.5 使用 4 维 feature）:
+feature_flops_per_elem = kernel_dim × 10
 
-```python
-# 1. Feature map: φ(Q), φ(K), φ(V)
-# 每个元素需要 kernel_dim 次计算（近似 softmax）
-# FLOPs = kernel_dim × 2 (multiply-add for feature computation)
-feature_flops_per_elem = kernel_dim × 2
+总计:
+φ(Q): batch × heads × seq × head_dim × kernel_dim × 10 FLOPs
+φ(K): batch × kv_heads × kv_seq × head_dim × kernel_dim × 10 FLOPs
+φ(V): batch × kv_heads × kv_seq × head_dim × kernel_dim × 10 FLOPs
 
-q_feature_flops = batch × heads × seq × head_dim × kernel_dim × 2
-k_feature_flops = batch × kv_heads × kv_seq × head_dim × kernel_dim × 2
-v_feature_flops = batch × kv_heads × kv_seq × head_dim × kernel_dim × 2
+简化为 2×kernel_dim × batch × heads × seq × head_dim (保守估计)
+```
 
-total_feature_flops = (q_feature_flops + k_feature_flops + v_feature_flops)
+**Step 2: KV State = K^T @ V**
 
-# 2. KV state: K^T @ V
-# (kv_seq × head_dim)^T @ (kv_seq × head_dim) = (head_dim × head_dim)
-kv_state_flops = 2 × batch × kv_heads × head_dim × head_dim × kv_seq
+```
+输入: φ(K) (batch, kv_heads, kv_seq, head_dim)
+     φ(V) (batch, kv_heads, kv_seq, head_dim)
 
-# 3. Q state: Q @ KV_state
-# (seq × head_dim) @ (head_dim × head_dim) = (seq × head_dim)
+输出: KV_state = K^T @ V (batch, kv_heads, head_dim, head_dim)
+
+关键: 这是固定大小的 state，不随 seq 增长!
+
+计算:
+- 每个 (head_dim, head_dim) 位置: kv_seq 次乘法 + kv_seq 次加法
+- FLOPs = head_dim × head_dim × (kv_seq × 2)
+
+kv_state_flops = 2 × batch × kv_heads × kv_seq × head_dim × head_dim
+              = 2 × batch × kv_heads × kv_seq × head_dim²
+```
+
+**Step 3: Q State = Q @ KV_state**
+
+```
+输入: φ(Q) (batch, heads, seq, head_dim)
+     KV_state (batch, kv_heads, head_dim, head_dim)
+
+输出: O (batch, heads, seq, head_dim)
+
+计算:
+- 每个 (seq, head_dim) 位置: head_dim 次乘法 + head_dim 次加法
+- FLOPs = seq × head_dim × (head_dim × 2)
+
 q_state_flops = 2 × batch × heads × seq × head_dim × head_dim
-
-# Forward Total
-forward_flops = total_feature_flops + kv_state_flops + q_state_flops
+             = 2 × batch × heads × seq × head_dim²
 ```
 
-**关键观察**: 无 seq² 项，复杂度为 **O(seq)**。
-
-#### 计算示例
-
-以 Qwen3.5-9B 为例 (batch=1, seq=4096, heads=16, kv_heads=32, head_dim=128, kernel_dim=4):
+**Forward 总 FLOPs**:
 
 ```
-# Feature map
-q_feature = 1 × 16 × 4096 × 128 × 4 × 2 = 67.1 MFLOPs
-k_feature = 1 × 32 × 4096 × 128 × 4 × 2 = 134 MFLOPs
-v_feature = 1 × 32 × 4096 × 128 × 4 × 2 = 134 MFLOPs
-total_feature = 335 MFLOPs
+forward_flops = feature_flops + kv_state_flops + q_state_flops
 
-# KV state (固定大小)
-kv_state = 2 × 1 × 32 × 128 × 128 × 4096 = 4.29 GFLOPs
+关键观察:
+- feature_flops: O(seq × kernel_dim × head_dim)
+- kv_state_flops: O(kv_seq × head_dim²) ← 无 seq 依赖!
+- q_state_flops: O(seq × head_dim²)
 
-# Q state
-q_state = 2 × 1 × 16 × 4096 × 128 × 128 = 1.07 GFLOPs
+总计 = O(seq × head_dim² + seq × kernel_dim × head_dim)
+     = O(seq × head_dim²)  (head_dim >> kernel_dim)
 
-forward_flops = 5.7 GFLOPs (per linear layer)
+对比 Full Attention O(seq² × head_dim):
+- Linear 无 seq² 项!
 ```
 
-**对比 Full Attention**: 1.09 TFLOPs vs 5.7 GFLOPs ≈ **190x 加速**
+---
 
-#### 内存访问分析
+#### 5.2.3 Forward 内存访问
 
-**Linear Attention 内存**:
-- 无 attention scores 存储
-- KV state 固定大小: `heads × head_dim × head_dim × dtype_size`
+**Linear Attention 内存访问**:
 
-```python
-bytes_accessed = batch × heads × seq × head_dim × dtype_size  # Q
-              + batch × kv_heads × kv_seq × head_dim × dtype_size  # K
-              + batch × kv_heads × kv_seq × head_dim × dtype_size  # V
-              + batch × heads × head_dim × head_dim × dtype_size  # KV state (固定)
-              + batch × heads × seq × head_dim × dtype_size  # Output
+```
+- 读 Q: batch × heads × seq × head_dim × dtype_size
+- 读 K: batch × kv_heads × kv_seq × head_dim × dtype_size
+- 读 V: batch × kv_heads × kv_seq × head_dim × dtype_size
+- KV_state: batch × kv_heads × head_dim × head_dim × dtype_size ← 固定大小!
+- 写 O: batch × heads × seq × head_dim × dtype_size
+
+bytes_accessed = (heads × seq × head_dim + 2 kv_heads × kv_seq × head_dim 
+                 + kv_heads × head_dim² + heads × seq × head_dim) × batch × dtype_size
+
+关键优势:
+- 无 seq² 大小的 attention scores
+- KV_state 固定为 head_dim² per head
+```
+
+**Forward 内存访问对比表**:
+
+| 组件 | Full Attention | Linear Attention | 说明 |
+|------|----------------|------------------|------|
+| Q | seq × head_dim | seq × head_dim | 相同 |
+| K | kv_seq × head_dim | kv_seq × head_dim | 相同 |
+| V | kv_seq × head_dim | kv_seq × head_dim | 相同 |
+| **Scores/State** | **seq × kv_seq (seq²)** | **head_dim² (固定)** | Linear 关键优势 |
+| O | seq × head_dim | seq × head_dim | 相同 |
+| **总复杂度** | **O(seq²)** | **O(seq)** | Linear 避免 seq² |
+
+---
+
+#### 5.2.4 Backward 阶段逐层计算
+
+Forward: `O = φ(Q) × (φ(K)^T × φ(V))`
+
+Backward 需要计算: `dQ, dK, dV`
+
+**Step B1: dKV_state = φ(Q)^T @ dO**
+
+```
+输入: φ(Q)^T (batch, heads, head_dim, seq)
+     dO (batch, heads, seq, head_dim)
+
+输出: dKV_state (batch, heads, head_dim, head_dim)
+
+FLOPs: 2 × batch × heads × seq × head_dim²
+
+Memory: 读 φ(Q) + 读 dO + 写 dKV_state
+```
+
+**Step B2: dφ(Q) = dO @ KV_state^T**
+
+```
+输入: dO (batch, heads, seq, head_dim)
+     KV_state^T (batch, kv_heads, head_dim, head_dim)
+
+输出: dφ(Q) (batch, heads, seq, head_dim)
+
+FLOPs: 2 × batch × heads × seq × head_dim²
+
+Memory: 读 dO + 读 KV_state + 写 dφ(Q)
+```
+
+**Step B3: dφ(V) = φ(K) @ dKV_state**
+
+```
+输入: φ(K) (batch, kv_heads, kv_seq, head_dim)
+     dKV_state (batch, kv_heads, head_dim, head_dim)
+
+输出: dφ(V) (batch, kv_heads, kv_seq, head_dim)
+
+FLOPs: 2 × batch × kv_heads × kv_seq × head_dim²
+
+Memory: 读 φ(K) + 读 dKV_state + 写 dφ(V)
+```
+
+**Step B4: dφ(K) = φ(V) @ dKV_state^T**
+
+```
+输入: φ(V) (batch, kv_heads, kv_seq, head_dim)
+     dKV_state^T (batch, kv_heads, head_dim, head_dim)
+
+输出: dφ(K) (batch, kv_heads, kv_seq, head_dim)
+
+FLOPs: 2 × batch × kv_heads × kv_seq × head_dim²
+
+Memory: 读 φ(V) + 读 dKV_state + 写 dφ(K)
+```
+
+**Step B5: Feature Map Backward**
+
+```
+φ(x) = elu(x) + 1 的梯度:
+dφ/dx = exp(x) if x<0 else 1
+
+每元素约 2 FLOPs (判断 + exp)
+
+总计:
+dφ(Q): batch × heads × seq × head_dim × 2
+dφ(K): batch × kv_heads × kv_seq × head_dim × 2
+dφ(V): batch × kv_heads × kv_seq × head_dim × 2
+```
+
+**Backward 总 FLOPs**:
+
+```
+backward_flops = 4 × 2 × batch × heads × seq × head_dim² + feature_backward
+               ≈ 8 × batch × heads × seq × head_dim²
+               ≈ 2 × forward_flops (forward 中 kv_state_flops 被 seq 替换)
+```
+
+---
+
+#### 5.2.5 Backward 内存访问（需要保存的 activation）
+
+**Linear Attention Saved Tensors**:
+
+```
+Saved tensors:
+- φ(Q): batch × heads × seq × head_dim × dtype_size
+- φ(K): batch × kv_heads × kv_seq × head_dim × dtype_size
+- φ(V): batch × kv_heads × kv_seq × head_dim × dtype_size
+- KV_state: batch × kv_heads × head_dim × head_dim × dtype_size ← 固定大小!
+
+总计 ≈ (heads × seq × head_dim + 2 kv_heads × kv_seq × head_dim + kv_heads × head_dim²) × batch × dtype_size
+
+关键优势:
+- 无 seq² 大小的 activation 需要保存
+- KV_state 固定大小，无论 seq 多长
+```
+
+**Saved Activation 内存对比表**:
+
+| 组件 | Full Attention | Linear Attention | 说明 |
+|------|----------------|------------------|------|
+| Q/φ(Q) | seq × head_dim | seq × head_dim | 相同 |
+| K/φ(K) | kv_seq × head_dim | kv_seq × head_dim | 相同 |
+| V/φ(V) | kv_seq × head_dim | kv_seq × head_dim | 相同 |
+| **Scores/State** | **seq × kv_seq (seq²)** | **head_dim² (固定)** | Linear 关键优势 |
+| **总内存** | **O(seq²)** | **O(seq)** | seq=4096 时差 1024x |
+
+---
+
+### 5.3 数值计算示例
+
+使用 Qwen3.5-9B 参数:
+- batch = 1
+- heads = 16
+- kv_heads = 4 (GQA)
+- head_dim = 256
+- seq = kv_seq = 4096
+- kernel_dim = 4
+
+---
+
+#### 5.3.1 Full Attention 数值示例
+
+**Forward 计算**:
+
+```
+qk_flops = 2 × 1 × 16 × 4096 × 4096 × 256 = 549 GFLOPs
+softmax_flops = 5 × 1 × 16 × 4096 × 4096 = 1.3 GFLOPs
+attn_v_flops = 2 × 1 × 16 × 4096 × 4096 × 256 = 549 GFLOPs
+total = 1099 GFLOPs ≈ 1.1 TFLOPs per layer
+```
+
+**Backward 计算**:
+
+```
+backward_flops ≈ 2 × forward = 2.2 TFLOPs
+```
+
+**内存占用（Standard）**:
+
+```
+S (attention scores) = 1 × 16 × 4096 × 4096 × 2 bytes = 537 MB ← seq²!
+Saved activations ≈ 500+ MB
+```
+
+**内存占用（Flash）**:
+
+```
+不保存 S，backward 时 recompute
+Saved activations ≈ 10 MB (只 Q/K/V)
+```
+
+---
+
+#### 5.3.2 Linear Attention 数值示例
+
+**Forward 计算**:
+
+```
+feature_flops ≈ (1×16 + 1×4 + 1×4) × 4096 × 256 × 4 × 2 = 0.2 GFLOPs
+kv_state_flops = 2 × 1 × 4 × 4096 × 256 × 256 = 0.5 GFLOPs
+q_state_flops = 2 × 1 × 16 × 4096 × 256 × 256 = 2.1 GFLOPs
+total = 2.8 GFLOPs per layer
+```
+
+**对比 Full Attention**: 1099 / 2.8 = **392× 加速**
+
+**Backward 计算**:
+
+```
+backward_flops ≈ 2 × forward = 5.6 GFLOPs
+```
+
+**内存占用**:
+
+```
+KV_state = 1 × 4 × 256 × 256 × 2 bytes = 0.5 MB ← 固定!
+Saved activations ≈ 2 MB (φ(Q), φ(K), φ(V), KV_state)
+```
+
+---
+
+#### 5.3.3 Decode 阶段计算量对比
+
+Decode 阶段生成 1 token，`seq=1, kv_seq=prompt_len + generated_len`
+
+**Full Attention Decode**:
+
+```
+# kv_seq = prompt_len + generated = 4096 + 100 = 4196
+qk_flops = 2 × 1 × 16 × 1 × 4196 × 256 = 0.34 GFLOPs per token
+# 随生成长度线性增长，每 token 计算量增加
+```
+
+**Linear Attention Decode**:
+
+```
+# kv_state 已在 prefill 时计算，只需更新一次 (incremental)
+q_state_flops = 2 × 1 × 16 × 1 × 256 × 256 = 2.1 GFLOPs
+# 固定不变，不随生成长度增长!
 ```
 
 **关键差异**:
-- Full Attention: 需存储 `seq × kv_seq` 的 attention scores (O(seq²))
-- Linear Attention: 只存储固定的 `head_dim × head_dim` KV state (O(1))
+- Full: decode 计算量随 KV cache 长度线性增长
+- Linear: decode 计算量固定，无 KV cache 依赖
 
-#### Backward 计算分解
+这是 Linear Attention 的关键优势: **decode 计算量不随 KV cache 长度增长**
 
-**Linear Attention Backward**:
-- 无 attention scores，只需保存 Q, K, V
-- 通过 state 的 gradient 反传
+---
+
+### 5.4 Hybrid Attention 策略分析
+
+Qwen3.5 使用 3 Linear + 1 Full 混合:
 
 ```
-# Backward 分解
-# Feature map backward: ~2 × feature_flops (recompute φ)
-# KV state backward: dKV_state = φ(Q)^T @ dOutput
-# Q state backward: dQ = dOutput @ KV_state^T
-
-backward_flops ≈ 2 × forward_flops
+每 4 层:
+- 3 × Linear Attention: O(seq) 计算量
+- 1 × Full Attention: O(seq²) 计算量
 ```
 
-**Backward Memory**:
-- 无需存储 seq² 的 attention scores
-- 只需保存 Q, K, V 和 KV state
+---
 
-### 5.3 对比总结
+#### 5.4.1 总 FLOPs 比例分析
 
-#### 计算复杂度对比
+```
+总 FLOPs 比例:
+- Linear 占比: 3 × O(seq × head_dim²)
+- Full 占比: 1 × O(seq² × head_dim)
 
-| 特性 | Full Attention | Linear Attention |
-|------|----------------|------------------|
-| 计算复杂度 | O(seq² × head_dim) | O(seq × head_dim² × kernel_dim) |
-| 内存复杂度 | O(seq²) scores | O(1) 固定 state |
-| KV cache | 需要，随 seq 增长 | 不需要，固定大小 |
-| 精度 | 精确 softmax | 近似（feature map） |
-| 适用场景 | 短序列 (< 8K) | 长序列 (> 8K)、流式推理 |
-| 优势 | 高精度、训练稳定 | 内存小、长序列高效 |
+当 seq > head_dim 时，Full 占主导
+当 seq < head_dim² 时，Linear 更高效
+```
 
-#### FLOPs 对比表
+**示例 (seq=4096, head_dim=256)**:
+
+```
+- Linear: 3 × 2.1 GFLOPs = 6.3 GFLOPs
+- Full: 1 × 1099 GFLOPs = 1099 GFLOPs
+- Full 占比: 99.4%!
+```
+
+**设计原因**:
+- Linear 提供长序列支持，内存效率
+- Full 提供精确注意力，保证关键位置的精确建模
+- 每层都用 Linear 会损失精度，混合策略平衡效率和精度
+
+---
+
+#### 5.4.2 内存策略分析
+
+**Hybrid 内存占用**:
+
+```
+每 4 层:
+- 3 × Linear: 3 × 0.5 MB KV_state = 1.5 MB (固定)
+- 1 × Full: 1 × 537 MB S (seq²) + KV cache
+
+使用 Flash: 不保存 S，只保存 Q/K/V
+- Linear: 3 × 2 MB activations
+- Full: 1 × 10 MB activations (Flash)
+总计 ≈ 16 MB per 4 layers
+```
+
+**对比纯 Full Attention (4 layers)**:
+
+```
+- 4 × 537 MB S = 2148 MB (Standard)
+- 或 4 × 10 MB (Flash) = 40 MB
+
+Hybrid 内存节省: Standard 2148 MB → 16 MB (134×)
+```
+
+---
+
+#### 5.4.3 Hybrid vs 纯 Linear vs 纯 Full
+
+| 特性 | 纯 Full Attention | 纯 Linear Attention | Hybrid (3+1) |
+|------|------------------|--------------------|--------------|
+| 计算量 (seq=4096) | 4.4 TFLOPs | 8.4 GFLOPs | 1.1 TFLOPs |
+| 内存 (seq=4096) | 2148 MB (Standard) / 40 MB (Flash) | 2 MB | 16 MB (Flash) |
+| 精度 | 最高 | 较低（近似） | 平衡 |
+| 适用场景 | 短序列、高精度 | 长序列、流式 | 通用 |
+
+---
+
+### 5.5 对比总结
+
+#### 5.5.1 计算复杂度对比
+
+| 特性 | Full Attention | Linear Attention | Hybrid (3+1) |
+|------|----------------|------------------|--------------|
+| Forward 复杂度 | O(seq² × head_dim) | O(seq × head_dim²) | 75% Linear + 25% Full |
+| Backward 复杂度 | ~2× Forward | ~2× Forward | ~2× Forward |
+| KV cache 依赖 | 随 seq 增长 | 固定大小 | Linear 固定 + Full O(seq) |
+| Decode 计算增长 | 随 KV cache 增长 | 固定 | Linear 固定 + Full 增长 |
+
+---
+
+#### 5.5.2 内存复杂度对比
+
+| 特性 | Full (Standard) | Full (Flash) | Linear | Hybrid (Flash) |
+|------|-----------------|--------------|--------|----------------|
+| Saved Activation | O(seq²) | O(seq) | O(seq) | O(seq) |
+| Attention Scores | seq × kv_seq | 不保存 | 不保存 | Linear 不保存 + Full 不保存 |
+| KV State | N/A | N/A | head_dim² (固定) | Linear 固定 + Full KV cache |
+| seq=4096 内存 | 537 MB | 10 MB | 2 MB | 16 MB |
+
+---
+
+#### 5.5.3 FLOPs 对比表（Qwen3.5-9B）
 
 | 场景 | Full Attention | Linear Attention | 比率 |
 |------|----------------|------------------|------|
 | seq=1024 | 68 GFLOPs | 0.35 GFLOPs | 195x |
-| seq=4096 | 1.09 TFLOPs | 5.7 GFLOPs | 190x |
-| seq=16384 | 17.6 TFLOPs | 22.8 GFLOPs | 770x |
-| seq=100K | 1060 TFLOPs | 140 GFLOPs | 7.5x |
+| seq=4096 | 1099 GFLOPs | 2.8 GFLOPs | 392x |
+| seq=16384 | 17.6 TFLOPs | 11.2 GFLOPs | 1571x |
+| seq=100K | 1060 TFLOPs | 70 GFLOPs | 15143x |
 
-注: 基于 Qwen3.5-9B 参数，batch=1, heads=16, head_dim=256/128
+注: 基于 Qwen3.5-9B 参数，batch=1, heads=16, kv_heads=4, head_dim=256, kernel_dim=4
 
-#### 内存对比表
+---
+
+#### 5.5.4 内存对比表（Qwen3.5-9B）
 
 | 场景 | Full Attention Scores | Linear KV State | 比率 |
 |------|----------------------|-----------------|------|
@@ -1738,40 +2195,11 @@ backward_flops ≈ 2 × forward_flops
 | seq=16384 | 8 GB | 0.5 MB | 16000x |
 | seq=100K | 320 GB | 0.5 MB | 640000x |
 
-注: 基于 fp16, heads=16
+注: 基于 fp16, heads=16, kv_heads=4
 
-### 5.4 Hybrid Attention 策略
+---
 
-Qwen3.5 采用 Hybrid Attention: **3 层 Linear + 1 层 Full**，每 4 层为一个 cycle。
-
-**为什么需要 Full Attention**:
-- Linear Attention 是近似，长期依赖可能衰减
-- Full Attention 保证精度，捕获全局信息
-
-**混合策略优势**:
-- Linear: 处理局部依赖，降低计算量 (75% layers)
-- Full: 处理全局依赖，保证精度 (25% layers)
-
-**总 FLOPs 计算**:
-```
-# Hybrid Attention per 4 layers
-linear_layers = 3
-full_layers = 1
-
-flops_hybrid = 3 × linear_flops + 1 × full_flops
-
-# Qwen3.5-9B, seq=4096
-linear_flops = 5.7 GFLOPs
-full_flops = 1.09 TFLOPs
-flops_hybrid = 3 × 5.7 + 1090 = 1107 GFLOPs ≈ 1.11 TFLOPs
-
-# 对比纯 Full Attention (4 layers)
-flops_full_only = 4 × 1090 = 4360 GFLOPs = 4.36 TFLOPs
-
-# 计算量降低: 4.36 / 1.11 ≈ 4x
-```
-
-### 5.5 Flash Attention vs Linear Attention
+#### 5.5.5 Flash Attention vs Linear Attention
 
 **Flash Attention**:
 - 优化 Full Attention 的内存访问，避免 HBM 爆炸
@@ -1788,7 +2216,7 @@ flops_full_only = 4 × 1090 = 4360 GFLOPs = 4.36 TFLOPs
 **互补关系**:
 - Flash Attention: 解决 Full Attention 的内存瓶颈
 - Linear Attention: 解决 Full Attention 的计算瓶颈
-- Hybrid: 结合两者优势
+- Hybrid: 结合两者优势，平衡精度和效率
 
 ---
 
