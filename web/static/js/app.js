@@ -316,7 +316,10 @@ function updateDiffusionModeUI(mode) {
 function loadModelPreset() {
     const presetKey = elements.modelPreset.value;
     const presets = state.modelPresets.presets || state.modelPresets;
-    if (!presetKey || !presets[presetKey]) return;
+    if (!presetKey || !presets[presetKey]) {
+        updateModelSpecDisplay(null);
+        return;
+    }
 
     const preset = presets[presetKey];
 
@@ -340,6 +343,98 @@ function loadModelPreset() {
     }
 
     updateModelTypeUI();
+    updateModelSpecDisplay(preset, presetKey);
+}
+
+function updateModelSpecDisplay(config, presetKey) {
+    const displayEl = document.getElementById('model-spec-display');
+    if (!displayEl) return;
+
+    if (!config) {
+        displayEl.innerHTML = '<p class="hint-text">选择预设模型后，将显示模型规格参数</p>';
+        return;
+    }
+
+    const numKVHeads = config.num_kv_heads || config.num_heads || 32;
+    const headDim = config.head_dim || (config.hidden_size ? config.hidden_size / config.num_heads : 128);
+    const ffnType = config.num_experts ? 'MoE' : 'Dense SwiGLU';
+    const attentionType = config.layer_types_mode === 'mixed' ? 'Hybrid (Linear+Full)' : 'Full';
+
+    const rows = [
+        ['模型名称', config.description || presetKey],
+        ['架构类型', config.architecture || 'llama'],
+        ['参数量', estimateModelParams(config)],
+        ['层数 (num_layers)', config.num_layers || 'N/A'],
+        ['隐藏层大小 (hidden_size)', config.hidden_size || 'N/A'],
+        ['注意力头数 (num_heads)', config.num_heads || config.num_attention_heads || 'N/A'],
+        ['KV 头数 (num_kv_heads)', numKVHeads],
+        ['Head 维度', Math.round(headDim)],
+        ['FFN 类型', ffnType],
+    ];
+
+    if (config.num_experts) {
+        rows.push(['专家数 (num_experts)', config.num_experts]);
+        rows.push(['Top-K', config.num_experts_per_token || 8]);
+    }
+
+    if (config.intermediate_size) {
+        rows.push(['Intermediate size', config.intermediate_size]);
+    }
+
+    rows.push(['词汇表大小', config.vocab_size || 'N/A']);
+    rows.push(['最大序列长度', config.max_seq_len || 'N/A']);
+
+    if (config.tie_word_embeddings) {
+        rows.push(['权重共享', 'Embedding/LM_head 共享']);
+    }
+
+    if (config.attention_features && config.attention_features.length > 0) {
+        rows.push(['注意力特性', config.attention_features.join(', ')]);
+    }
+
+    if (config.first_k_dense_layers) {
+        rows.push(['前 k 层 Dense', config.first_k_dense_layers]);
+    }
+
+    rows.push(['Attention 类型', attentionType]);
+    rows.push(['数据类型', config.dtype || 'fp16']);
+
+    const tableHtml = rows.map(([label, value]) => 
+        `<tr><td class="spec-label">${label}</td><td class="spec-value">${value}</td></tr>`
+    ).join('');
+
+    displayEl.innerHTML = `
+        <div class="model-spec-section">
+            <h4>模型规格参数</h4>
+            <table class="spec-table">
+                ${tableHtml}
+            </table>
+        </div>
+    `;
+}
+
+function estimateModelParams(config) {
+    if (!config.hidden_size || !config.num_layers) return 'N/A';
+    
+    const hs = config.hidden_size;
+    const nl = config.num_layers;
+    const nh = config.num_heads || 32;
+    const nkv = config.num_kv_heads || nh;
+    const intermediate = config.intermediate_size || hs * 4;
+    const vocab = config.vocab_size || 32000;
+    
+    const embedParams = hs * vocab;
+    const attnParams = hs * hs * (nh / nkv) * nl * 2 + hs * nkv * 2;
+    const ffnParams = intermediate * hs * 2 * nl;
+    
+    const total = embedParams + attnParams + ffnParams;
+    const totalB = total / 1e9;
+    
+    if (config.num_experts) {
+        return `${totalB.toFixed(1)}B (${config.num_experts} experts)`;
+    }
+    
+    return `${totalB.toFixed(1)}B`;
 }
 
 function updateModelTypeUI() {
@@ -1038,11 +1133,11 @@ function renderDetailedBreakdown(detailed) {
         <table class="breakdown-table">
             <tr>
                 <th>子模块类型</th>
-                <th>计算时间</th>
-                <th>计算占比</th>
-                <th>通信时间</th>
-                <th>通信占比</th>
-                <th>内存</th>
+                <th>计算时间 (ms)</th>
+                <th>计算占比 (%)</th>
+                <th>通信时间 (ms)</th>
+                <th>通信占比 (%)</th>
+                <th>内存 (GB)</th>
             </tr>
             ${submoduleBreakdownRows || '<tr><td colspan="6">无数据</td></tr>'}
             ${summaryRow}

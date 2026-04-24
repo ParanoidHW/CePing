@@ -704,3 +704,50 @@ footer {
 .memory-opt-zero {
     transition: opacity 0.2s ease;
 }
+
+.model-spec-container {
+    margin: 0.75rem 0 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    background-color: var(--gray-50);
+}
+
+.model-spec-section h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 0.75rem;
+}
+
+.spec-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.spec-table td {
+    padding: 0.375rem 0.5rem;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.spec-table td:last-child {
+    border-bottom: none;
+}
+
+.spec-label {
+    font-weight: 500;
+    color: var(--gray-600);
+    width: 45%;
+}
+
+.spec-value {
+    color: var(--gray-800);
+}
+
+.hint-text {
+    color: var(--gray-400);
+    font-size: 0.8125rem;
+    text-align: center;
+    margin: 0.5rem 0;
+}
