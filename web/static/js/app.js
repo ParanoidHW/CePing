@@ -965,6 +965,7 @@ function displayResults(result) {
                     <div class="result-label">KV Cache</div>
                 </div>
             </div>
+            ${renderInferenceBreakdown(result.breakdown)}
             ${detailedHtml}
         `;
     }
@@ -1191,6 +1192,44 @@ function renderBreakdown(breakdown) {
                 <td>${(breakdown.time_breakdown?.memory_sec * 1000 || 0).toFixed(1)} ms</td>
                 <td>${(breakdown.time_breakdown?.memory_percent || 0).toFixed(1)}%</td>
             </tr>
+        </table>
+    `;
+}
+
+function renderInferenceBreakdown(breakdown) {
+    if (!breakdown || !breakdown.inference_breakdown) return '';
+    
+    const inf = breakdown.inference_breakdown;
+    return `
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">性能分解</h3>
+        <table class="breakdown-table">
+            <tr>
+                <th>类别</th>
+                <th>时间</th>
+                <th>占比</th>
+            </tr>
+            <tr>
+                <td>Prefill</td>
+                <td>${(inf.prefill_sec * 1000 || 0).toFixed(1)} ms</td>
+                <td>${(inf.prefill_percent || 0).toFixed(1)}%</td>
+            </tr>
+            <tr>
+                <td>Decode (${inf.decode_per_token_sec ? inf.decode_per_token_sec.toFixed(3) + ' ms/token' : '-'})</td>
+                <td>${(inf.decode_sec * 1000 || 0).toFixed(1)} ms</td>
+                <td>${(inf.decode_percent || 0).toFixed(1)}%</td>
+            </tr>
+            <tr>
+                <td>Communication</td>
+                <td>${(inf.communication_sec * 1000 || 0).toFixed(1)} ms</td>
+                <td>${(inf.communication_percent || 0).toFixed(1)}%</td>
+            </tr>
+            ${inf.kv_cache_sec > 0 ? `
+            <tr>
+                <td>KV Cache Access</td>
+                <td>${(inf.kv_cache_sec * 1000 || 0).toFixed(1)} ms</td>
+                <td>${(inf.kv_cache_percent || 0).toFixed(1)}%</td>
+            </tr>
+            ` : ''}
         </table>
     `;
 }

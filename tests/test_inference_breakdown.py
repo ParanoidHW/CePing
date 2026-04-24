@@ -155,6 +155,110 @@ class TestInferenceBreakdown(unittest.TestCase):
         self.assertTrue(total_comm >= 0)
 
 
+class TestInferencePerformanceBreakdown(unittest.TestCase):
+    """测试推理场景的性能分解."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = create_model_from_config({"type": "llama-7b"})
+        cls.device = Device.from_preset("H100-SXM-80GB")
+        cls.topology = NetworkTopology.create_2tier_simple(
+            inter_node_bw_gbps=100, intra_node_bw_gbps=200
+        )
+        cls.cluster = Cluster.create_homogeneous(
+            cls.device.config, num_devices=8, topology=cls.topology
+        )
+        cls.strategy = StrategyConfig(tp_degree=8, pp_degree=1, dp_degree=1)
+
+    def test_inference_has_performance_breakdown(self):
+        """测试推理有性能分解."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        breakdown = result.breakdown
+        self.assertIsNotNone(breakdown)
+        self.assertIn("inference_breakdown", breakdown)
+
+    def test_inference_breakdown_has_prefill_time(self):
+        """测试推理分解有 prefill 时间."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        inf_breakdown = result.breakdown.get("inference_breakdown", {})
+        self.assertIn("prefill_sec", inf_breakdown)
+        self.assertGreater(inf_breakdown["prefill_sec"], 0)
+        self.assertIn("prefill_percent", inf_breakdown)
+
+    def test_inference_breakdown_has_decode_time(self):
+        """测试推理分解有 decode 时间."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        inf_breakdown = result.breakdown.get("inference_breakdown", {})
+        self.assertIn("decode_sec", inf_breakdown)
+        self.assertGreater(inf_breakdown["decode_sec"], 0)
+        self.assertIn("decode_percent", inf_breakdown)
+        self.assertIn("decode_per_token_sec", inf_breakdown)
+
+    def test_inference_breakdown_percentage_sum(self):
+        """测试推理分解占比总和接近100%."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        inf_breakdown = result.breakdown.get("inference_breakdown", {})
+        total_percent = (
+            inf_breakdown.get("prefill_percent", 0)
+            + inf_breakdown.get("decode_percent", 0)
+            + inf_breakdown.get("communication_percent", 0)
+            + inf_breakdown.get("kv_cache_percent", 0)
+        )
+        self.assertAlmostEqual(total_percent, 100.0, delta=1.0)
+
+    def test_inference_breakdown_http_api(self):
+        """测试 HTTP API 返回推理性能分解."""
+        from web.app import app
+
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"type": "llama-7b"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": "llm-inference",
+                "batch_size": 1,
+                "prompt_len": 512,
+                "generation_len": 128,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+
+        result = data["result"]
+        breakdown = result.get("breakdown", {})
+        self.assertIn("inference_breakdown", breakdown)
+
+        inf_breakdown = breakdown["inference_breakdown"]
+        self.assertIn("prefill_sec", inf_breakdown)
+        self.assertIn("decode_sec", inf_breakdown)
+        self.assertIn("decode_per_token_sec", inf_breakdown)
+        self.assertIn("communication_sec", inf_breakdown)
+
+
 class TestInferenceBreakdownHTTPAPI(unittest.TestCase):
     """测试推理场景的 HTTP API 分解."""
 

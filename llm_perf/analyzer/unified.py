@@ -348,6 +348,7 @@ class UnifiedAnalyzer:
                 "optimizer_gb": 0.0,
                 "activation_gb": memory,
                 "kv_cache_gb": framework_overhead_gb,
+                "kv_cache_time_sec": kv_cache_time_sec,
             }
 
             # Only add gradient/optimizer for training (backward phase)
@@ -1674,6 +1675,33 @@ class UnifiedAnalyzer:
         communication_percent = communication_time / effective_total_time * 100 if effective_total_time > 0 else 0
         memory_percent = memory_time / effective_total_time * 100 if effective_total_time > 0 else 0
 
+        inference_breakdown = None
+        if workload.workload_type == WorkloadType.INFERENCE:
+            prefill_phase = next((p for p in phases if p.name == "prefill"), None)
+            decode_phase = next((p for p in phases if p.name == "decode"), None)
+            prefill_time = prefill_phase.total_time_sec if prefill_phase else 0.0
+            decode_time = decode_phase.total_time_sec if decode_phase else 0.0
+            decode_per_token_time = decode_phase.single_time_sec if decode_phase else 0.0
+            kv_cache_time_sec = 0.0
+            for p in phases:
+                kv_cache_time_sec += p.memory_breakdown.get("kv_cache_time_sec", 0.0)
+            inference_effective_time = prefill_time + decode_time + communication_time + kv_cache_time_sec
+            prefill_percent = prefill_time / inference_effective_time * 100 if inference_effective_time > 0 else 0
+            decode_percent = decode_time / inference_effective_time * 100 if inference_effective_time > 0 else 0
+            kv_cache_percent = kv_cache_time_sec / inference_effective_time * 100 if inference_effective_time > 0 else 0
+            inf_comm_percent = communication_time / inference_effective_time * 100 if inference_effective_time > 0 else 0
+            inference_breakdown = {
+                "prefill_sec": prefill_time,
+                "prefill_percent": prefill_percent,
+                "decode_sec": decode_time,
+                "decode_percent": decode_percent,
+                "decode_per_token_sec": decode_per_token_time,
+                "kv_cache_sec": kv_cache_time_sec,
+                "kv_cache_percent": kv_cache_percent,
+                "communication_sec": communication_time,
+                "communication_percent": inf_comm_percent,
+            }
+
         layers = []
         for phase in phases:
             kernels = []
@@ -1723,7 +1751,7 @@ class UnifiedAnalyzer:
                     }
                 )
 
-        return {
+        result = {
             "overview": {
                 "total_time_sec": total_time,
                 "throughput": sum(throughput.values()) if throughput else 0,
@@ -1743,6 +1771,9 @@ class UnifiedAnalyzer:
             "layers": layers,
             "submodules": submodule_breakdown,
         }
+        if inference_breakdown:
+            result["inference_breakdown"] = inference_breakdown
+        return result
 
     def _generate_detailed_breakdown(
         self,
