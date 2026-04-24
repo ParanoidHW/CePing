@@ -1,5 +1,73 @@
 # 开发日志
 
+## 2026-04-24: Kernel backward FLOPs/内存访问显式分解
+
+### 任务背景
+当前代码和文档中 backward 计算量笼统标记为 `2× forward`，但实际应该显式分解为 `dx` 和 `dW` 的计算量和内存访问，以便准确计算 roofline 模型所需的内存带宽。
+
+### 正确的分解
+**Forward: Y = X @ W**
+- X: M×K, W: K×N, Y: M×N
+- FLOPs = 2 × M × K × N
+- Memory: 读 X + 读 W + 写 Y
+
+**Backward 分解**
+
+**dx 计算**: dY @ W^T
+- dY: M×N, W^T: N×K, dx: M×K
+- FLOPs = 2 × M × N × K = 2 × M × K × N
+- Memory: 读 dY + 读 W + 写 dx
+
+**dW 计算**: X^T @ dY
+- X^T: K×M, dY: M×N, dW: K×N
+- FLOPs = 2 × K × M × N = 2 × M × K × N
+- Memory: 读 X + 读 dY + 写 dW
+
+**总 Backward**:
+- FLOPs = 4 × M × K × N（数值上确实是 2× forward）
+- 但内存访问需要显式计算
+
+### 关键差异
+| 操作 | 读 | 写 |
+|------|----|----|
+| dx = dY @ W^T | dY(M×N) + W(K×N) | dx(M×K) |
+| dW = X^T @ dY | X(M×K) + dY(M×N) | dW(K×N) |
+
+- W 在 dx 中被**读**（不变）
+- X 在 dW 中被**读**（需要保存的 activation）
+- dY 在两步中都被读
+
+### 实现内容
+1. **linear 函数**
+   - 显式分解 backward FLOPs 为 flops_dx 和 flops_dw
+   - 显式分解 backward memory 为 bytes_dx 和 bytes_dw
+
+2. **bmm 函数**
+   - 显式分解 backward FLOPs 为 flops_da 和 flops_db
+   - 显式分解 backward memory 为 bytes_da 和 bytes_db
+
+3. **conv2d, conv3d 函数**
+   - 显式分解 backward FLOPs 为 flops_dx 和 flops_dw
+   - 显式分解 backward memory 为 bytes_dx 和 bytes_dw
+
+4. **moe_expert 函数**
+   - 分解 gate_proj, up_proj, down_proj 的 backward
+   - 包含 SiLU activation backward
+
+5. **文档更新**
+   - docs/model_evaluation_wiki.md 添加 backward 分解章节
+   - LLaMA、DeepSeek V3、Qwen3.5 各模型部分添加 backward 分解说明
+
+### 验证
+- backward FLOPs = 2 × forward FLOPs（数值正确）
+- backward memory ≈ 2 × forward memory（显式分解）
+- 108 tests passed
+
+### commit
+- b35f4df: refactor(kernels): explicit backward FLOPs/memory decomposition
+
+---
+
 ## 2026-04-23: Qwen3.5 Dense 模型支持
 
 ### 任务背景
