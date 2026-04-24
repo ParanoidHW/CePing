@@ -116,14 +116,15 @@ params_total = 131.07M + 32 × 210.57M + 4.09M + 131.07M = ~6.74B
 
 ```
 # Attention FLOPs
-flops_qkv_proj = 3 × batch × seq_len × hidden_size × num_heads × head_dim
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_qkv_proj = 2 × 3 × batch × seq_len × hidden_size × num_heads × head_dim
 flops_attention = 4 × batch × num_heads × seq_len × seq_len × head_dim  # QK^T + @V
-flops_o_proj = batch × seq_len × num_heads × head_dim × hidden_size
+flops_o_proj = 2 × batch × seq_len × num_heads × head_dim × hidden_size
 
 # FFN FLOPs (SwiGLU)
-flops_gate_proj = batch × seq_len × hidden_size × intermediate_size
-flops_up_proj = batch × seq_len × hidden_size × intermediate_size
-flops_down_proj = batch × seq_len × intermediate_size × hidden_size
+flops_gate_proj = 2 × batch × seq_len × hidden_size × intermediate_size
+flops_up_proj = 2 × batch × seq_len × hidden_size × intermediate_size
+flops_down_proj = 2 × batch × seq_len × intermediate_size × hidden_size
 flops_activation = batch × seq_len × intermediate_size × 6  # silu + elementwise mul
 
 # 每层总 FLOPs
@@ -137,12 +138,13 @@ Decode 阶段 seq_len = 1, kv_seq_len = prompt_len + generated_len
 
 ```
 # Attention (生成 1 个 token)
-flops_qkv = 3 × batch × 1 × hidden_size × num_heads × head_dim
+flops_qkv = 2 × 3 × batch × 1 × hidden_size × num_heads × head_dim
 flops_attention = 4 × batch × num_heads × 1 × kv_seq_len × head_dim
-flops_o = batch × 1 × num_heads × head_dim × hidden_size
+flops_o = 2 × batch × 1 × num_heads × head_dim × hidden_size
 
 # FFN (不变)
-flops_ffn = 3 × batch × 1 × hidden_size × intermediate_size
+# gate + up + down 各需 2× (multiply-add), 共 6×
+flops_ffn = 6 × batch × 1 × hidden_size × intermediate_size
 ```
 
 **关键差异**: Decode 阶段 attention 计算量与 KV cache 长度成正比，而非 O(seq²)
@@ -392,23 +394,24 @@ MLA 的计算流程:
 
 ```
 # KV 路径
-flops_kv_down = batch × seq × hidden_size × kv_lora_rank
-flops_k_up = batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
-flops_v_up = batch × seq × kv_lora_rank × num_kv_heads × v_head_dim
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_kv_down = 2 × batch × seq × hidden_size × kv_lora_rank
+flops_k_up = 2 × batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+flops_v_up = 2 × batch × seq × kv_lora_rank × num_kv_heads × v_head_dim
 
 # Q 路径
-flops_q_down = batch × seq × hidden_size × q_lora_rank
-flops_q_up = batch × seq × q_lora_rank × num_heads × qk_nope_head_dim
+flops_q_down = 2 × batch × seq × hidden_size × q_lora_rank
+flops_q_up = 2 × batch × seq × q_lora_rank × num_heads × qk_nope_head_dim
 
 # RoPE
-flops_q_rope = batch × seq × hidden_size × num_heads × qk_rope_head_dim
-flops_k_rope = batch × seq × hidden_size × num_kv_heads × qk_rope_head_dim
+flops_q_rope = 2 × batch × seq × hidden_size × num_heads × qk_rope_head_dim
+flops_k_rope = 2 × batch × seq × hidden_size × num_kv_heads × qk_rope_head_dim
 
 # Attention
 flops_attn = 4 × batch × num_heads × seq × seq × head_dim
 
 # Output
-flops_o = batch × seq × num_heads × v_head_dim × hidden_size
+flops_o = 2 × batch × seq × num_heads × v_head_dim × hidden_size
 ```
 
 #### MoE FLOPs
@@ -419,14 +422,17 @@ MoE 的计算流程:
 
 ```
 # Router
-flops_router = batch × seq × hidden_size × num_experts
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_router = 2 × batch × seq × hidden_size × num_experts
 
 # Routed experts (top-8)
-flops_per_expert = batch × seq × hidden_size × intermediate_size × 2 + intermediate_size × hidden_size
+# gate + up 各 2×, down 2×, 共 6×
+flops_per_expert = 6 × batch × seq × hidden_size × intermediate_size
 flops_experts = num_experts_per_token × flops_per_expert
 
 # Shared expert
-flops_shared = batch × seq × hidden_size × shared_intermediate × 2 + shared_intermediate × hidden_size
+# gate + up + down 共 6×
+flops_shared = 6 × batch × seq × hidden_size × shared_intermediate
 
 # MoE total
 flops_moe = flops_router + flops_experts + flops_shared
@@ -654,19 +660,21 @@ flops_patchify = batch × seq_len × in_channels × hidden_size × pt × ph × p
 
 ```
 # Self-attention
-flops_self_qkv = 3 × batch × seq_len × hidden_size²
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_self_qkv = 2 × 3 × batch × seq_len × hidden_size²
 flops_self_attn = 4 × batch × heads × seq_len² × head_dim
-flops_self_o = batch × seq_len × hidden_size²
+flops_self_o = 2 × batch × seq_len × hidden_size²
 
 # Cross-attention (text_len = 512)
 text_len = 512
-flops_cross_q = batch × seq_len × hidden_size²
-flops_cross_kv = batch × text_len × text_dim × 2 × hidden_size
+flops_cross_q = 2 × batch × seq_len × hidden_size²
+flops_cross_kv = 2 × 2 × batch × text_len × text_dim × hidden_size  # K + V 各 2×
 flops_cross_attn = 4 × batch × heads × seq_len × text_len × head_dim
-flops_cross_o = batch × seq_len × hidden_size²
+flops_cross_o = 2 × batch × seq_len × hidden_size²
 
 # FFN (GELU)
-flops_ffn = batch × seq_len × hidden_size × intermediate_size × 2 + batch × seq_len × intermediate_size × hidden_size
+# up + down 各 2× (multiply-add)
+flops_ffn = 4 × batch × seq_len × hidden_size × intermediate_size + 2 × batch × seq_len × intermediate_size × hidden_size
 
 # Per block total
 flops_block ≈ 3 × seq × 5120² + 4 × 40 × seq² × 128 + seq × 5120² + ...
@@ -1010,13 +1018,14 @@ ffn_params = vision_hidden × vision_intermediate × 3
 
 ```
 # Projections
-flops_qkv = 3 × batch × seq × hidden × linear_heads × linear_head_dim
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_qkv = 2 × 3 × batch × seq × hidden × linear_heads × linear_head_dim
 
 # Kernel feature map
 flops_kernel = batch × seq × linear_heads × kernel_dim × linear_head_dim × 2
 
 # Output projection
-flops_o = batch × seq × linear_heads × linear_head_dim × hidden
+flops_o = 2 × batch × seq × linear_heads × linear_head_dim × hidden
 
 # Total: O(seq) 无 seq² 项
 ```
@@ -1032,16 +1041,18 @@ flops_attn = 4 × batch × heads × seq × seq × head_dim
 #### Dense SwiGLU FFN FLOPs
 
 ```
-flops_ffn = batch × seq × (hidden × intermediate × 2 + intermediate × hidden)
-          = 3 × batch × seq × hidden × intermediate
+# gate + up 各 2×, down 2×, 共 6× (multiply-add)
+flops_ffn = 6 × batch × seq × hidden × intermediate
 ```
 
 #### MoE FFN FLOPs
 
 ```
-flops_router = batch × seq × hidden × num_experts
-flops_active_experts = top_k × 3 × batch × seq × hidden × moe_intermediate
-flops_shared = 3 × batch × seq × hidden × shared_intermediate
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_router = 2 × batch × seq × hidden × num_experts
+# gate + up + down 共 6×
+flops_active_experts = top_k × 6 × batch × seq × hidden × moe_intermediate
+flops_shared = 6 × batch × seq × hidden × shared_intermediate
 
 flops_moe = flops_router + flops_active_experts + flops_shared
 ```
