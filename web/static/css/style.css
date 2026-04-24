@@ -778,26 +778,49 @@ footer {
     margin: 0.5rem 0;
 }
 
-.model-config-grid {
+.model-config-container {
     display: grid;
-    grid-template-columns: 1fr 1.2fr 1fr;
-    gap: 1rem;
+    grid-template-columns: 1fr 4fr;
+    gap: 1.5rem;
     margin-bottom: 1rem;
 }
 
-.model-config-col {
-    min-width: 0;
+.model-select-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
-.model-config-col .form-group {
-    margin-bottom: 0.75rem;
+.model-select-col .form-group {
+    margin-bottom: 0;
 }
 
-.model-spec-compact {
-    padding: 0.75rem;
+.model-detail-col {
+    display: flex;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    width: 100%;
+}
+
+.spec-panel {
+    padding: 0.5rem;
     border: 1px solid var(--gray-200);
     border-radius: var(--radius-sm);
     background-color: var(--gray-50);
+}
+
+.input-panel {
+    padding: 0.5rem;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    background-color: var(--white);
+}
+
+.model-spec-compact {
     min-height: 100px;
 }
 
@@ -805,34 +828,43 @@ footer {
     margin: 2rem 0;
 }
 
-.compact-inputs {
+.compact-form {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.5rem 0.75rem;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
 }
 
-.compact-inputs .form-group.compact {
-    margin: 0;
+.form-row-compact {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.compact-inputs label {
-    font-size: 0.75rem;
-    margin-bottom: 0.25rem;
+.form-row-compact label {
+    font-size: 0.8125rem;
+    color: var(--gray-600);
+    min-width: 60px;
+    margin-bottom: 0;
+    white-space: nowrap;
 }
 
-.compact-inputs .compact-input,
-.compact-inputs select.compact-input {
-    padding: 0.5rem 0.625rem;
-    font-size: 0.875rem;
-    text-align: center;
+.form-row-compact .compact-input,
+.form-row-compact select.compact-input {
+    flex: 1;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.8125rem;
 }
 
 @media (max-width: 1024px) {
-    .model-config-grid {
+    .model-config-container {
         grid-template-columns: 1fr;
     }
     
-    .compact-inputs {
-        grid-template-columns: repeat(2, 1fr);
+    .detail-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .compact-form {
+        grid-template-columns: 1fr;
     }
 }

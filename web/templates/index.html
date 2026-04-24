@@ -243,8 +243,8 @@
                 <section class="card model-config">
                     <h2>模型配置</h2>
                     
-                    <div class="model-config-grid">
-                        <div class="model-config-col">
+                    <div class="model-config-container">
+                        <div class="model-select-col">
                             <div class="form-group">
                                 <label>模型预设</label>
                                 <select id="model-preset">
@@ -262,45 +262,49 @@
                             </div>
                         </div>
                         
-                        <div class="model-config-col">
-                            <div id="model-spec-display" class="model-spec-compact">
-                                <p class="hint-text">选择预设后显示规格</p>
-                            </div>
-                        </div>
-                        
-                        <div class="model-config-col">
-                            <div class="compact-inputs">
-                                <div class="form-group compact">
-                                    <label>Hidden</label>
-                                    <input type="number" id="hidden-size" value="4096" class="compact-input">
+                        <div class="model-detail-col">
+                            <div class="detail-grid">
+                                <div class="spec-panel">
+                                    <div id="model-spec-display" class="model-spec-compact">
+                                        <p class="hint-text">选择预设后显示规格</p>
+                                    </div>
                                 </div>
-                                <div class="form-group compact">
-                                    <label>Layers</label>
-                                    <input type="number" id="num-layers" value="32" class="compact-input">
-                                </div>
-                                <div class="form-group compact">
-                                    <label>Heads</label>
-                                    <input type="number" id="num-heads" value="32" class="compact-input">
-                                </div>
-                                <div class="form-group compact">
-                                    <label>Seq Len</label>
-                                    <input type="number" id="max-seq-len" value="4096" class="compact-input">
-                                </div>
-                                <div class="form-group compact moe-only" style="display: none;">
-                                    <label>Experts</label>
-                                    <input type="number" id="num-experts" value="8" class="compact-input">
-                                </div>
-                                <div class="form-group compact moe-only" style="display: none;">
-                                    <label>Top-K</label>
-                                    <input type="number" id="experts-per-token" value="2" class="compact-input">
-                                </div>
-                                <div class="form-group compact">
-                                    <label>Dtype</label>
-                                    <select id="dtype" class="compact-input">
-                                        <option value="fp16">FP16</option>
-                                        <option value="bf16">BF16</option>
-                                        <option value="fp8">FP8</option>
-                                    </select>
+                                
+                                <div class="input-panel">
+                                    <div class="compact-form">
+                                        <div class="form-row-compact">
+                                            <label>Hidden</label>
+                                            <input type="number" id="hidden-size" value="4096" class="compact-input">
+                                        </div>
+                                        <div class="form-row-compact">
+                                            <label>Layers</label>
+                                            <input type="number" id="num-layers" value="32" class="compact-input">
+                                        </div>
+                                        <div class="form-row-compact">
+                                            <label>Heads</label>
+                                            <input type="number" id="num-heads" value="32" class="compact-input">
+                                        </div>
+                                        <div class="form-row-compact">
+                                            <label>Seq Len</label>
+                                            <input type="number" id="max-seq-len" value="4096" class="compact-input">
+                                        </div>
+                                        <div class="form-row-compact moe-only" style="display: none;">
+                                            <label>Experts</label>
+                                            <input type="number" id="num-experts" value="8" class="compact-input">
+                                        </div>
+                                        <div class="form-row-compact moe-only" style="display: none;">
+                                            <label>Top-K</label>
+                                            <input type="number" id="experts-per-token" value="2" class="compact-input">
+                                        </div>
+                                        <div class="form-row-compact">
+                                            <label>Dtype</label>
+                                            <select id="dtype" class="compact-input">
+                                                <option value="fp16">FP16</option>
+                                                <option value="bf16">BF16</option>
+                                                <option value="fp8">FP8</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
