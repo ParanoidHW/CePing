@@ -164,37 +164,45 @@ def linear(
     params = in_features * out_features + (out_features if bias else 0)
     param_bytes = params * dtype_size
 
-    # Backward computation for linear/matmul:
-    # Forward: C = A @ W^T (or equivalently, C = A @ W if we transpose W)
-    # For backward, we need:
-    # - dA = dC @ W (compute gradient for input)
-    # - dW = A^T @ dC (compute gradient for weight)
+    # Backward computation explicit decomposition:
+    # Forward: Y = X @ W^T + b, where X: M×K, W: N×K, Y: M×N
+    # Backward needs:
+    # - dx = dY @ W: gradient for input (dY @ W^T in math, but W is stored transposed)
+    # - dW = X^T @ dY: gradient for weight
+    # - db = sum(dY): gradient for bias (negligible)
     #
-    # For y = x @ W^T + b:
-    # - dx = dy @ W: FLOPs = 2 * batch * in_features * out_features
-    # - dW = x^T @ dy: FLOPs = 2 * batch * in_features * out_features
-    # - db = sum(dy): FLOPs = batch * out_features (negligible)
-    #
-    # Total backward FLOPs = 4 * batch * in_features * out_features (2x forward)
-    flops_backward = 4 * batch_size * in_features * out_features
+    # Explicit decomposition:
+    # dx computation: dY @ W^T (M×N @ N×K = M×K)
+    flops_dx = 2 * batch_size * out_features * in_features
+    # dW computation: X^T @ dY (K×M @ M×N = K×N)
+    flops_dw = 2 * batch_size * in_features * out_features
+    # Total backward FLOPs = flops_dx + flops_dw (2x forward)
+    flops_backward = flops_dx + flops_dw
     if bias is not None:
         flops_backward += batch_size * out_features  # bias gradient
 
-    # Backward memory access:
-    # - dx = dy @ W: read dy (m×n), read W (n×k), write dx (m×k)
-    # - dW = x^T @ dy: read x (m×k), read dy (m×n), write dW (n×k)
-    # Total backward bytes ≈ 2x forward bytes
-    bytes_accessed_backward = (
-        batch_size * out_features * dtype_size  # dy (gradient output)
-        + in_features * out_features * dtype_size  # W (weight)
-        + batch_size * in_features * dtype_size  # dx (gradient input, written)
-        + batch_size * in_features * dtype_size  # x (input, read for dW)
-        + batch_size * out_features * dtype_size  # dy (gradient output, read for dW)
-        + in_features * out_features * dtype_size  # dW (gradient weight, written)
+    # Backward memory explicit decomposition:
+    # dx computation: dY @ W^T
+    # - Read dY: batch × out_features
+    # - Read W: in_features × out_features (weight matrix)
+    # - Write dx: batch × in_features
+    bytes_dx = (
+        batch_size * out_features * dtype_size  # read dY
+        + in_features * out_features * dtype_size  # read W
+        + batch_size * in_features * dtype_size  # write dx
     )
-    # Note: W is read twice (for dx and dW), dy is read twice (for dx and dW)
-    # Simplified: bytes_backward ≈ 2 * forward_bytes + weight_bytes (read twice)
-    bytes_accessed_backward = 2 * bytes_accessed + in_features * out_features * dtype_size
+
+    # dW computation: X^T @ dY
+    # - Read X: batch × in_features (saved activation)
+    # - Read dY: batch × out_features
+    # - Write dW: in_features × out_features
+    bytes_dw = (
+        batch_size * in_features * dtype_size  # read X (saved activation)
+        + batch_size * out_features * dtype_size  # read dY
+        + in_features * out_features * dtype_size  # write dW
+    )
+
+    bytes_accessed_backward = bytes_dx + bytes_dw
 
     return KernelResult(
         output=output_shape,
@@ -252,19 +260,41 @@ def bmm(
     params = 0
     param_bytes = 0
 
-    # Backward computation for BMM: out = A @ B
-    # Forward: C = A @ B
-    # Backward:
-    # - dA = dC @ B^T: FLOPs = 2 * batch * m * n * k
-    # - dB = A^T @ dC: FLOPs = 2 * batch * m * n * k
-    # Total backward FLOPs = 4 * batch * m * n * k (2x forward)
-    flops_backward = 4 * batch * m * n * k
+    # Backward computation explicit decomposition:
+    # Forward: C = A @ B, where A: batch×m×k, B: batch×k×n, C: batch×m×n
+    # Backward needs:
+    # - dA = dC @ B^T: gradient for input A
+    # - dB = A^T @ dC: gradient for input B
+    #
+    # Explicit decomposition:
+    # dA computation: dC @ B^T (batch×m×n @ batch×n×k = batch×m×k)
+    flops_da = 2 * batch * m * n * k
+    # dB computation: A^T @ dC (batch×k×m @ batch×m×n = batch×k×n)
+    flops_db = 2 * batch * m * n * k
+    flops_backward = flops_da + flops_db
 
-    # Backward memory access:
-    # - dA = dC @ B^T: read dC, read B, write dA
-    # - dB = A^T @ dC: read A, read dC, write dB
-    # Total: ≈ 2x forward bytes (A, B, dC read twice)
-    bytes_accessed_backward = 2 * bytes_accessed
+    # Backward memory explicit decomposition:
+    # dA computation: dC @ B^T
+    # - Read dC: batch × m × n
+    # - Read B: batch × k × n
+    # - Write dA: batch × m × k
+    bytes_da = (
+        batch * m * n * dtype_size  # read dC
+        + batch * k * n * dtype_size  # read B
+        + batch * m * k * dtype_size  # write dA
+    )
+
+    # dB computation: A^T @ dC
+    # - Read A: batch × m × k (saved activation)
+    # - Read dC: batch × m × n
+    # - Write dB: batch × k × n
+    bytes_db = (
+        batch * m * k * dtype_size  # read A (saved activation)
+        + batch * m * n * dtype_size  # read dC
+        + batch * k * n * dtype_size  # write dB
+    )
+
+    bytes_accessed_backward = bytes_da + bytes_db
 
     return KernelResult(
         output=output_shape,
@@ -1083,20 +1113,43 @@ def conv2d(
     params = C_out * C_in * kH * kW + (C_out if bias else 0)
     param_bytes = params * dtype_size
 
-    # Backward computation for Conv2d:
-    # Forward: Y = Conv2d(X, W)
-    # Backward:
-    # - dX = Conv2d_transpose(dY, W) - gradient for input
-    # - dW = Conv2d(X, dY) - gradient for weight (correlation operation)
-    # Each backward operation has similar FLOPs to forward
-    # Total backward FLOPs ≈ 2x forward
-    flops_backward = 2 * flops
+    # Backward computation explicit decomposition:
+    # Forward: Y = Conv2d(X, W), where X: N×C_in×H×W, W: C_out×C_in×kH×kW
+    # Backward needs:
+    # - dX = Conv2d_transpose(dY, W): gradient for input
+    # - dW = Conv2d(X, dY): gradient for weight (correlation operation)
+    #
+    # Explicit decomposition:
+    # dX computation (conv_transpose): similar FLOPs to forward
+    flops_dx = 2 * N * C_in * H * W * C_out * kH * kW
+    # dW computation (correlation): similar FLOPs to forward
+    flops_dw = 2 * N * C_out * H_out * W_out * C_in * kH * kW
+    flops_backward = flops_dx + flops_dw
     if bias is not None:
         flops_backward += N * C_out * H_out * W_out  # bias gradient
 
-    # Backward memory: read input, weight, gradient; write gradients
-    # ≈ 2-3x forward bytes
-    bytes_accessed_backward = 2 * bytes_accessed + N * C_out * H_out * W_out * dtype_size  # dY read
+    # Backward memory explicit decomposition:
+    # dX computation: Conv2d_transpose(dY, W)
+    # - Read dY: N × C_out × H_out × W_out
+    # - Read W: C_out × C_in × kH × kW
+    # - Write dX: N × C_in × H × W
+    bytes_dx = (
+        N * C_out * H_out * W_out * dtype_size  # read dY
+        + C_out * C_in * kH * kW * dtype_size  # read W
+        + N * C_in * H * W * dtype_size  # write dX
+    )
+
+    # dW computation: Conv2d(X, dY)
+    # - Read X: N × C_in × H × W (saved activation)
+    # - Read dY: N × C_out × H_out × W_out
+    # - Write dW: C_out × C_in × kH × kW
+    bytes_dw = (
+        N * C_in * H * W * dtype_size  # read X (saved activation)
+        + N * C_out * H_out * W_out * dtype_size  # read dY
+        + C_out * C_in * kH * kW * dtype_size  # write dW
+    )
+
+    bytes_accessed_backward = bytes_dx + bytes_dw
 
     return KernelResult(
         output=output_shape,
@@ -1168,14 +1221,43 @@ def conv3d(
     params = C_out * C_in * kD * kH * kW + (C_out if bias else 0)
     param_bytes = params * dtype_size
 
-    # Backward computation for Conv3d (similar to Conv2d):
-    # FLOPs ≈ 2x forward
-    flops_backward = 2 * flops
+    # Backward computation explicit decomposition:
+    # Forward: Y = Conv3d(X, W), where X: N×C_in×D×H×W, W: C_out×C_in×kD×kH×kW
+    # Backward needs:
+    # - dX = Conv3d_transpose(dY, W): gradient for input
+    # - dW = Conv3d(X, dY): gradient for weight
+    #
+    # Explicit decomposition:
+    # dX computation (conv_transpose): similar FLOPs to forward
+    flops_dx = 2 * N * C_in * D * H * W * C_out * kD * kH * kW
+    # dW computation (correlation): similar FLOPs to forward
+    flops_dw = 2 * N * C_out * D_out * H_out * W_out * C_in * kD * kH * kW
+    flops_backward = flops_dx + flops_dw
     if bias is not None:
-        flops_backward += N * C_out * D_out * H_out * W_out
+        flops_backward += N * C_out * D_out * H_out * W_out  # bias gradient
 
-    # Backward memory ≈ 2-3x forward
-    bytes_accessed_backward = 2 * bytes_accessed + N * C_out * D_out * H_out * W_out * dtype_size
+    # Backward memory explicit decomposition:
+    # dX computation: Conv3d_transpose(dY, W)
+    # - Read dY: N × C_out × D_out × H_out × W_out
+    # - Read W: C_out × C_in × kD × kH × kW
+    # - Write dX: N × C_in × D × H × W
+    bytes_dx = (
+        N * C_out * D_out * H_out * W_out * dtype_size  # read dY
+        + C_out * C_in * kD * kH * kW * dtype_size  # read W
+        + N * C_in * D * H * W * dtype_size  # write dX
+    )
+
+    # dW computation: Conv3d(X, dY)
+    # - Read X: N × C_in × D × H × W (saved activation)
+    # - Read dY: N × C_out × D_out × H_out × W_out
+    # - Write dW: C_out × C_in × kD × kH × kW
+    bytes_dw = (
+        N * C_in * D * H * W * dtype_size  # read X (saved activation)
+        + N * C_out * D_out * H_out * W_out * dtype_size  # read dY
+        + C_out * C_in * kD * kH * kW * dtype_size  # write dW
+    )
+
+    bytes_accessed_backward = bytes_dx + bytes_dw
 
     return KernelResult(
         output=output_shape,
@@ -1311,14 +1393,87 @@ def moe_expert(
     params = params_per_expert
     param_bytes = params * dtype_size
 
-    gate_backward = 4 * batch_size * hidden_size * intermediate_size
+    # Backward computation explicit decomposition:
+    # MoE expert forward: output = down(silu(gate(x)) * up(x))
+    # Each linear projection needs backward decomposition:
+    #
+    # Gate projection backward (Y_g = X @ W_g):
+    # - dX_g = dY_g @ W_g^T: FLOPs = 2 × batch × intermediate × hidden
+    # - dW_g = X^T @ dY_g: FLOPs = 2 × batch × hidden × intermediate
+    gate_flops_dx = 2 * batch_size * intermediate_size * hidden_size
+    gate_flops_dw = 2 * batch_size * hidden_size * intermediate_size
+    gate_backward = gate_flops_dx + gate_flops_dw
+
+    # Gate activation backward (SiLU): need to recompute sigmoid
     gate_activation_backward = batch_size * intermediate_size * 20
-    up_backward = 4 * batch_size * hidden_size * intermediate_size
-    down_backward = 4 * batch_size * intermediate_size * hidden_size
+
+    # Up projection backward (Y_u = X @ W_u):
+    # - dX_u = dY_u @ W_u^T: FLOPs = 2 × batch × intermediate × hidden
+    # - dW_u = X^T @ dY_u: FLOPs = 2 × batch × hidden × intermediate
+    up_flops_dx = 2 * batch_size * intermediate_size * hidden_size
+    up_flops_dw = 2 * batch_size * hidden_size * intermediate_size
+    up_backward = up_flops_dx + up_flops_dw
+
+    # Down projection backward (Y_d = intermediate @ W_d):
+    # - dIntermediate = dY_d @ W_d^T: FLOPs = 2 × batch × hidden × intermediate
+    # - dW_d = intermediate^T @ dY_d: FLOPs = 2 × batch × intermediate × hidden
+    down_flops_dx = 2 * batch_size * hidden_size * intermediate_size
+    down_flops_dw = 2 * batch_size * intermediate_size * hidden_size
+    down_backward = down_flops_dx + down_flops_dw
 
     flops_backward = (gate_backward + gate_activation_backward + up_backward + down_backward) * num_experts_per_token
 
-    bytes_accessed_backward = bytes_accessed * 2
+    # Backward memory explicit decomposition:
+    # Gate projection backward:
+    # - dX_g: read dY_g (batch×intermediate), read W_g (hidden×intermediate), write dX_g (batch×hidden)
+    # - dW_g: read X (batch×hidden), read dY_g (batch×intermediate), write dW_g (hidden×intermediate)
+    gate_bytes_dx = (
+        batch_size * intermediate_size * dtype_size  # read dY_g
+        + hidden_size * intermediate_size * dtype_size  # read W_g
+        + batch_size * hidden_size * dtype_size  # write dX_g
+    )
+    gate_bytes_dw = (
+        batch_size * hidden_size * dtype_size  # read X (saved activation)
+        + batch_size * intermediate_size * dtype_size  # read dY_g
+        + hidden_size * intermediate_size * dtype_size  # write dW_g
+    )
+
+    # Up projection backward:
+    # - dX_u: read dY_u (batch×intermediate), read W_u (hidden×intermediate), write dX_u (batch×hidden)
+    # - dW_u: read X (batch×hidden), read dY_u (batch×intermediate), write dW_u (hidden×intermediate)
+    up_bytes_dx = (
+        batch_size * intermediate_size * dtype_size  # read dY_u
+        + hidden_size * intermediate_size * dtype_size  # read W_u
+        + batch_size * hidden_size * dtype_size  # write dX_u
+    )
+    up_bytes_dw = (
+        batch_size * hidden_size * dtype_size  # read X (saved activation)
+        + batch_size * intermediate_size * dtype_size  # read dY_u
+        + hidden_size * intermediate_size * dtype_size  # write dW_u
+    )
+
+    # Down projection backward:
+    # - dIntermediate: read dY_d (batch×hidden), read W_d (intermediate×hidden), write dIntermediate (batch×intermediate)
+    # - dW_d: read intermediate (batch×intermediate), read dY_d (batch×hidden), write dW_d (intermediate×hidden)
+    down_bytes_dx = (
+        batch_size * hidden_size * dtype_size  # read dY_d
+        + intermediate_size * hidden_size * dtype_size  # read W_d
+        + batch_size * intermediate_size * dtype_size  # write dIntermediate
+    )
+    down_bytes_dw = (
+        batch_size * intermediate_size * dtype_size  # read intermediate (saved activation)
+        + batch_size * hidden_size * dtype_size  # read dY_d
+        + intermediate_size * hidden_size * dtype_size  # write dW_d
+    )
+
+    # SiLU activation backward memory: read input, read gradient, write gradient
+    gate_activation_bytes = batch_size * intermediate_size * dtype_size * 3
+
+    bytes_accessed_backward = (
+        gate_bytes_dx + gate_bytes_dw + gate_activation_bytes
+        + up_bytes_dx + up_bytes_dw
+        + down_bytes_dx + down_bytes_dw
+    ) * num_experts_per_token
 
     return KernelResult(
         output=output_shape,

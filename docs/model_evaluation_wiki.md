@@ -132,6 +132,48 @@ flops_layer = flops_attn + flops_ffn
 flops_total = num_layers × flops_layer + embedding_flops + lm_head_flops
 ```
 
+#### Backward 阶段显式分解
+
+Backward 需要显式分解为 `dx` 和 `dW` 计算，而非笼统标记为 `2× forward`。
+
+```
+# Linear backward分解 (以 gate_proj 为例)
+# Forward: Y = X @ W, X: batch×seq×hidden, W: hidden×intermediate, Y: batch×seq×intermediate
+
+# dx计算: dY @ W^T
+# dY: batch×seq×intermediate, W^T: intermediate×hidden, dx: batch×seq×hidden
+flops_dx = 2 × batch × seq × intermediate × hidden
+
+# dW计算: X^T @ dY
+# X^T: hidden×batch×seq, dY: batch×seq×intermediate, dW: hidden×intermediate
+flops_dw = 2 × batch × seq × hidden × intermediate
+
+# 总Backward FLOPs
+flops_backward = flops_dx + flops_dw = 4 × batch × seq × hidden × intermediate
+# 数值上确实是 2× forward，但显式分解有助于准确计算内存访问
+```
+
+#### Backward 内存访问显式分解
+
+```
+# dx内存: dY @ W^T
+bytes_dx = batch × seq × intermediate × dtype_size  # 读 dY
+         + hidden × intermediate × dtype_size  # 读 W
+         + batch × seq × hidden × dtype_size  # 写 dx
+
+# dW内存: X^T @ dY
+bytes_dw = batch × seq × hidden × dtype_size  # 读 X (saved activation)
+         + batch × seq × intermediate × dtype_size  # 读 dY
+         + hidden × intermediate × dtype_size  # 写 dW
+
+bytes_backward = bytes_dx + bytes_dw
+```
+
+关键差异：
+- **W** 在 dx 计算中被读（权重不变）
+- **X** 在 dW 计算中被读（需要保存的 activation）
+- **dY** 在两步中都被读
+
 #### Decode 阶段 (生成一个 token)
 
 Decode 阶段 seq_len = 1, kv_seq_len = prompt_len + generated_len
@@ -439,6 +481,78 @@ flops_moe = flops_router + flops_experts + flops_shared
 ```
 
 **注意**: MoE FLOPs 只计算 active experts (top-8)，而非全部 256 experts
+
+#### Backward FLOPs 显式分解
+
+DeepSeek V3 backward 需要分解为各模块的 dx 和 dW 计算：
+
+```
+# MLA Attention Backward分解
+# 每个投影层需要分解为 dx 和 dW
+
+# kv_down backward
+# dx: 2 × batch × seq × kv_lora_rank × hidden_size
+# dW: 2 × batch × seq × hidden_size × kv_lora_rank
+flops_kv_down_backward = 4 × batch × seq × hidden_size × kv_lora_rank
+
+# k_up backward
+# dx: 2 × batch × seq × num_kv_heads × qk_nope_head_dim × kv_lora_rank
+# dW: 2 × batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+flops_k_up_backward = 4 × batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+
+# 类似地分解其他 MLA projections...
+
+# MoE Expert Backward分解 (每个 expert)
+# gate_proj backward
+# dx: 2 × batch × seq × intermediate × hidden
+# dW: 2 × batch × seq × hidden × intermediate
+flops_gate_backward = 4 × batch × seq × hidden × intermediate
+
+# up_proj backward
+# dx: 2 × batch × seq × intermediate × hidden
+# dW: 2 × batch × seq × hidden × intermediate
+flops_up_backward = 4 × batch × seq × hidden × intermediate
+
+# down_proj backward
+# dx: 2 × batch × seq × hidden × intermediate
+# dW: 2 × batch × seq × intermediate × hidden
+flops_down_backward = 4 × batch × seq × intermediate × hidden
+
+# MoE backward total (active experts)
+flops_moe_backward = flops_router_backward + top_k × (flops_gate_backward + flops_up_backward + flops_down_backward)
+```
+
+#### Backward Memory 显式分解
+
+```
+# Linear backward memory 分解示例
+# dx计算: dY @ W^T
+bytes_dx = 读 dY + 读 W + 写 dx
+
+# dW计算: X^T @ dY
+bytes_dw = 读 X (saved activation) + 读 dY + 写 dW
+
+# MoE Expert backward memory (每个 expert)
+# Gate backward
+bytes_gate_dx = batch × seq × intermediate × dtype_size  # 读 dY
+              + hidden × intermediate × dtype_size  # 读 W_g
+              + batch × seq × hidden × dtype_size  # 写 dX
+
+bytes_gate_dw = batch × seq × hidden × dtype_size  # 读 X
+              + batch × seq × intermediate × dtype_size  # 读 dY
+              + hidden × intermediate × dtype_size  # 写 dW_g
+
+# Up backward (类似 gate)
+# Down backward (类似 gate)
+
+# SiLU activation backward: 读 intermediate, 读 gradient, 写 gradient
+bytes_silu_backward = batch × seq × intermediate × dtype_size × 3
+```
+
+关键差异：
+- **W** 在 dx 计算中被读（权重不变）
+- **X** 在 dW 计算中被读（需要保存的 activation）
+- **dY** 在两步中都被读
 
 ### 2.5 内存分析
 
@@ -1058,6 +1172,73 @@ flops_moe = flops_router + flops_active_experts + flops_shared
 ```
 
 **注意**: MoE FLOPs 只计算 top-k active experts，而非全部 experts。
+
+#### Backward FLOPs 显式分解
+
+Qwen3.5 backward 需要分解为各模块的 dx 和 dW 计算：
+
+```
+# Linear Attention Backward分解
+# Q/K/V projections backward
+# dx: 2 × batch × seq × linear_head_dim × hidden
+# dW: 2 × batch × seq × hidden × linear_head_dim
+flops_qkv_backward = 4 × 3 × batch × seq × hidden × linear_heads × linear_head_dim
+
+# Output projection backward
+flops_o_backward = 4 × batch × seq × linear_heads × linear_head_dim × hidden
+
+# Dense SwiGLU FFN Backward分解
+# gate_proj backward
+# dx: 2 × batch × seq × intermediate × hidden
+# dW: 2 × batch × seq × hidden × intermediate
+flops_gate_backward = 4 × batch × seq × hidden × intermediate
+
+# up_proj backward (类似 gate)
+flops_up_backward = 4 × batch × seq × hidden × intermediate
+
+# down_proj backward
+# dx: 2 × batch × seq × hidden × intermediate
+# dW: 2 × batch × seq × intermediate × hidden
+flops_down_backward = 4 × batch × seq × intermediate × hidden
+
+# SiLU activation backward: ~20 × batch × seq × intermediate
+flops_silu_backward = batch × seq × intermediate × 20
+
+# MoE Expert Backward分解
+# 每个 expert 的 backward 类似 SwiGLU FFN backward
+# gate + up + down 各需要 dx 和 dW 分解
+flops_expert_backward = top_k × (flops_gate_backward + flops_up_backward + flops_down_backward + flops_silu_backward)
+```
+
+#### Backward Memory 显式分解
+
+```
+# Linear backward memory 分解
+# dx计算: dY @ W^T
+bytes_dx = batch × seq × out_features × dtype_size  # 读 dY
+         + hidden × out_features × dtype_size  # 读 W
+         + batch × seq × hidden × dtype_size  # 写 dx
+
+# dW计算: X^T @ dY
+bytes_dw = batch × seq × hidden × dtype_size  # 读 X (saved activation)
+         + batch × seq × out_features × dtype_size  # 读 dY
+         + hidden × out_features × dtype_size  # 写 dW
+
+# MoE Expert backward memory (每个 expert)
+# Gate backward
+bytes_gate_dx = batch × seq × intermediate × dtype_size  # 读 dY
+              + hidden × intermediate × dtype_size  # 读 W_g
+              + batch × seq × hidden × dtype_size  # 写 dX
+
+bytes_gate_dw = batch × seq × hidden × dtype_size  # 读 X
+              + batch × seq × intermediate × dtype_size  # 读 dY
+              + hidden × intermediate × dtype_size  # 写 dW_g
+```
+
+关键差异：
+- **W** 在 dx 计算中被读（权重不变）
+- **X** 在 dW 计算中被读（需要保存的 activation）
+- **dY** 在两步中都被读
 
 ### 4.6 内存分析
 
