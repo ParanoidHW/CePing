@@ -932,42 +932,76 @@ function renderDetailedBreakdown(detailed) {
 
     const bySubmoduleType = detailed.by_submodule_type || {};
     
+    const totalComputeTime = Object.values(bySubmoduleType)
+        .reduce((sum, d) => sum + (d.compute?.time_sec || 0), 0);
+    const totalCommTime = Object.values(bySubmoduleType)
+        .reduce((sum, d) => sum + (d.communication?.time_sec || 0), 0);
+    const totalMemoryGb = Object.values(bySubmoduleType)
+        .reduce((sum, d) => sum + (d.memory?.activations_gb || 0), 0);
+    
     let submoduleBreakdownRows = '';
     for (const [submoduleType, data] of Object.entries(bySubmoduleType)) {
         const memGb = data.memory?.activations_gb || 0;
-        const computeTflops = (data.compute?.flops || 0) / 1e12;
         const computeSec = data.compute?.time_sec || 0;
-        const commGb = data.communication?.gb || 0;
-        const commTimeMs = (data.communication?.time_sec || 0) * 1000;
+        const commTimeSec = data.communication?.time_sec || 0;
+        const computePct = totalComputeTime > 0 ? (computeSec / totalComputeTime * 100) : 0;
+        const commPct = totalCommTime > 0 ? (commTimeSec / totalCommTime * 100) : 0;
         
         submoduleBreakdownRows += `<tr>
             <td style="font-weight: bold;">${submoduleType}</td>
+            <td>${(computeSec * 1000).toFixed(3)} ms</td>
+            <td>${computePct.toFixed(1)}%</td>
+            <td>${(commTimeSec * 1000).toFixed(3)} ms</td>
+            <td>${commPct.toFixed(1)}%</td>
             <td>${memGb.toFixed(2)} GB</td>
-            <td>${computeTflops.toFixed(2)} T</td>
-            <td>${computeSec.toFixed(3)} s</td>
-            <td>${commGb.toFixed(2)} GB</td>
-            <td>${commTimeMs.toFixed(2)} ms</td>
         </tr>`;
         
         if (data.nested_breakdown) {
             for (const [nestedType, nestedData] of Object.entries(data.nested_breakdown)) {
                 const nestedMemGb = nestedData.memory?.activations_gb || 0;
-                const nestedComputeTflops = (nestedData.compute?.flops || 0) / 1e12;
                 const nestedComputeSec = nestedData.compute?.time_sec || 0;
-                const nestedCommGb = nestedData.communication?.gb || 0;
-                const nestedCommTimeMs = (nestedData.communication?.time_sec || 0) * 1000;
+                const nestedCommTimeSec = nestedData.communication?.time_sec || 0;
+                const nestedComputePct = totalComputeTime > 0 ? (nestedComputeSec / totalComputeTime * 100) : 0;
+                const nestedCommPct = totalCommTime > 0 ? (nestedCommTimeSec / totalCommTime * 100) : 0;
                 
                 submoduleBreakdownRows += `<tr style="background: var(--gray-50);">
                     <td style="padding-left: 1.5rem;">${nestedType}</td>
+                    <td>${(nestedComputeSec * 1000).toFixed(3)} ms</td>
+                    <td>${nestedComputePct.toFixed(1)}%</td>
+                    <td>${(nestedCommTimeSec * 1000).toFixed(3)} ms</td>
+                    <td>${nestedCommPct.toFixed(1)}%</td>
                     <td>${nestedMemGb.toFixed(2)} GB</td>
-                    <td>${nestedComputeTflops.toFixed(2)} T</td>
-                    <td>${nestedComputeSec.toFixed(3)} s</td>
-                    <td>${nestedCommGb.toFixed(2)} GB</td>
-                    <td>${nestedCommTimeMs.toFixed(2)} ms</td>
                 </tr>`;
             }
         }
     }
+    
+    const summaryRow = (totalComputeTime > 0 || totalCommTime > 0) 
+        ? `<tr class="summary-row">
+            <td><strong>总计</strong></td>
+            <td>${(totalComputeTime * 1000).toFixed(3)} ms</td>
+            <td>100%</td>
+            <td>${(totalCommTime * 1000).toFixed(3)} ms</td>
+            <td>100%</td>
+            <td>${totalMemoryGb.toFixed(2)} GB</td>
+        </tr>` 
+        : '';
+    
+    const totalTime = totalComputeTime + totalCommTime;
+    const computeOverallPct = totalTime > 0 ? (totalComputeTime / totalTime * 100) : 0;
+    const commOverallPct = totalTime > 0 ? (totalCommTime / totalTime * 100) : 0;
+    
+    const progressBarHtml = totalTime > 0 ? `
+        <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">时间占比</h3>
+        <div class="time-breakdown-bar">
+            <div class="compute-bar" style="width: ${computeOverallPct}%;">
+                <span class="bar-label">计算: ${computeOverallPct.toFixed(1)}%</span>
+            </div>
+            <div class="comm-bar" style="width: ${commOverallPct}%;">
+                <span class="bar-label">通信: ${commOverallPct.toFixed(1)}%</span>
+            </div>
+        </div>
+    ` : '';
 
     const commByPara = detailed.communication?.by_parallelism || {};
     const commRows = Object.entries(commByPara)
@@ -998,10 +1032,20 @@ function renderDetailedBreakdown(detailed) {
             ${memRows}${totalRow || '<tr><td colspan="2">无数据</td></tr>'}
         </table>
 
+        ${progressBarHtml}
+        
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">子模块分解 (按类型)</h3>
         <table class="breakdown-table">
-            <tr><th>子模块类型</th><th>内存</th><th>计算量</th><th>计算时间</th><th>通信量</th><th>通信时间</th></tr>
+            <tr>
+                <th>子模块类型</th>
+                <th>计算时间</th>
+                <th>计算占比</th>
+                <th>通信时间</th>
+                <th>通信占比</th>
+                <th>内存</th>
+            </tr>
             ${submoduleBreakdownRows || '<tr><td colspan="6">无数据</td></tr>'}
+            ${summaryRow}
         </table>
 
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">内存分解 (按子模型)</h3>

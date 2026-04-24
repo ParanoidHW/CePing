@@ -479,6 +479,45 @@ select {
     background: var(--gray-50);
 }
 
+.summary-row {
+    background-color: var(--gray-100);
+    font-weight: bold;
+    border-top: 2px solid var(--gray-300);
+}
+
+.time-breakdown-bar {
+    display: flex;
+    height: 32px;
+    margin: 10px 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.compute-bar {
+    background-color: #4CAF50;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 80px;
+}
+
+.comm-bar {
+    background-color: #FF9800;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 80px;
+}
+
+.bar-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
 /* Error Message */
 .error-message {
     background: #fef2f2;
