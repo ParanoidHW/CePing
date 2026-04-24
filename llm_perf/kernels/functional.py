@@ -1559,13 +1559,95 @@ def linear_attention(
     params = 0
     param_bytes = 0
 
-    feature_backward_flops = (q_feature_flops + k_feature_flops + v_feature_flops) * 2
-    kv_state_backward_flops = kv_state_flops * 2
-    q_state_backward_flops = q_state_flops * 2
+    # Backward computation explicit decomposition (Section 5.2.4 in docs):
+    # Forward: O = φ(Q) @ (φ(K)^T @ φ(V))
+    # Backward needs: dφ(Q), dφ(K), dφ(V) and propagate through feature maps
+    #
+    # B1: dKV_state = φ(Q)^T @ dO
+    #     (batch, heads, head_dim, seq) @ (batch, heads, seq, head_dim)
+    #     Output: (batch, heads, head_dim, head_dim)
+    #     FLOPs: 2 × batch × heads × seq × head_dim²
+    d_kv_state_flops = 2 * batch * num_heads * seq_len * head_dim * head_dim
 
-    flops_backward = feature_backward_flops + kv_state_backward_flops + q_state_backward_flops
+    # B2: dφ(Q) = dO @ KV_state^T
+    #     (batch, heads, seq, head_dim) @ (batch, kv_heads, head_dim, head_dim)
+    #     Output: (batch, heads, seq, head_dim)
+    #     FLOPs: 2 × batch × heads × seq × head_dim²
+    d_phi_q_flops = 2 * batch * num_heads * seq_len * head_dim * head_dim
 
-    bytes_accessed_backward = bytes_accessed * 2
+    # B3: dφ(V) = φ(K) @ dKV_state
+    #     (batch, kv_heads, kv_seq, head_dim) @ (batch, kv_heads, head_dim, head_dim)
+    #     Output: (batch, kv_heads, kv_seq, head_dim)
+    #     FLOPs: 2 × batch × kv_heads × kv_seq × head_dim²
+    d_phi_v_flops = 2 * batch * num_kv_heads * kv_seq_len * head_dim * head_dim
+
+    # B4: dφ(K) = φ(V) @ dKV_state^T
+    #     (batch, kv_heads, kv_seq, head_dim) @ (batch, kv_heads, head_dim, head_dim)
+    #     Output: (batch, kv_heads, kv_seq, head_dim)
+    #     FLOPs: 2 × batch × kv_heads × kv_seq × head_dim²
+    d_phi_k_flops = 2 * batch * num_kv_heads * kv_seq_len * head_dim * head_dim
+
+    # B5: Feature map backward (gradient through φ)
+    #     φ(x) = elu(x) + 1, dφ/dx ≈ 2 FLOPs per element
+    #     dφ(Q): batch × heads × seq × head_dim × 2
+    #     dφ(K): batch × kv_heads × kv_seq × head_dim × 2
+    #     dφ(V): batch × kv_heads × kv_seq × head_dim × 2
+    feature_backward_flops = (
+        batch * num_heads * seq_len * head_dim * 2
+        + batch * num_kv_heads * kv_seq_len * head_dim * 2 * 2
+    )
+
+    flops_backward = (
+        d_kv_state_flops
+        + d_phi_q_flops
+        + d_phi_v_flops
+        + d_phi_k_flops
+        + feature_backward_flops
+    )
+
+    # Backward memory explicit decomposition (Section 5.2.5 in docs):
+    #
+    # dKV_state computation: φ(Q)^T @ dO
+    # - Read φ(Q): batch × heads × seq × head_dim
+    # - Read dO: batch × heads × seq × head_dim
+    # - Write dKV_state: batch × heads × head_dim × head_dim
+    bytes_dkv_state = (
+        batch * num_heads * seq_len * head_dim * dtype_size  # φ(Q)
+        + batch * num_heads * seq_len * head_dim * dtype_size  # dO
+        + batch * num_heads * head_dim * head_dim * dtype_size  # dKV_state
+    )
+
+    # dφ(Q) computation: dO @ KV_state^T
+    # - Read dO: batch × heads × seq × head_dim
+    # - Read KV_state: batch × kv_heads × head_dim × head_dim
+    # - Write dφ(Q): batch × heads × seq × head_dim
+    bytes_dphi_q = (
+        batch * num_heads * seq_len * head_dim * dtype_size  # dO
+        + batch * num_kv_heads * head_dim * head_dim * dtype_size  # KV_state
+        + batch * num_heads * seq_len * head_dim * dtype_size  # dφ(Q)
+    )
+
+    # dφ(V) computation: φ(K) @ dKV_state
+    # - Read φ(K): batch × kv_heads × kv_seq × head_dim
+    # - Read dKV_state: batch × kv_heads × head_dim × head_dim
+    # - Write dφ(V): batch × kv_heads × kv_seq × head_dim
+    bytes_dphi_v = (
+        batch * num_kv_heads * kv_seq_len * head_dim * dtype_size  # φ(K)
+        + batch * num_kv_heads * head_dim * head_dim * dtype_size  # dKV_state
+        + batch * num_kv_heads * kv_seq_len * head_dim * dtype_size  # dφ(V)
+    )
+
+    # dφ(K) computation: φ(V) @ dKV_state^T
+    # - Read φ(V): batch × kv_heads × kv_seq × head_dim
+    # - Read dKV_state: batch × kv_heads × head_dim × head_dim
+    # - Write dφ(K): batch × kv_heads × kv_seq × head_dim
+    bytes_dphi_k = (
+        batch * num_kv_heads * kv_seq_len * head_dim * dtype_size  # φ(V)
+        + batch * num_kv_heads * head_dim * head_dim * dtype_size  # dKV_state
+        + batch * num_kv_heads * kv_seq_len * head_dim * dtype_size  # dφ(K)
+    )
+
+    bytes_accessed_backward = bytes_dkv_state + bytes_dphi_q + bytes_dphi_v + bytes_dphi_k
 
     return KernelResult(
         output=output_shape,
