@@ -16,6 +16,35 @@
 
 ---
 
+## 术语约定
+
+### 序列长度术语
+
+- `seq` 或 `q_seq`: Query 序列长度
+  - **Prefill 阶段**: `seq = prompt_len` (处理整个 prompt)
+  - **Decode 阶段**: `seq = 1` (每次生成一个 token)
+
+- `kv_seq`: Key/Value 序列长度 (KV cache 长度)
+  - **Prefill 阶段**: `kv_seq = prompt_len`
+  - **Decode 阶段**: `kv_seq = prompt_len + generated_len` (随生成递增)
+
+### Head 数量术语
+
+- `heads`: Query heads 数量
+- `kv_heads`: Key/Value heads 数量
+  - **MHA (Multi-Head Attention)**: `kv_heads = heads`
+  - **GQA (Grouped Query Attention)**: `kv_heads < heads` (如 LLaMA-70B: heads=64, kv_heads=8)
+  - **MQA (Multi-Query Attention)**: `kv_heads = 1`
+
+### 注意事项
+
+- 在 Full Attention 中，计算复杂度涉及 `seq × kv_seq` 项
+- 在 Linear Attention 中，KV state 使用 `kv_seq`，Q state 使用 `q_seq`
+- Prefill 时 `seq = kv_seq`，但公式表述上仍需区分以保持一致性
+- Decode 时 `seq = 1`，`kv_seq` 随生成长度增长
+
+---
+
 ## 1. LLaMA 模型
 
 ### 1.1 架构概述
@@ -117,18 +146,20 @@ params_total = 131.07M + 32 × 210.57M + 4.09M + 131.07M = ~6.74B
 
 #### Prefill 阶段 (forward)
 
+Prefill 阶段 `q_seq = kv_seq = seq_len` (处理整个 prompt)
+
 ```
 # Attention FLOPs
 # 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
-flops_qkv_proj = 2 × 3 × batch × seq_len × hidden_size × num_heads × head_dim
-flops_attention = 4 × batch × num_heads × seq_len × seq_len × head_dim  # QK^T + @V
-flops_o_proj = 2 × batch × seq_len × num_heads × head_dim × hidden_size
+flops_qkv_proj = 2 × 3 × batch × q_seq × hidden_size × num_heads × head_dim
+flops_attention = 4 × batch × num_heads × q_seq × kv_seq × head_dim  # QK^T + @V
+flops_o_proj = 2 × batch × q_seq × num_heads × head_dim × hidden_size
 
 # FFN FLOPs (SwiGLU)
-flops_gate_proj = 2 × batch × seq_len × hidden_size × intermediate_size
-flops_up_proj = 2 × batch × seq_len × hidden_size × intermediate_size
-flops_down_proj = 2 × batch × seq_len × intermediate_size × hidden_size
-flops_activation = batch × seq_len × intermediate_size × 6  # silu + elementwise mul
+flops_gate_proj = 2 × batch × q_seq × hidden_size × intermediate_size
+flops_up_proj = 2 × batch × q_seq × hidden_size × intermediate_size
+flops_down_proj = 2 × batch × q_seq × intermediate_size × hidden_size
+flops_activation = batch × q_seq × intermediate_size × 6  # silu + elementwise mul
 
 # 每层总 FLOPs
 flops_layer = flops_attn + flops_ffn
@@ -141,33 +172,33 @@ Backward 需要显式分解为 `dx` 和 `dW` 计算，而非笼统标记为 `2×
 
 ```
 # Linear backward分解 (以 gate_proj 为例)
-# Forward: Y = X @ W, X: batch×seq×hidden, W: hidden×intermediate, Y: batch×seq×intermediate
+# Forward: Y = X @ W, X: batch×q_seq×hidden, W: hidden×intermediate, Y: batch×q_seq×intermediate
 
 # dx计算: dY @ W^T
-# dY: batch×seq×intermediate, W^T: intermediate×hidden, dx: batch×seq×hidden
-flops_dx = 2 × batch × seq × intermediate × hidden
+# dY: batch×q_seq×intermediate, W^T: intermediate×hidden, dx: batch×q_seq×hidden
+flops_dx = 2 × batch × q_seq × intermediate × hidden
 
 # dW计算: X^T @ dY
-# X^T: hidden×batch×seq, dY: batch×seq×intermediate, dW: hidden×intermediate
-flops_dw = 2 × batch × seq × hidden × intermediate
+# X^T: hidden×batch×q_seq, dY: batch×q_seq×intermediate, dW: hidden×intermediate
+flops_dw = 2 × batch × q_seq × hidden × intermediate
 
 # 总Backward FLOPs
-flops_backward = flops_dx + flops_dw = 4 × batch × seq × hidden × intermediate
+flops_backward = flops_dx + flops_dw = 4 × batch × q_seq × hidden × intermediate
 # 数值上确实是 2× forward，但显式分解有助于准确计算内存访问
 ```
 
 #### Backward 内存访问显式分解
 
 ```
-# dx内存: dY @ W^T
-bytes_dx = batch × seq × intermediate × dtype_size  # 读 dY
-         + hidden × intermediate × dtype_size  # 读 W
-         + batch × seq × hidden × dtype_size  # 写 dx
+# dx内存: dY @ W^T (使用 q_seq)
+bytes_dx = batch × q_seq × intermediate × dtype_size  # 读 dY
+        + hidden × intermediate × dtype_size  # 读 W
+        + batch × q_seq × hidden × dtype_size  # 写 dx
 
-# dW内存: X^T @ dY
-bytes_dw = batch × seq × hidden × dtype_size  # 读 X (saved activation)
-         + batch × seq × intermediate × dtype_size  # 读 dY
-         + hidden × intermediate × dtype_size  # 写 dW
+# dW内存: X^T @ dY (使用 q_seq)
+bytes_dw = batch × q_seq × hidden × dtype_size  # 读 X (saved activation)
+        + batch × q_seq × intermediate × dtype_size  # 读 dY
+        + hidden × intermediate × dtype_size  # 写 dW
 
 bytes_backward = bytes_dx + bytes_dw
 ```
@@ -206,11 +237,11 @@ memory_weights = 6.74B × 2 bytes = ~13.48 GB
 
 #### KV Cache 内存
 ```
-# Standard Attention
-memory_kv_per_layer = 2 × batch × seq_len × num_kv_heads × head_dim × dtype_size
+# Standard Attention (使用 kv_seq_len)
+memory_kv_per_layer = 2 × batch × kv_seq_len × num_kv_heads × head_dim × dtype_size
 memory_kv_total = num_layers × memory_kv_per_layer
 
-# LLaMA-7B, batch=1, seq=4096
+# LLaMA-7B, batch=1, kv_seq=4096
 memory_kv = 32 × 2 × 1 × 4096 × 32 × 128 × 2 = ~8.6 GB
 ```
 
@@ -225,7 +256,7 @@ Activation 内存取决于 backward pass 需要保存的中间结果:
 | RMSNorm | input | backward 需要输入计算梯度 |
 
 ```
-memory_activation = batch × seq × (hidden_size × 4 + intermediate_size × 4) × num_layers
+memory_activation = batch × q_seq × (hidden_size × 4 + intermediate_size × 4) × num_layers
 ```
 
 ### 1.6 切分策略
@@ -437,26 +468,28 @@ MLA 的计算流程:
 3. Q 路径: `hidden → latent_q → q`
 4. Attention 计算
 
+Prefill 阶段 `q_seq = kv_seq = seq`，Decode 阶段 `q_seq = 1`
+
 ```
-# KV 路径
+# KV 路径 (使用 kv_seq)
 # 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
-flops_kv_down = 2 × batch × seq × hidden_size × kv_lora_rank
-flops_k_up = 2 × batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
-flops_v_up = 2 × batch × seq × kv_lora_rank × num_kv_heads × v_head_dim
+flops_kv_down = 2 × batch × kv_seq × hidden_size × kv_lora_rank
+flops_k_up = 2 × batch × kv_seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+flops_v_up = 2 × batch × kv_seq × kv_lora_rank × num_kv_heads × v_head_dim
 
-# Q 路径
-flops_q_down = 2 × batch × seq × hidden_size × q_lora_rank
-flops_q_up = 2 × batch × seq × q_lora_rank × num_heads × qk_nope_head_dim
+# Q 路径 (使用 q_seq)
+flops_q_down = 2 × batch × q_seq × hidden_size × q_lora_rank
+flops_q_up = 2 × batch × q_seq × q_lora_rank × num_heads × qk_nope_head_dim
 
-# RoPE
-flops_q_rope = 2 × batch × seq × hidden_size × num_heads × qk_rope_head_dim
-flops_k_rope = 2 × batch × seq × hidden_size × num_kv_heads × qk_rope_head_dim
+# RoPE (使用各自序列长度)
+flops_q_rope = 2 × batch × q_seq × hidden_size × num_heads × qk_rope_head_dim
+flops_k_rope = 2 × batch × kv_seq × hidden_size × num_kv_heads × qk_rope_head_dim
 
-# Attention
-flops_attn = 4 × batch × num_heads × seq × seq × head_dim
+# Attention (QK^T + @V)
+flops_attn = 4 × batch × num_heads × q_seq × kv_seq × head_dim
 
-# Output
-flops_o = 2 × batch × seq × num_heads × v_head_dim × hidden_size
+# Output (使用 q_seq)
+flops_o = 2 × batch × q_seq × num_heads × v_head_dim × hidden_size
 ```
 
 #### MoE FLOPs
@@ -466,18 +499,18 @@ MoE 的计算流程:
 2. Expert 计算: top-8 experts + shared expert
 
 ```
-# Router
+# Router (使用 q_seq)
 # 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
-flops_router = 2 × batch × seq × hidden_size × num_experts
+flops_router = 2 × batch × q_seq × hidden_size × num_experts
 
-# Routed experts (top-8)
+# Routed experts (top-8) (使用 q_seq)
 # gate + up 各 2×, down 2×, 共 6×
-flops_per_expert = 6 × batch × seq × hidden_size × intermediate_size
+flops_per_expert = 6 × batch × q_seq × hidden_size × intermediate_size
 flops_experts = num_experts_per_token × flops_per_expert
 
-# Shared expert
+# Shared expert (使用 q_seq)
 # gate + up + down 共 6×
-flops_shared = 6 × batch × seq × hidden_size × shared_intermediate
+flops_shared = 6 × batch × q_seq × hidden_size × shared_intermediate
 
 # MoE total
 flops_moe = flops_router + flops_experts + flops_shared
@@ -493,33 +526,38 @@ DeepSeek V3 backward 需要分解为各模块的 dx 和 dW 计算：
 # MLA Attention Backward分解
 # 每个投影层需要分解为 dx 和 dW
 
-# kv_down backward
-# dx: 2 × batch × seq × kv_lora_rank × hidden_size
-# dW: 2 × batch × seq × hidden_size × kv_lora_rank
-flops_kv_down_backward = 4 × batch × seq × hidden_size × kv_lora_rank
+# kv_down backward (使用 kv_seq)
+# dx: 2 × batch × kv_seq × kv_lora_rank × hidden_size
+# dW: 2 × batch × kv_seq × hidden_size × kv_lora_rank
+flops_kv_down_backward = 4 × batch × kv_seq × hidden_size × kv_lora_rank
 
-# k_up backward
-# dx: 2 × batch × seq × num_kv_heads × qk_nope_head_dim × kv_lora_rank
-# dW: 2 × batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
-flops_k_up_backward = 4 × batch × seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+# k_up backward (使用 kv_seq)
+# dx: 2 × batch × kv_seq × num_kv_heads × qk_nope_head_dim × kv_lora_rank
+# dW: 2 × batch × kv_seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+flops_k_up_backward = 4 × batch × kv_seq × kv_lora_rank × num_kv_heads × qk_nope_head_dim
+
+# q_down backward (使用 q_seq)
+# dx: 2 × batch × q_seq × q_lora_rank × hidden_size
+# dW: 2 × batch × q_seq × hidden_size × q_lora_rank
+flops_q_down_backward = 4 × batch × q_seq × hidden_size × q_lora_rank
 
 # 类似地分解其他 MLA projections...
 
-# MoE Expert Backward分解 (每个 expert)
+# MoE Expert Backward分解 (每个 expert, 使用 q_seq)
 # gate_proj backward
-# dx: 2 × batch × seq × intermediate × hidden
-# dW: 2 × batch × seq × hidden × intermediate
-flops_gate_backward = 4 × batch × seq × hidden × intermediate
+# dx: 2 × batch × q_seq × intermediate × hidden
+# dW: 2 × batch × q_seq × hidden × intermediate
+flops_gate_backward = 4 × batch × q_seq × hidden × intermediate
 
 # up_proj backward
-# dx: 2 × batch × seq × intermediate × hidden
-# dW: 2 × batch × seq × hidden × intermediate
-flops_up_backward = 4 × batch × seq × hidden × intermediate
+# dx: 2 × batch × q_seq × intermediate × hidden
+# dW: 2 × batch × q_seq × hidden × intermediate
+flops_up_backward = 4 × batch × q_seq × hidden × intermediate
 
 # down_proj backward
-# dx: 2 × batch × seq × hidden × intermediate
-# dW: 2 × batch × seq × intermediate × hidden
-flops_down_backward = 4 × batch × seq × intermediate × hidden
+# dx: 2 × batch × q_seq × hidden × intermediate
+# dW: 2 × batch × q_seq × intermediate × hidden
+flops_down_backward = 4 × batch × q_seq × intermediate × hidden
 
 # MoE backward total (active experts)
 flops_moe_backward = flops_router_backward + top_k × (flops_gate_backward + flops_up_backward + flops_down_backward)
@@ -529,27 +567,27 @@ flops_moe_backward = flops_router_backward + top_k × (flops_gate_backward + flo
 
 ```
 # Linear backward memory 分解示例
-# dx计算: dY @ W^T
+# dx计算: dY @ W^T (使用 q_seq)
 bytes_dx = 读 dY + 读 W + 写 dx
 
-# dW计算: X^T @ dY
+# dW计算: X^T @ dY (使用 q_seq)
 bytes_dw = 读 X (saved activation) + 读 dY + 写 dW
 
-# MoE Expert backward memory (每个 expert)
+# MoE Expert backward memory (每个 expert, 使用 q_seq)
 # Gate backward
-bytes_gate_dx = batch × seq × intermediate × dtype_size  # 读 dY
-              + hidden × intermediate × dtype_size  # 读 W_g
-              + batch × seq × hidden × dtype_size  # 写 dX
+bytes_gate_dx = batch × q_seq × intermediate × dtype_size  # 读 dY
+            + hidden × intermediate × dtype_size  # 读 W_g
+            + batch × q_seq × hidden × dtype_size  # 写 dX
 
-bytes_gate_dw = batch × seq × hidden × dtype_size  # 读 X
-              + batch × seq × intermediate × dtype_size  # 读 dY
-              + hidden × intermediate × dtype_size  # 写 dW_g
+bytes_gate_dw = batch × q_seq × hidden × dtype_size  # 读 X
+            + batch × q_seq × intermediate × dtype_size  # 读 dY
+            + hidden × intermediate × dtype_size  # 写 dW_g
 
 # Up backward (类似 gate)
 # Down backward (类似 gate)
 
 # SiLU activation backward: 读 intermediate, 读 gradient, 写 gradient
-bytes_silu_backward = batch × seq × intermediate × dtype_size × 3
+bytes_silu_backward = batch × q_seq × intermediate × dtype_size × 3
 ```
 
 关键差异：
@@ -564,16 +602,16 @@ bytes_silu_backward = batch × seq × intermediate × dtype_size × 3
 MLA 通过 KV 压缩大幅减少 KV cache 内存:
 
 ```
-# Standard Attention KV cache
-memory_kv_standard = 2 × batch × seq × num_kv_heads × head_dim × dtype_size
+# Standard Attention KV cache (使用 kv_seq)
+memory_kv_standard = 2 × batch × kv_seq × num_kv_heads × head_dim × dtype_size
 
-# MLA KV cache (compressed)
-memory_kv_mla = batch × seq × kv_lora_rank × dtype_size
+# MLA KV cache (compressed, 使用 kv_seq)
+memory_kv_mla = batch × kv_seq × kv_lora_rank × dtype_size
 
 # 压缩比
 compression_ratio = (num_kv_heads × head_dim) / kv_lora_rank
-                 = (128 × 192) / 512
-                 = 48x
+                  = (128 × 192) / 512
+                  = 48x
 ```
 
 DeepSeek V3 的 KV cache 内存减少 ~48x，这对于长序列推理非常关键。
@@ -602,8 +640,8 @@ experts_per_gpu = 256 / 8 = 32 experts per GPU
 
 EP 切分需要 AllToAll 通信:
 ```
-# AllToAll 通信量
-comm_bytes = batch × seq × hidden_size × dtype_size × 2 (send + receive)
+# AllToAll 通信量 (使用 q_seq)
+comm_bytes = batch × q_seq × hidden_size × dtype_size × 2 (send + receive)
 ```
 
 #### TP + EP 组合
@@ -761,37 +799,40 @@ params_time_proj = hidden_size × 6 × hidden_size
 
 #### Patchify FLOPs
 ```
-# 3D Conv
+# 3D Conv (q_seq = kv_seq = video sequence length)
 batch = 1
 num_frames = 81  (latent frames)
 height = 90  (latent height, 720/8)
 width = 160 (latent width, 1280/8)
-seq_len = num_frames × height × width = 81 × 90 × 160 = 1,166,400
+q_seq = num_frames × height × width = 81 × 90 × 160 = 1,166,400
 
-flops_patchify = batch × seq_len × in_channels × hidden_size × pt × ph × pw
+flops_patchify = batch × q_seq × in_channels × hidden_size × pt × ph × pw
               = 1 × 1.17M × 16 × 5120 × 4
               ≈ 240 GFLOPs
 ```
 
 #### DiT Block FLOPs
 
-```
-# Self-attention
-# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
-flops_self_qkv = 2 × 3 × batch × seq_len × hidden_size²
-flops_self_attn = 4 × batch × heads × seq_len² × head_dim
-flops_self_o = 2 × batch × seq_len × hidden_size²
+DiT Self-attention: `q_seq = kv_seq = seq_len` (视频序列)
+DiT Cross-attention: `q_seq = seq_len` (视频), `kv_seq = text_len` (文本，固定512)
 
-# Cross-attention (text_len = 512)
-text_len = 512
-flops_cross_q = 2 × batch × seq_len × hidden_size²
+```
+# Self-attention (视频序列内部)
+# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
+flops_self_qkv = 2 × 3 × batch × q_seq × hidden_size²
+flops_self_attn = 4 × batch × heads × q_seq × kv_seq × head_dim  # QK^T + @V
+flops_self_o = 2 × batch × q_seq × hidden_size²
+
+# Cross-attention (视频-文本)
+text_len = 512  # 固定文本长度
+flops_cross_q = 2 × batch × q_seq × hidden_size²
 flops_cross_kv = 2 × 2 × batch × text_len × text_dim × hidden_size  # K + V 各 2×
-flops_cross_attn = 4 × batch × heads × seq_len × text_len × head_dim
-flops_cross_o = 2 × batch × seq_len × hidden_size²
+flops_cross_attn = 4 × batch × heads × q_seq × text_len × head_dim  # QK^T + @V
+flops_cross_o = 2 × batch × q_seq × hidden_size²
 
 # FFN (GELU)
 # up + down 各 2× (multiply-add)
-flops_ffn = 4 × batch × seq_len × hidden_size × intermediate_size + 2 × batch × seq_len × intermediate_size × hidden_size
+flops_ffn = 4 × batch × q_seq × hidden_size × intermediate_size + 2 × batch × q_seq × intermediate_size × hidden_size
 
 # Per block total
 flops_block ≈ 3 × seq × 5120² + 4 × 40 × seq² × 128 + seq × 5120² + ...
@@ -981,7 +1022,7 @@ layer_types = pattern * num_cycles + pattern[:remainder]
 
 **Full Attention**:
 - 标准 Attention，使用 GQA (num_kv_heads < num_heads)
-- KV cache = `2 × batch × seq × num_kv_heads × head_dim × dtype_size`
+- KV cache = `2 × batch × kv_seq × num_kv_heads × head_dim × dtype_size`
 
 ### 4.3 权重计算
 
@@ -1133,43 +1174,66 @@ ffn_params = vision_hidden × vision_intermediate × 3
 
 #### Linear Attention FLOPs
 
-```
-# Projections
-# 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
-flops_qkv = 2 × 3 × batch × seq × hidden × linear_heads × linear_head_dim
+Linear Attention 核心公式: `O = φ(Q) × (φ(K)^T × φ(V))`
 
-# Kernel feature map
-flops_kernel = batch × seq × linear_heads × kernel_dim × linear_head_dim × 2
+```
+# Feature map φ(Q), φ(K), φ(V)
+# φ(Q) 使用 q_seq, φ(K), φ(V) 使用 kv_seq
+# 注: Feature map 每元素约 10 FLOPs (elu+1)
+flops_feature_q = 2 × kernel_dim × batch × linear_heads × q_seq × linear_head_dim
+flops_feature_k = 2 × kernel_dim × batch × linear_kv_heads × kv_seq × linear_head_dim
+flops_feature_v = 2 × kernel_dim × batch × linear_kv_heads × kv_seq × linear_head_dim
+
+# KV state: φ(K)^T @ φ(V) - 使用 kv_seq
+# 输出固定大小 (linear_head_dim × linear_head_dim)
+flops_kv_state = 2 × batch × linear_kv_heads × kv_seq × linear_head_dim²
+
+# Q state: φ(Q) @ kv_state - 使用 q_seq
+flops_q_state = 2 × batch × linear_heads × q_seq × linear_head_dim²
 
 # Output projection
-flops_o = 2 × batch × seq × linear_heads × linear_head_dim × hidden
+flops_o = 2 × batch × linear_heads × q_seq × linear_head_dim × hidden
 
-# Total: O(seq) 无 seq² 项
+# Total
+flops_linear_attn = flops_feature_q + flops_feature_k + flops_feature_v + flops_kv_state + flops_q_state + flops_o
+
+# 复杂度分析:
+# - feature_flops: O(q_seq + kv_seq) × kernel_dim × head_dim
+# - kv_state_flops: O(kv_seq × head_dim²)
+# - q_state_flops: O(q_seq × head_dim²)
+# 总计: O(seq × head_dim²) 无 seq² 项
 ```
 
-**关键优势**: Decode 阶段计算量不随 KV cache 长度增长。
+**关键优势**:
+- Decode 阶段 `q_seq = 1`，计算量固定不随 KV cache 长度增长
+- KV state 固定大小 (linear_head_dim²)，内存不随序列长度增长
 
 #### Full Attention FLOPs
 
 ```
-flops_attn = 4 × batch × heads × seq × seq × head_dim
+# QK^T: 2 × batch × heads × q_seq × kv_seq × head_dim
+# @V: 2 × batch × heads × q_seq × kv_seq × head_dim
+flops_attn = 4 × batch × heads × q_seq × kv_seq × head_dim
+
+# Prefill: q_seq = kv_seq = prompt_len
+# Decode: q_seq = 1, kv_seq = prompt_len + generated_len
 ```
 
 #### Dense SwiGLU FFN FLOPs
 
 ```
 # gate + up 各 2×, down 2×, 共 6× (multiply-add)
-flops_ffn = 6 × batch × seq × hidden × intermediate
+flops_ffn = 6 × batch × q_seq × hidden × intermediate
 ```
 
 #### MoE FFN FLOPs
 
 ```
 # 注: 矩阵乘法 FLOPs = 2 × M × K × N (multiply-add)
-flops_router = 2 × batch × seq × hidden × num_experts
+flops_router = 2 × batch × q_seq × hidden × num_experts
 # gate + up + down 共 6×
-flops_active_experts = top_k × 6 × batch × seq × hidden × moe_intermediate
-flops_shared = 6 × batch × seq × hidden × shared_intermediate
+flops_active_experts = top_k × 6 × batch × q_seq × hidden × moe_intermediate
+flops_shared = 6 × batch × q_seq × hidden × shared_intermediate
 
 flops_moe = flops_router + flops_active_experts + flops_shared
 ```
@@ -1182,32 +1246,36 @@ Qwen3.5 backward 需要分解为各模块的 dx 和 dW 计算：
 
 ```
 # Linear Attention Backward分解
-# Q/K/V projections backward
-# dx: 2 × batch × seq × linear_head_dim × hidden
-# dW: 2 × batch × seq × hidden × linear_head_dim
-flops_qkv_backward = 4 × 3 × batch × seq × hidden × linear_heads × linear_head_dim
+# Q/K/V projections backward (使用各自序列长度)
+# Q projection: 使用 q_seq
+# dx: 2 × batch × q_seq × linear_head_dim × hidden
+# dW: 2 × batch × q_seq × hidden × linear_head_dim
+# K/V projections: 使用 kv_seq
+# dx: 2 × batch × kv_seq × linear_head_dim × hidden
+# dW: 2 × batch × kv_seq × hidden × linear_head_dim
+flops_qkv_backward = 4 × (linear_heads × q_seq + 2 × linear_kv_heads × kv_seq) × batch × hidden × linear_head_dim
 
-# Output projection backward
-flops_o_backward = 4 × batch × seq × linear_heads × linear_head_dim × hidden
+# Output projection backward (使用 q_seq)
+flops_o_backward = 4 × batch × q_seq × linear_heads × linear_head_dim × hidden
 
-# Dense SwiGLU FFN Backward分解
+# Dense SwiGLU FFN Backward分解 (使用 q_seq)
 # gate_proj backward
-# dx: 2 × batch × seq × intermediate × hidden
-# dW: 2 × batch × seq × hidden × intermediate
-flops_gate_backward = 4 × batch × seq × hidden × intermediate
+# dx: 2 × batch × q_seq × intermediate × hidden
+# dW: 2 × batch × q_seq × hidden × intermediate
+flops_gate_backward = 4 × batch × q_seq × hidden × intermediate
 
 # up_proj backward (类似 gate)
-flops_up_backward = 4 × batch × seq × hidden × intermediate
+flops_up_backward = 4 × batch × q_seq × hidden × intermediate
 
 # down_proj backward
-# dx: 2 × batch × seq × hidden × intermediate
-# dW: 2 × batch × seq × intermediate × hidden
-flops_down_backward = 4 × batch × seq × intermediate × hidden
+# dx: 2 × batch × q_seq × hidden × intermediate
+# dW: 2 × batch × q_seq × intermediate × hidden
+flops_down_backward = 4 × batch × q_seq × intermediate × hidden
 
-# SiLU activation backward: ~20 × batch × seq × intermediate
-flops_silu_backward = batch × seq × intermediate × 20
+# SiLU activation backward: ~20 × batch × q_seq × intermediate
+flops_silu_backward = batch × q_seq × intermediate × 20
 
-# MoE Expert Backward分解
+# MoE Expert Backward分解 (每个 expert, 使用 q_seq)
 # 每个 expert 的 backward 类似 SwiGLU FFN backward
 # gate + up + down 各需要 dx 和 dW 分解
 flops_expert_backward = top_k × (flops_gate_backward + flops_up_backward + flops_down_backward + flops_silu_backward)
@@ -1217,25 +1285,25 @@ flops_expert_backward = top_k × (flops_gate_backward + flops_up_backward + flop
 
 ```
 # Linear backward memory 分解
-# dx计算: dY @ W^T
-bytes_dx = batch × seq × out_features × dtype_size  # 读 dY
-         + hidden × out_features × dtype_size  # 读 W
-         + batch × seq × hidden × dtype_size  # 写 dx
+# dx计算: dY @ W^T (使用 q_seq)
+bytes_dx = batch × q_seq × out_features × dtype_size  # 读 dY
+        + hidden × out_features × dtype_size  # 读 W
+        + batch × q_seq × hidden × dtype_size  # 写 dx
 
-# dW计算: X^T @ dY
-bytes_dw = batch × seq × hidden × dtype_size  # 读 X (saved activation)
-         + batch × seq × out_features × dtype_size  # 读 dY
-         + hidden × out_features × dtype_size  # 写 dW
+# dW计算: X^T @ dY (使用 q_seq)
+bytes_dw = batch × q_seq × hidden × dtype_size  # 读 X (saved activation)
+        + batch × q_seq × out_features × dtype_size  # 读 dY
+        + hidden × out_features × dtype_size  # 写 dW
 
-# MoE Expert backward memory (每个 expert)
+# MoE Expert backward memory (每个 expert, 使用 q_seq)
 # Gate backward
-bytes_gate_dx = batch × seq × intermediate × dtype_size  # 读 dY
-              + hidden × intermediate × dtype_size  # 读 W_g
-              + batch × seq × hidden × dtype_size  # 写 dX
+bytes_gate_dx = batch × q_seq × intermediate × dtype_size  # 读 dY
+            + hidden × intermediate × dtype_size  # 读 W_g
+            + batch × q_seq × hidden × dtype_size  # 写 dX
 
-bytes_gate_dw = batch × seq × hidden × dtype_size  # 读 X
-              + batch × seq × intermediate × dtype_size  # 读 dY
-              + hidden × intermediate × dtype_size  # 写 dW_g
+bytes_gate_dw = batch × q_seq × hidden × dtype_size  # 读 X
+            + batch × q_seq × intermediate × dtype_size  # 读 dY
+            + hidden × intermediate × dtype_size  # 写 dW_g
 ```
 
 关键差异：
@@ -1249,8 +1317,8 @@ bytes_gate_dw = batch × seq × hidden × dtype_size  # 读 X
 
 Linear Attention 无 KV cache，状态大小固定：
 ```
-# Standard Attention KV cache (随 seq 增长)
-memory_kv_standard = 2 × batch × seq × kv_heads × head_dim × dtype × layers
+# Standard Attention KV cache (随 kv_seq 增长)
+memory_kv_standard = 2 × batch × kv_seq × kv_heads × head_dim × dtype × layers
 
 # Linear Attention state (固定大小)
 memory_linear_state = heads × kernel_dim × head_dim × dtype
@@ -1259,14 +1327,14 @@ memory_linear_state = heads × kernel_dim × head_dim × dtype
 ```
 
 **对比**:
-- seq=4096: Standard KV ≈ 1.3 GB, Linear state = 0.5 MB
-- seq=100K: Standard KV ≈ 32 GB, Linear state = 0.5 MB
+- kv_seq=4096: Standard KV ≈ 1.3 GB, Linear state = 0.5 MB
+- kv_seq=100K: Standard KV ≈ 32 GB, Linear state = 0.5 MB
 
 #### Full Attention KV cache
 
 只有 1/4 层使用 full attention：
 ```
-memory_kv_full = (num_layers / 4) × 2 × batch × seq × kv_heads × head_dim × dtype
+memory_kv_full = (num_layers / 4) × 2 × batch × kv_seq × kv_heads × head_dim × dtype
 ```
 
 #### Dense 模型权重内存
@@ -1478,6 +1546,8 @@ print(f"MTP throughput gain: {result.throughput_gain:.1f}%")
 ## 5. Attention FLOPs 计算详解
 
 本章节详细分解 Full Attention (Standard + Flash) 和 Linear Attention 的计算量、内存访问、以及 Forward/Backward 阶段的逐层推导。
+
+**术语说明**: 本章节中 `seq` 表示 `q_seq`（Query 序列长度），与术语约定一致。
 
 ---
 
