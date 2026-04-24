@@ -715,6 +715,39 @@ class ModuleInstance:
         )
         return total_time_sec
 
+    def estimate_compute_time_only(self, backend: Any) -> float:
+        """Estimate compute time only (excluding communication).
+
+        Args:
+            backend: Kernel backend
+
+        Returns:
+            Compute time in seconds
+        """
+        compute_time = 0.0
+
+        if self.module._last_forward_output:
+            for op in self.module._last_forward_output._op_history:
+                physical_inputs = [self._infer_physical_shape(t) for t in op.inputs]
+                physical_output = self._infer_physical_shape(op.output)
+
+                try:
+                    device = getattr(backend.config, "device", None)
+                    compute_time += backend.estimate_compute_time(
+                        op.kernel_name,
+                        physical_inputs,
+                        physical_output,
+                        op.dtype,
+                        device,
+                    )
+                except Exception:
+                    pass
+
+        if self.mode == "forward_backward":
+            compute_time *= 2
+
+        return compute_time
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for output."""
         dtype_size = DTYPE_SIZES.get(self.ctx.dtype if hasattr(self.ctx, "dtype") else "fp16", 2)

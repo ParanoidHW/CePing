@@ -200,10 +200,10 @@ class UnifiedAnalyzer:
             return "unknown"
 
     def _estimate_submodule_time(self, sub_inst: ModuleInstance) -> float:
-        """估算子模块时间."""
+        """估算子模块计算时间（不包括通信）."""
         backend_config = BackendConfig(name="theory", device=self.device)
         backend = TheoryBackend(backend_config)
-        return sub_inst.estimate_time(backend)
+        return sub_inst.estimate_compute_time_only(backend)
 
     def analyze(
         self,
@@ -682,43 +682,22 @@ class UnifiedAnalyzer:
         comm_time_sec = 0.0
         parallel_degrees = self._get_parallel_degrees()
         
-        if sub_inst.module._last_forward_output:
-            op_history = sub_inst.module._last_forward_output._op_history
-            if phase.compute_type != ComputeType.OPTIMIZER:
-                for op in op_history:
-                    comm_ops = sub_inst._infer_comm_ops(op)
-                    for comm_op in comm_ops:
-                        ptype = getattr(comm_op, "ptype", "unknown")
-                        comm_ops_detail.append(
-                            {
-                                "comm_type": comm_op.comm_type,
-                                "ptype": ptype,
-                                "data_bytes": comm_op.data_bytes,
-                            }
-                        )
-                        delta_comm_bytes += comm_op.data_bytes
-                        degree = parallel_degrees.get(ptype, 1)
-                        bandwidth_gbps = self._get_bandwidth_for_ptype(ptype)
-                        comm_time_sec += self._estimate_single_comm_time(
-                            comm_op.comm_type, comm_op.data_bytes, degree, bandwidth_gbps
-                        )
-                    if phase.compute_type == ComputeType.BACKWARD:
-                        backward_comm_ops = sub_inst._infer_backward_comm_ops(op)
-                        for comm_op in backward_comm_ops:
-                            ptype = getattr(comm_op, "ptype", "unknown")
-                            comm_ops_detail.append(
-                                {
-                                    "comm_type": comm_op.comm_type,
-                                    "ptype": ptype,
-                                    "data_bytes": comm_op.data_bytes,
-                                }
-                            )
-                            delta_comm_bytes += comm_op.data_bytes
-                            degree = parallel_degrees.get(ptype, 1)
-                            bandwidth_gbps = self._get_bandwidth_for_ptype(ptype)
-                            comm_time_sec += self._estimate_single_comm_time(
-                                comm_op.comm_type, comm_op.data_bytes, degree, bandwidth_gbps
-                            )
+        comm_ops = sub_inst.total_comm_ops
+        for comm_op in comm_ops:
+            ptype = getattr(comm_op, "ptype", "unknown")
+            comm_ops_detail.append(
+                {
+                    "comm_type": comm_op.comm_type,
+                    "ptype": ptype,
+                    "data_bytes": comm_op.data_bytes,
+                }
+            )
+            delta_comm_bytes += comm_op.data_bytes
+            degree = parallel_degrees.get(ptype, 1)
+            bandwidth_gbps = self._get_bandwidth_for_ptype(ptype)
+            comm_time_sec += self._estimate_single_comm_time(
+                comm_op.comm_type, comm_op.data_bytes, degree, bandwidth_gbps
+            )
 
         submodule_type = self._infer_submodule_type(sub_name, sub_inst)
 
@@ -774,15 +753,7 @@ class UnifiedAnalyzer:
         signature_cache: Dict[str, SubmoduleResult] = {}
         for sig, instances in signature_groups.items():
             first_name, first_inst = instances[0]
-            delta_comm_bytes = 0
-            if first_inst.module._last_forward_output:
-                if phase.compute_type != ComputeType.OPTIMIZER:
-                    for op in first_inst.module._last_forward_output._op_history:
-                        comm_ops = first_inst._infer_comm_ops(op)
-                        delta_comm_bytes += sum(op.data_bytes for op in comm_ops)
-                        if phase.compute_type == ComputeType.BACKWARD:
-                            backward_comm_ops = first_inst._infer_backward_comm_ops(op)
-                            delta_comm_bytes += sum(op.data_bytes for op in backward_comm_ops)
+            delta_comm_bytes = sum(op.data_bytes for op in first_inst.total_comm_ops)
 
             nested_type = MODULE_CLASS_TO_TYPE.get(
                 type(first_inst.module).__name__, SubmoduleType.FFN
