@@ -1981,9 +1981,11 @@ class UnifiedAnalyzer:
             f"num_submodule_types={len(by_submodule_type)}"
         )
 
-        # Add backward compat to by_submodule_type
+        # Add backward compat to by_submodule_type and nested_breakdown
         for block_type, data in by_submodule_type.items():
             data["memory"]["activations_gb"] = data["memory"]["activation_gb"]
+            for nested_type, nested_data in data.get("nested_breakdown", {}).items():
+                nested_data["memory"]["activations_gb"] = nested_data["memory"].get("activation_gb", 0)
 
         comm_breakdown_dict = {}
         if comm_breakdown:
