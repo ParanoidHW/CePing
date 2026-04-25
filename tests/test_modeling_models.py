@@ -924,3 +924,78 @@ class TestWanDiTMemory:
 
         expected = 2 * 4096 * 10240
         assert ffn.params_count() == expected
+
+
+class TestSingleRegistryArchitecture:
+    """Test unified registry architecture - only presets, no separate model registry."""
+
+    def test_error_message_only_shows_presets(self):
+        """Test that error message only shows available presets, not internal models."""
+        try:
+            create_model_from_config({"preset": "nonexistent-model"})
+        except ValueError as e:
+            error_msg = str(e)
+            assert "Available presets:" in error_msg
+            assert "Available models:" not in error_msg
+
+    def test_preset_contains_model_class_map(self):
+        """Test that multi-workload presets contain model_class_map."""
+        presets = get_model_presets()
+        
+        hunyuan_preset = presets.get("hunyuan-image-3")
+        if hunyuan_preset:
+            assert "model_class_map" in hunyuan_preset
+            assert "inference" in hunyuan_preset["model_class_map"]
+            assert "diffusion" in hunyuan_preset["model_class_map"]
+
+    def test_model_class_from_preset_with_workload(self):
+        """Test that model class is derived from preset with workload_type."""
+        presets = get_model_presets()
+        
+        hunyuan_preset = presets.get("hunyuan-image-3")
+        if hunyuan_preset:
+            model_class_map = hunyuan_preset.get("model_class_map", {})
+            
+            text_model = create_model_from_config(
+                {"preset": "hunyuan-image-3"}, workload_type="inference"
+            )
+            assert type(text_model).__name__ == "HunyuanImage3TextModel"
+            
+            diffusion_model = create_model_from_config(
+                {"preset": "hunyuan-image-3"}, workload_type="diffusion"
+            )
+            assert type(diffusion_model).__name__ == "HunyuanImage3DiffusionModel"
+
+    def test_all_presets_have_required_metadata(self):
+        """Test that all presets have required metadata fields."""
+        presets = get_model_presets()
+        
+        required_fields = ["architecture", "sparse_type", "supported_workloads"]
+        
+        for preset_name, preset_config in presets.items():
+            for field in required_fields:
+                assert field in preset_config, f"{preset_name} missing {field}"
+
+    def test_preset_architecture_matches_registered_model(self):
+        """Test that preset architecture can be mapped to registered model class."""
+        from llm_perf.modeling.registry import ModelingRegistry, register_all_models
+        
+        registry = ModelingRegistry()
+        register_all_models()
+        
+        presets = get_model_presets()
+        
+        for preset_name, preset_config in presets.items():
+            if "model_class_map" in preset_config:
+                for workload_type, model_name in preset_config["model_class_map"].items():
+                    assert registry.is_registered(model_name), \
+                        f"{preset_name} model_class_map[{workload_type}]={model_name} not registered"
+            else:
+                architecture = preset_config.get("architecture")
+                if architecture and architecture in ["llama", "deepseek", "vae", "resnet", "wan_text_encoder", "wan_dit", "wan_vae", "qwen3_5_moe", "qwen3_5", "hunyuan_image_3_text", "hunyuan_image_3_diffusion"]:
+                    found = False
+                    for name, info in registry.get_all_infos().items():
+                        if info.architecture == architecture:
+                            found = True
+                            break
+                    assert found, f"{preset_name} architecture={architecture} not found in registry"

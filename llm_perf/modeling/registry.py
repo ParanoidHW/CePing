@@ -763,12 +763,10 @@ def create_model_from_config(config: dict, workload_type: Optional[str] = None) 
         filtered_config = _filter_params_for_model(model_class, model_config)
         return registry.create(model_name, **filtered_config)
 
-    available_models = registry.list_models()
     available_presets = list(presets.keys())
     raise ValueError(
-        f"Unknown model: '{preset_name or architecture or model_type or model_name}'. "
-        f"Available presets: {available_presets}. "
-        f"Available models: {available_models}."
+        f"Unknown preset: '{preset_name or architecture or model_type or model_name}'. "
+        f"Available presets: {available_presets}."
     )
 
 
