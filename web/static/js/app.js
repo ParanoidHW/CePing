@@ -847,29 +847,46 @@ function collectWorkloadConfig(scenario) {
 function displayResults(result) {
     elements.results.style.display = 'block';
     
-    const workloadType = result.workload_type || 'training';
-    const scenario = elements.workloadScenario?.value || 'training';
+    const scenarioType = result.scenario_type || result.workload_type || 'training';
     
-    if (workloadType === 'inference' && (scenario === 'diffusion' || state.currentPipeline === 'diffusion-video')) {
-        const phases = result.phases || [];
-        const totalTime = result.total_time_sec || 0;
-        
-        const denoisePhase = phases.find(p => p.name === 'denoise') || {};
-        const encodePhase = phases.find(p => p.name === 'encode') || {};
-        const decodePhase = phases.find(p => p.name === 'decode') || {};
-        
-        const denoisePct = totalTime > 0 ? (denoisePhase.total_time_sec || 0) / totalTime * 100 : 0;
-        const encodePct = totalTime > 0 ? (encodePhase.total_time_sec || 0) / totalTime * 100 : 0;
-        const decodePct = totalTime > 0 ? (decodePhase.total_time_sec || 0) / totalTime * 100 : 0;
-        
-        const params = result.params || {};
-        const diffusionSteps = denoisePhase.repeat_count || params.num_steps || 50;
-        const stepTime = (denoisePhase.total_time_sec || 0) / diffusionSteps;
-        
-        const pixelsPerStep = params.height && params.width 
-            ? params.height * params.width 
-            : (params.num_frames || 81) * (params.height || 720) * (params.width || 1280);
-        const throughput = pixelsPerStep > 0 ? pixelsPerStep / totalTime : 0;
+    const RENDER_TEMPLATES = {
+        'diffusion': renderDiffusionSummary,
+        'training': renderTrainingSummary,
+        'rl_training': renderTrainingSummary,
+        'inference': renderInferenceSummary,
+        'pd_disagg': renderInferenceSummary,
+    };
+    
+    const template = RENDER_TEMPLATES[scenarioType];
+    if (template) {
+        template(result);
+    } else {
+        renderGenericSummary(result);
+    }
+    
+    elements.results.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderDiffusionSummary(result) {
+    const phases = result.phases || [];
+    const totalTime = result.total_time_sec || 0;
+    
+    const denoisePhase = phases.find(p => p.name === 'denoise') || {};
+    const encodePhase = phases.find(p => p.name === 'encode') || {};
+    const decodePhase = phases.find(p => p.name === 'decode') || {};
+    
+    const denoisePct = totalTime > 0 ? (denoisePhase.total_time_sec || 0) / totalTime * 100 : 0;
+    const encodePct = totalTime > 0 ? (encodePhase.total_time_sec || 0) / totalTime * 100 : 0;
+    const decodePct = totalTime > 0 ? (decodePhase.total_time_sec || 0) / totalTime * 100 : 0;
+    
+    const params = result.params || {};
+    const diffusionSteps = denoisePhase.repeat_count || params.num_steps || 50;
+    const stepTime = (denoisePhase.total_time_sec || 0) / diffusionSteps;
+    
+    const pixelsPerStep = params.height && params.width 
+        ? params.height * params.width 
+        : (params.num_frames || 81) * (params.height || 720) * (params.width || 1280);
+    const throughput = pixelsPerStep > 0 ? pixelsPerStep / totalTime : 0;
         
         elements.resultsContent.innerHTML = `
             <div class="result-grid">
@@ -934,79 +951,95 @@ function displayResults(result) {
             ` : ''}
             ${renderDetailedBreakdown(result.detailed_breakdown)}
         `;
-        elements.results.scrollIntoView({ behavior: 'smooth' });
-        return;
-    }
+}
+
+function renderTrainingSummary(result) {
+    const detailed = result.detailed_breakdown;
+    const detailedHtml = renderDetailedBreakdown(detailed);
     
-    if (scenario === 'training' || scenario === 'rl_training') {
-        const detailed = result.detailed_breakdown;
-        const detailedHtml = renderDetailedBreakdown(detailed);
-        
-        elements.resultsContent.innerHTML = `
-            <div class="result-grid">
-                <div class="result-card highlight">
-                    <div class="result-value">${(result.throughput?.tokens_per_sec / 1000 || 0).toFixed(2)}K</div>
-                    <div class="result-label">Tokens/sec</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${(result.throughput?.samples_per_sec || 0).toFixed(2)}</div>
-                    <div class="result-label">Samples/sec</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${((result.time?.time_per_step_sec || 0) * 1000).toFixed(0)}ms</div>
-                    <div class="result-label">Time/Step</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${(result.memory?.memory_per_device_gb || 0).toFixed(1)}GB</div>
-                    <div class="result-label">Memory/device</div>
-                </div>
+    elements.resultsContent.innerHTML = `
+        <div class="result-grid">
+            <div class="result-card highlight">
+                <div class="result-value">${(result.throughput?.tokens_per_sec / 1000 || 0).toFixed(2)}K</div>
+                <div class="result-label">Tokens/sec</div>
             </div>
-            ${renderBreakdown(result.breakdown)}
-            ${detailedHtml}
-        `;
-    } else {
-        const detailed = result.detailed_breakdown;
-        const detailedHtml = renderDetailedBreakdown(detailed);
-        
-        elements.resultsContent.innerHTML = `
-            <div class="result-grid">
-                <div class="result-card highlight">
-                    <div class="result-value">${(result.decode?.tps || 0).toFixed(0)}</div>
-                    <div class="result-label">Decode TPS</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${((result.prefill?.ttft_sec || 0) * 1000).toFixed(0)}ms</div>
-                    <div class="result-label">TTFT (Time To First Token)</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${((result.decode?.tpot_sec || 0) * 1000).toFixed(1)}ms</div>
-                    <div class="result-label">TPOT (Time Per Output Token)</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${(result.end_to_end?.overall_tps || 0).toFixed(0)}</div>
-                    <div class="result-label">Overall TPS</div>
-                </div>
+            <div class="result-card">
+                <div class="result-value">${(result.throughput?.samples_per_sec || 0).toFixed(2)}</div>
+                <div class="result-label">Samples/sec</div>
             </div>
-            <div class="result-grid" style="margin-top: 1rem;">
-                <div class="result-card">
-                    <div class="result-value">${(result.end_to_end?.total_time_sec || 0).toFixed(2)}s</div>
-                    <div class="result-label">Total Time</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${(result.memory?.memory_per_device_gb || 0).toFixed(1)}GB</div>
-                    <div class="result-label">Memory/device</div>
-                </div>
-                <div class="result-card">
-                    <div class="result-value">${(result.memory?.kv_cache_gb || 0).toFixed(1)}GB</div>
-                    <div class="result-label">KV Cache</div>
-                </div>
+            <div class="result-card">
+                <div class="result-value">${((result.time?.time_per_step_sec || 0) * 1000).toFixed(0)}ms</div>
+                <div class="result-label">Time/Step</div>
             </div>
-            ${renderInferenceBreakdown(result.breakdown)}
-            ${detailedHtml}
-        `;
-    }
+            <div class="result-card">
+                <div class="result-value">${(result.memory?.memory_per_device_gb || 0).toFixed(1)}GB</div>
+                <div class="result-label">Memory/device</div>
+            </div>
+        </div>
+        ${renderBreakdown(result.breakdown)}
+        ${detailedHtml}
+    `;
+}
+
+function renderInferenceSummary(result) {
+    const detailed = result.detailed_breakdown;
+    const detailedHtml = renderDetailedBreakdown(detailed);
     
-    elements.results.scrollIntoView({ behavior: 'smooth' });
+    elements.resultsContent.innerHTML = `
+        <div class="result-grid">
+            <div class="result-card highlight">
+                <div class="result-value">${(result.decode?.tps || 0).toFixed(0)}</div>
+                <div class="result-label">Decode TPS</div>
+            </div>
+            <div class="result-card">
+                <div class="result-value">${((result.prefill?.ttft_sec || 0) * 1000).toFixed(0)}ms</div>
+                <div class="result-label">TTFT (Time To First Token)</div>
+            </div>
+            <div class="result-card">
+                <div class="result-value">${((result.decode?.tpot_sec || 0) * 1000).toFixed(1)}ms</div>
+                <div class="result-label">TPOT (Time Per Output Token)</div>
+            </div>
+            <div class="result-card">
+                <div class="result-value">${(result.end_to_end?.overall_tps || 0).toFixed(0)}</div>
+                <div class="result-label">Overall TPS</div>
+            </div>
+        </div>
+        <div class="result-grid" style="margin-top: 1rem;">
+            <div class="result-card">
+                <div class="result-value">${(result.end_to_end?.total_time_sec || 0).toFixed(2)}s</div>
+                <div class="result-label">Total Time</div>
+            </div>
+            <div class="result-card">
+                <div class="result-value">${(result.memory?.memory_per_device_gb || 0).toFixed(1)}GB</div>
+                <div class="result-label">Memory/device</div>
+            </div>
+            <div class="result-card">
+                <div class="result-value">${(result.memory?.kv_cache_gb || 0).toFixed(1)}GB</div>
+                <div class="result-label">KV Cache</div>
+            </div>
+        </div>
+        ${renderInferenceBreakdown(result.breakdown)}
+        ${detailedHtml}
+    `;
+}
+
+function renderGenericSummary(result) {
+    const detailedHtml = renderDetailedBreakdown(result.detailed_breakdown);
+    
+    elements.resultsContent.innerHTML = `
+        <div class="result-grid">
+            <div class="result-card highlight">
+                <div class="result-value">${(result.total_time_sec || 0).toFixed(2)}s</div>
+                <div class="result-label">Total Time</div>
+            </div>
+            <div class="result-card">
+                <div class="result-value">${(result.peak_memory_gb || 0).toFixed(1)}GB</div>
+                <div class="result-label">Peak Memory</div>
+            </div>
+        </div>
+        ${detailedHtml}
+    `;
+}
 }
 
 function renderDetailedBreakdown(detailed) {

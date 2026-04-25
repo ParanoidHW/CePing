@@ -18,11 +18,26 @@ class ComputeType(str, Enum):
 
 
 class WorkloadType(str, Enum):
-    """Types of workloads."""
+    """Types of workloads - describes compute type, NOT scenario type."""
 
     TRAINING = "training"
     INFERENCE = "inference"
     MIXED = "mixed"
+
+
+class ScenarioType(str, Enum):
+    """Types of scenarios - for frontend rendering selection.
+
+    This is different from WorkloadType:
+    - WorkloadType: compute type (training/inference/mixed)
+    - ScenarioType: scenario type for display (training/inference/diffusion/rl_training/pd_disagg)
+    """
+
+    TRAINING = "training"
+    INFERENCE = "inference"
+    DIFFUSION = "diffusion"
+    RL_TRAINING = "rl_training"
+    PD_DISAGG = "pd_disagg"
 
 
 class ThroughputMetric(str, Enum):
@@ -228,7 +243,8 @@ class UnifiedResult:
 
     Attributes:
         workload_name: Workload configuration name
-        workload_type: Type of workload (training/inference/mixed)
+        workload_type: Type of workload (training/inference/mixed) - describes compute type
+        scenario_type: Type of scenario for frontend rendering (training/inference/diffusion/rl_training/pd_disagg)
         phases: List of phase results
         total_time_sec: Total execution time
         peak_memory_gb: Peak memory usage
@@ -244,6 +260,7 @@ class UnifiedResult:
 
     workload_name: str
     workload_type: WorkloadType
+    scenario_type: Optional[ScenarioType] = None
     phases: List[PhaseResult] = field(default_factory=list)
     total_time_sec: float = 0.0
     peak_memory_gb: float = 0.0
@@ -269,6 +286,7 @@ class UnifiedResult:
         result = {
             "workload_name": self.workload_name,
             "workload_type": self.workload_type.value,
+            "scenario_type": self.scenario_type.value if self.scenario_type else self._infer_scenario_type(),
             "phases": [p.to_dict() for p in self.phases],
             "total_time_sec": self.total_time_sec,
             "total_time_ms": self.total_time_sec * 1000,
@@ -321,6 +339,10 @@ class UnifiedResult:
         if self.workload_type != WorkloadType.INFERENCE:
             return None
 
+        inferred_scenario = self._infer_scenario_type()
+        if inferred_scenario in ["diffusion", "rl_training", "pd_disagg"]:
+            return None
+
         prefill = self.get_phase("prefill")
         if not prefill:
             return None
@@ -333,6 +355,10 @@ class UnifiedResult:
     def _build_decode_dict(self) -> Optional[Dict[str, float]]:
         """Build decode dictionary - global TPS, global per-token time."""
         if self.workload_type != WorkloadType.INFERENCE:
+            return None
+
+        inferred_scenario = self._infer_scenario_type()
+        if inferred_scenario in ["diffusion", "rl_training", "pd_disagg"]:
             return None
 
         decode = self.get_phase("decode")
@@ -354,6 +380,35 @@ class UnifiedResult:
             "overall_tps": self.qps or self.throughput.get("tokens_per_sec", 0),
             "total_time_sec": self.total_time_sec,
         }
+
+    def _infer_scenario_type(self) -> str:
+        """Infer scenario type from workload_name for frontend rendering.
+
+        Mapping rules:
+        - "training" -> "training"
+        - "autoregressive-inference" -> "inference"
+        - "diffusion-pipeline" -> "diffusion"
+        - "denoise-*" -> "diffusion"
+        - "rl-*" -> "rl_training"
+        - "pd-*" -> "pd_disagg"
+        - default -> inference or training based on workload_type
+        """
+        name = self.workload_name.lower()
+
+        if name == "training" or name.endswith("-training"):
+            return ScenarioType.TRAINING.value
+        elif name == "autoregressive-inference" or name == "inference":
+            return ScenarioType.INFERENCE.value
+        elif name.startswith("diffusion") or name.startswith("denoise"):
+            return ScenarioType.DIFFUSION.value
+        elif name.startswith("rl-") or "rl_" in name:
+            return ScenarioType.RL_TRAINING.value
+        elif name.startswith("pd-") or "pd_" in name:
+            return ScenarioType.PD_DISAGG.value
+        elif self.workload_type == WorkloadType.TRAINING:
+            return ScenarioType.TRAINING.value
+        else:
+            return ScenarioType.INFERENCE.value
 
     def get_phase(self, name: str) -> Optional[PhaseResult]:
         """Get a specific phase result by name."""

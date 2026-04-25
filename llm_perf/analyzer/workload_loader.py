@@ -13,6 +13,7 @@ from .base import (
     Phase,
     WorkloadConfig,
     WorkloadType,
+    ScenarioType,
     ComputeType,
     ThroughputMetric,
     ComputePattern,
@@ -40,6 +41,51 @@ BACKWARD_COMPAT_MAP: Dict[str, str] = {
     "vae-encode": "conv-encoder",
     "vae-decode": "conv-decoder",
 }
+
+
+SCENARIO_TYPE_MAP: Dict[str, ScenarioType] = {
+    "training": ScenarioType.TRAINING,
+    "autoregressive-inference": ScenarioType.INFERENCE,
+    "inference": ScenarioType.INFERENCE,
+    "diffusion-pipeline": ScenarioType.DIFFUSION,
+    "denoise-inference": ScenarioType.DIFFUSION,
+    "denoise-training": ScenarioType.DIFFUSION,
+    "rl-ppo": ScenarioType.RL_TRAINING,
+    "rl-grpo": ScenarioType.RL_TRAINING,
+    "speculative-decoding": ScenarioType.INFERENCE,
+    "conv-encoder": ScenarioType.DIFFUSION,
+    "conv-decoder": ScenarioType.DIFFUSION,
+    "resnet": ScenarioType.INFERENCE,
+}
+
+
+def infer_scenario_type(workload_name: str, workload_type: WorkloadType) -> ScenarioType:
+    """Infer scenario type from workload name for frontend rendering.
+
+    Args:
+        workload_name: Workload configuration name
+        workload_type: Workload compute type
+
+    Returns:
+        ScenarioType for frontend rendering
+    """
+    name_lower = workload_name.lower()
+
+    if name_lower in SCENARIO_TYPE_MAP:
+        return SCENARIO_TYPE_MAP[name_lower]
+
+    if name_lower == "training" or name_lower.endswith("-training"):
+        return ScenarioType.TRAINING
+    elif name_lower.startswith("diffusion") or name_lower.startswith("denoise"):
+        return ScenarioType.DIFFUSION
+    elif name_lower.startswith("rl-") or "rl_" in name_lower:
+        return ScenarioType.RL_TRAINING
+    elif name_lower.startswith("pd-") or "pd_" in name_lower:
+        return ScenarioType.PD_DISAGG
+    elif workload_type == WorkloadType.TRAINING:
+        return ScenarioType.TRAINING
+    else:
+        return ScenarioType.INFERENCE
 
 
 def load_workload_from_yaml(path: Union[str, Path]) -> WorkloadConfig:

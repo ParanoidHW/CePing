@@ -70,6 +70,15 @@ TOPOLOGY_TYPES = {
 }
 
 
+SCENARIO_TO_WORKLOAD_MAP = {
+    "training": "training",
+    "inference": "autoregressive-inference",
+    "diffusion": "diffusion-pipeline",
+    "rl_training": "rl-ppo",
+    "pd_disagg": "autoregressive-inference",
+}
+
+
 def create_topology(topology_config: dict) -> NetworkTopology:
     """Create network topology from configuration."""
     topology_type = topology_config["type"]
@@ -253,23 +262,16 @@ def evaluate():
         workload_data = data.get("workload")
         workload = None
         mode = "inference"
-        
+
         if workload_data:
             if isinstance(workload_data, str):
                 workload = workload_data
                 mode = "training" if workload.endswith("-training") or "training" in workload else "inference"
             elif isinstance(workload_data, dict):
                 scenario = workload_data.get("scenario", "training")
-                if scenario == "diffusion":
-                    workload = "denoise-inference"
-                    mode = "inference"
-                elif scenario in ("training", "rl_training"):
-                    workload = infer_workload(model_type, "training")
-                    mode = "training"
-                else:
-                    workload = infer_workload(model_type, "inference")
-                    mode = "inference"
-        
+                workload = SCENARIO_TO_WORKLOAD_MAP.get(scenario, "autoregressive-inference")
+                mode = "training" if scenario == "training" or scenario == "rl_training" else "inference"
+
         if not workload:
             mode = data.get("mode", "inference")
             workload = infer_workload(model_type, mode)
@@ -329,51 +331,65 @@ def evaluate():
             params["num_inference_steps"] = data["num_inference_steps"]
         
         if workload_data and isinstance(workload_data, dict):
-            scenario = workload_data.get("scenario", "training")
-            
+            workload_params = workload_data
+            scenario = workload_params.get("scenario", "training")
+
+            SCENARIO_PARAM_MAP = {
+                "pd_disagg": {
+                    "input_tokens": ("input_tokens", 1000),
+                    "output_tokens": ("output_tokens", 100),
+                    "prefill_devices": ("prefill_devices", 32),
+                    "decode_devices": ("decode_devices", 32),
+                },
+                "rl_training": {
+                    "seq_len": ("seq_len", 4096),
+                    "num_rollouts": ("num_rollouts", 100),
+                    "ppo_epochs": ("ppo_epochs", 4),
+                },
+                "diffusion": {
+                    "generation_mode": ("generation_mode", "T2I"),
+                    "diffusion_steps": ("diffusion_steps", 50),
+                    "prompt_tokens": ("prompt_tokens", None),
+                    "input_image_size": ("input_image_size", None),
+                    "input_video_frames": ("input_video_frames", None),
+                    "output_image_size": ("output_image_size", None),
+                    "output_video_frames": ("output_video_frames", None),
+                    "height": ("output_image_size", None),
+                    "width": ("output_image_size", None),
+                    "num_frames": ("output_video_frames", None),
+                    "num_steps": ("diffusion_steps", 50),
+                },
+                "inference": {
+                    "prompt_len": ("input_tokens", 512),
+                    "generation_len": ("output_tokens", 100),
+                    "generated_tokens": ("output_tokens", 100),
+                },
+                "training": {
+                    "batch_size": ("batch_size", None),
+                    "seq_len": ("seq_len", None),
+                },
+            }
+
+            param_mapping = SCENARIO_PARAM_MAP.get(scenario, {})
+            for param_key, (source_key, default) in param_mapping.items():
+                value = workload_params.get(source_key, default)
+                if value is not None:
+                    params[param_key] = value
+
             if scenario == "pd_disagg":
-                params["input_tokens"] = workload_data.get("input_tokens", 1000)
-                params["output_tokens"] = workload_data.get("output_tokens", 100)
-                params["prefill_devices"] = workload_data.get("prefill_devices", 32)
-                params["decode_devices"] = workload_data.get("decode_devices", 32)
                 if data.get("strategy_prefill"):
                     params["strategy_prefill"] = data["strategy_prefill"]
                 if data.get("strategy_decode"):
                     params["strategy_decode"] = data["strategy_decode"]
-            
-            elif scenario == "rl_training":
-                params["seq_len"] = workload_data.get("seq_len", 4096)
-                params["num_rollouts"] = workload_data.get("num_rollouts", 100)
-                params["ppo_epochs"] = workload_data.get("ppo_epochs", 4)
+
+            if scenario == "rl_training":
                 if data.get("strategy_train"):
                     params["strategy_train"] = data["strategy_train"]
                 if data.get("strategy_infer"):
                     params["strategy_infer"] = data["strategy_infer"]
-            
-            elif scenario == "diffusion":
-                params["generation_mode"] = workload_data.get("generation_mode", "T2I")
-                params["diffusion_steps"] = workload_data.get("diffusion_steps", 50)
-                
-                if workload_data.get("prompt_tokens"):
-                    params["prompt_tokens"] = workload_data.get("prompt_tokens")
-                if workload_data.get("input_image_size"):
-                    params["input_image_size"] = workload_data.get("input_image_size")
-                if workload_data.get("input_video_frames"):
-                    params["input_video_frames"] = workload_data.get("input_video_frames")
-                if workload_data.get("output_image_size"):
-                    params["output_image_size"] = workload_data.get("output_image_size")
-                    params["height"] = workload_data.get("output_image_size")
-                    params["width"] = workload_data.get("output_image_size")
-                if workload_data.get("output_video_frames"):
-                    params["output_video_frames"] = workload_data.get("output_video_frames")
-                    params["num_frames"] = workload_data.get("output_video_frames")
-            
-            elif scenario == "inference":
-                params["prompt_len"] = workload_data.get("input_tokens", 512)
-                params["generation_len"] = workload_data.get("output_tokens", 100)
-                params["generated_tokens"] = workload_data.get("output_tokens", 100)
-                if "batch_size" in workload_data:
-                    params["batch_size"] = workload_data["batch_size"]
+
+            if "batch_size" in workload_params:
+                params["batch_size"] = workload_params["batch_size"]
 
         result = analyzer.analyze(workload, **params)
 

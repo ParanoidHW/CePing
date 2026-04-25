@@ -14,6 +14,7 @@ from .base import (
     ComputeType,
     ComputePattern,
     WorkloadType,
+    ScenarioType,
     ThroughputMetric,
     Phase,
     PhaseResult,
@@ -32,6 +33,7 @@ from .workload_loader import (
     clear_cache,
     is_builtin_workload,
     BACKWARD_COMPAT_MAP,
+    infer_scenario_type,
 )
 from .compat import infer_workload, WORKLOAD_PRESETS
 from .breakdown import KernelBreakdown, LayerBreakdown
@@ -42,6 +44,7 @@ __all__ = [
     "ComputeType",
     "ComputePattern",
     "WorkloadType",
+    "ScenarioType",
     "ThroughputMetric",
     "Phase",
     "PhaseResult",
@@ -63,4 +66,5 @@ __all__ = [
     "WORKLOAD_PRESETS",
     "KernelBreakdown",
     "LayerBreakdown",
+    "infer_scenario_type",
 ]
