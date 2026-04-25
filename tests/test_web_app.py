@@ -1561,3 +1561,88 @@ class TestWebFrontendDisplay:
         if transformer_block:
             compute_time = transformer_block.get("compute", {}).get("time_sec", 0)
             assert compute_time > 0, "transformer_block计算时间应 > 0"
+
+
+class TestFrontendWorkloadConfig:
+    """Test frontend workload configuration UI elements."""
+
+    def test_hardware_topology_select_exists(self):
+        """Test hardware topology select element exists in frontend."""
+        client = app.test_client()
+
+        response = client.get("/")
+        assert response.status_code == 200
+
+        html_content = response.data.decode("utf-8")
+
+        assert 'id="topology-type"' in html_content, "硬件形态下拉框不存在"
+        assert "2-Tier Simple" in html_content, "硬件形态选项不包含 2-Tier Simple"
+        assert "3-Tier Clos" in html_content, "硬件形态选项不包含 3-Tier Clos"
+        assert "Fat-Tree" in html_content, "硬件形态选项不包含 Fat-Tree"
+        assert "CloudMatrix Supernode" in html_content, "硬件形态选项不包含 CloudMatrix Supernode"
+
+    def test_workload_config_adjusts_by_type(self):
+        """Test workload configuration parameters adjust by workload type."""
+        client = app.test_client()
+
+        response = client.get("/")
+        assert response.status_code == 200
+
+        html_content = response.data.decode("utf-8")
+
+        assert 'id="workload-scenario"' in html_content, "Workload 场景选择器不存在"
+        assert 'id="workload-params-training"' in html_content, "Training 参数区域不存在"
+        assert 'id="workload-params-inference"' in html_content, "Inference 参数区域不存在"
+        assert 'id="workload-params-pd_disagg"' in html_content, "PD-Disagg 参数区域不存在"
+        assert 'id="workload-params-rl_training"' in html_content, "RL-Training 参数区域不存在"
+        assert 'id="workload-params-diffusion"' in html_content, "Diffusion 参数区域不存在"
+
+    def test_training_workload_has_batch_seq_params(self):
+        """Test training workload has batch_size and seq_len parameters."""
+        client = app.test_client()
+
+        response = client.get("/")
+        assert response.status_code == 200
+
+        html_content = response.data.decode("utf-8")
+
+        assert 'id="train-batch-size"' in html_content, "Training 缺少 batch_size 参数"
+        assert 'id="train-seq-len"' in html_content, "Training 缺少 seq_len 参数"
+        assert 'id="micro-batch-size"' in html_content, "Training 缺少 micro_batch_size 参数"
+
+    def test_inference_workload_has_prompt_generation_params(self):
+        """Test inference workload has prompt_len and generation_len parameters."""
+        client = app.test_client()
+
+        response = client.get("/")
+        assert response.status_code == 200
+
+        html_content = response.data.decode("utf-8")
+
+        assert 'id="infer-batch-size"' in html_content, "Inference 缺少 batch_size 参数"
+        assert 'id="infer-input-tokens"' in html_content, "Inference 缺少 input_tokens 参数"
+        assert 'id="infer-output-tokens"' in html_content, "Inference 缺少 output_tokens 参数"
+
+    def test_diffusion_workload_has_image_params(self):
+        """Test diffusion workload has image parameters."""
+        client = app.test_client()
+
+        response = client.get("/")
+        assert response.status_code == 200
+
+        html_content = response.data.decode("utf-8")
+
+        assert 'id="diffusion-batch-size"' in html_content, "Diffusion 缺少 batch_size 参数"
+        assert 'id="diffusion-steps"' in html_content, "Diffusion 缺少 diffusion_steps 参数"
+
+    def test_javascript_file_syntax(self):
+        """Test JavaScript file has valid syntax."""
+        import subprocess
+
+        result = subprocess.run(
+            ["node", "-c", "web/static/js/app.js"],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, f"JavaScript 语法错误: {result.stderr}"
