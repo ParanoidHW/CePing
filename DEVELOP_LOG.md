@@ -1,5 +1,76 @@
 # 开发日志
 
+## 2026-04-25: 全面重构前后端场景显示解耦架构
+
+### 任务背景
+用户反馈：每次前后端支持新东西都有显示问题，解耦做得差劲。
+
+### 根因分析
+**系统性问题**：
+1. 前端硬编码场景判断（`diffusion-video`、`inference`）
+2. 后端硬编码模型类型映射（`infer_workload`）
+3. 新增场景需改多处代码
+4. 无统一的场景类型定义和指标映射
+
+**混淆的概念**：
+- `workload_type`（计算类型）：training/inference/mixed
+- `scenario`（前端显示类型）：training/inference/diffusion/rl_training/pd_disagg
+- 两者用途不同但被混用
+
+### 重构方案
+
+#### 1. 统一 ScenarioType 定义
+新增 `ScenarioType` 枚举，用于前端渲染选择：
+```python
+class ScenarioType(str, Enum):
+    TRAINING = "training"
+    INFERENCE = "inference"
+    DIFFUSION = "diffusion"
+    RL_TRAINING = "rl_training"
+    PD_DISAGG = "pd_disagg"
+```
+
+#### 2. 后端重构
+- 新增 `infer_scenario_type()` 函数，从 workload_name 推断显示类型
+- `UnifiedResult.to_dict()` 返回 `scenario_type` 字段
+- `web/app.py` 使用 `SCENARIO_TO_WORKLOAD_MAP` 替代硬编码判断
+- `_build_decode_dict()` 根据 scenario_type 判断是否返回 LLM decode 指标
+
+#### 3. 前端重构
+- 使用 `RENDER_TEMPLATES` 映射替代硬编码判断：
+```javascript
+const RENDER_TEMPLATES = {
+    'diffusion': renderDiffusionSummary,
+    'training': renderTrainingSummary,
+    'rl_training': renderTrainingSummary,
+    'inference': renderInferenceSummary,
+    'pd_disagg': renderInferenceSummary,
+};
+```
+
+### 关键改动
+- `llm_perf/analyzer/base.py`: 新增 ScenarioType 枚举，修改 UnifiedResult
+- `llm_perf/analyzer/workload_loader.py`: 新增 SCENARIO_TYPE_MAP 和 infer_scenario_type()
+- `web/app.py`: 新增 SCENARIO_TO_WORKLOAD_MAP，移除硬编码判断
+- `web/static/js/app.js`: 新增 RENDER_TEMPLATES，重构 displayResults()
+
+### 测试覆盖
+新增 `tests/test_scenario_display_decoupling.py`（18 个测试用例）：
+- TestScenarioTypeInference: 8 个测试
+- TestUnifiedResultScenarioType: 4 个测试
+- TestFrontendRenderingDecoupling: 2 个测试
+- TestScenarioTypeEnumValues: 1 个测试
+- TestBackendAPIScenarioType: 3 个测试
+
+### 验证结果
+- 全量测试：155 passed
+- Ruff 检查：All checks passed
+
+### Commit
+`80e4e92` - refactor(analyzer): add ScenarioType for frontend display decoupling
+
+---
+
 ## 2026-04-25: 修复 HunyuanImage 3.0 preset 到 model_class 的映射问题
 
 ### 任务背景
