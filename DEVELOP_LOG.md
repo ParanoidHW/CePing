@@ -1,5 +1,78 @@
 # 开发日志
 
+## 2026-04-25: 修复 HunyuanImage 3.0 preset 到 model_class 的映射问题
+
+### 任务背景
+用户选择 `hunyuan-image-3` + `diffusion` workload 时报错：
+```
+Unknown model: 'hunyuan-image-3'
+Available presets: ['hunyuan-image-3', ...]
+Available models: ['hunyuan_image_3_text', 'hunyuan_image_3_diffusion', ...]
+```
+
+### 根因分析
+1. **预设配置**：
+   - preset 名称：`hunyuan-image-3`
+   - architecture：`hunyuan_image_3`（不存在）
+   - 实际注册的模型类：`hunyuan_image_3_text` 和 `hunyuan_image_3_diffusion`
+
+2. **映射逻辑缺失**：
+   - `_load_presets_from_yaml` 没有加载 `model_class_map` 字段
+   - `create_model_from_config` 不支持根据 workload_type 选择模型类
+   - web 服务没有传递 workload 参数给模型创建函数
+
+### 修复方案（方案 A+B 组合）
+
+#### 1. hunyuan-image-3.yaml
+添加 `model_class_map` 字段：
+```yaml
+model_class_map:
+  inference: hunyuan_image_3_text
+  diffusion: hunyuan_image_3_diffusion
+```
+
+#### 2. registry.py
+- `_load_presets_from_yaml`：添加对 `model_class_map` 字段的加载
+- `create_model_from_config`：添加 `workload_type` 参数，根据 preset 的 model_class_map 选择模型类
+
+#### 3. web/app.py
+- `create_model_from_registry`：添加 `workload_type` 参数
+- 所有调用点：从请求的 workload 数据中提取 workload_type 并传递
+
+### 核心逻辑
+```python
+# registry.py: create_model_from_config
+preset_config = presets[preset_name]
+model_class_map = preset_config.get("model_class_map", {})
+if workload_type and workload_type in model_class_map:
+    model_name = model_class_map[workload_type]
+    # 使用 workload 指定的模型类
+    return registry.create(model_name, **filtered_config)
+# 否则使用 architecture 查找（向后兼容）
+```
+
+### 测试用例
+新增 `TestPresetWorkloadMapping` 测试类（6 个测试）：
+- `test_hunyuan_image_3_inference_mapping`：验证 inference → text 模型
+- `test_hunyuan_image_3_diffusion_mapping`：验证 diffusion → diffusion 模型
+- `test_hunyuan_image_3_training_mapping`：验证 training（无映射）fallback
+- `test_llama_inference_mapping`：验证无 model_class_map 的 preset 仍能正常工作
+- `test_model_class_map_in_preset`：验证配置加载
+- `test_no_model_class_map_uses_architecture`：验证向后兼容
+
+### 验证结果
+- 31 个 hunyuan 测试全部通过
+- 20 个 workload-model decoupling 测试全部通过
+- 4 个关键存量测试全部通过
+- 代码质量检查通过（ruff）
+- 实际验证：`hunyuan-image-3` + `diffusion` 成功创建 `HunyuanImage3DiffusionModel`
+
+### Commit
+- Hash: `e1c64ab`
+- Message: `fix(modeling): add preset to model_class mapping for HunyuanImage 3.0`
+
+---
+
 ## 2026-04-24: Kernel backward FLOPs/内存访问显式分解
 
 ### 任务背景
