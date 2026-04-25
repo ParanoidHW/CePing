@@ -212,6 +212,7 @@ class ShardedWanDiTBlock(ShardedModule):
         num_heads: int = 24,
         cross_attn_heads: int = 24,
         intermediate_size: int = 13824,
+        text_dim: int = 4096,
         dtype: str = "fp16",
     ):
         super().__init__()
