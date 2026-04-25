@@ -80,6 +80,7 @@ async function loadModelPresetsForWorkload(workloadType) {
         const modelRes = await fetch(`/api/models?workload_type=${workloadType}`);
         state.modelPresets = await modelRes.json();
         populateModelPresets();
+        loadModelPreset();
     } catch (error) {
         console.error('Failed to load model presets for workload:', error);
     }
