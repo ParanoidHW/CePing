@@ -17,7 +17,13 @@ from llm_perf.modeling.vision import ShardedResNet
 from llm_perf.modeling.encoder import ShardedVAE
 from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
 from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel, Qwen3_5Model
-from llm_perf.modeling.hunyuan_image import HunyuanImage3TextModel, HunyuanImage3DiffusionModel
+from llm_perf.modeling.hunyuan_image import (
+    HunyuanImage3TextModel,
+    HunyuanImage3DiffusionModel,
+    HunyuanT5Encoder,
+    HunyuanVAEEncoder,
+    HunyuanVAEDecoder,
+)
 
 if TYPE_CHECKING:
     pass
@@ -343,6 +349,58 @@ def register_all_models() -> None:
             "image_height": 64,
             "image_width": 64,
             "latent_channels": 16,
+            "dtype": "fp16",
+        },
+    )
+
+    registry.register(
+        name="hunyuan-t5-encoder",
+        model_class=HunyuanT5Encoder,
+        description="HunyuanImage T5 Text Encoder (t5-v1_1-xxl)",
+        architecture="t5_encoder",
+        sparse_type="dense",
+        attention_features=["standard"],
+        default_config={
+            "vocab_size": 32128,
+            "hidden_size": 4096,
+            "num_layers": 24,
+            "num_heads": 64,
+            "intermediate_size": 10240,
+            "max_text_len": 512,
+            "dtype": "fp16",
+        },
+    )
+
+    registry.register(
+        name="hunyuan-vae-encoder",
+        model_class=HunyuanVAEEncoder,
+        description="HunyuanImage VAE Encoder for image generation",
+        architecture="vae_encoder",
+        sparse_type="dense",
+        attention_features=[],
+        default_config={
+            "in_channels": 3,
+            "latent_channels": 16,
+            "block_out_channels": (128, 256, 512, 512),
+            "use_3d": True,
+            "use_attention": False,
+            "dtype": "fp16",
+        },
+    )
+
+    registry.register(
+        name="hunyuan-vae-decoder",
+        model_class=HunyuanVAEDecoder,
+        description="HunyuanImage VAE Decoder for image generation",
+        architecture="vae_decoder",
+        sparse_type="dense",
+        attention_features=[],
+        default_config={
+            "out_channels": 3,
+            "latent_channels": 16,
+            "block_out_channels": (128, 256, 512, 512),
+            "use_3d": True,
+            "use_attention": False,
             "dtype": "fp16",
         },
     )
