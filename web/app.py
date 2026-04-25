@@ -213,7 +213,7 @@ def evaluate():
         )
 
         model_config = data.get("model", {})
-        model_type = model_config.get("type", "llama")
+        preset_name = model_config.get("preset")
         
         workload_data = data.get("workload")
         workload_type = None
@@ -224,7 +224,12 @@ def evaluate():
                 scenario = workload_data.get("scenario", "training")
                 workload_type = scenario
         
-        model = create_model_from_registry(model_type, model_config, workload_type=workload_type)
+        if preset_name:
+            model = create_model_from_registry(preset_name, model_config, workload_type=workload_type)
+            model_type = preset_name
+        else:
+            model_type = model_config.get("type", "llama")
+            model = create_model_from_registry(model_type, model_config, workload_type=workload_type)
 
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
