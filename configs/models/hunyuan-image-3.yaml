@@ -9,6 +9,10 @@ supported_workloads:
   - inference
   - diffusion
 
+model_class_map:
+  inference: hunyuan_image_3_text
+  diffusion: hunyuan_image_3_diffusion
+
 config:
   vocab_size: 133120
   hidden_size: 4096

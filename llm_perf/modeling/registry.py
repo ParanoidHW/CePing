@@ -450,6 +450,9 @@ def _load_presets_from_yaml() -> dict:
         if "param_schema" in preset_data:
             preset["param_schema"] = preset_data["param_schema"]
 
+        if "model_class_map" in preset_data:
+            preset["model_class_map"] = preset_data["model_class_map"]
+
         presets[preset_name] = preset
 
     return presets if presets else _get_hardcoded_presets()
@@ -668,7 +671,7 @@ def get_presets_by_workload_grouped(workload_type: str) -> dict:
     return result
 
 
-def create_model_from_config(config: dict) -> Any:
+def create_model_from_config(config: dict, workload_type: Optional[str] = None) -> Any:
     """Create model from configuration.
 
     Supports:
@@ -678,6 +681,8 @@ def create_model_from_config(config: dict) -> Any:
 
     Args:
         config: Model configuration dict
+        workload_type: Workload type (training, inference, diffusion, etc.)
+                       Used to select model class from preset's model_class_map
 
     Returns:
         Model instance
@@ -685,7 +690,7 @@ def create_model_from_config(config: dict) -> Any:
     registry = ModelingRegistry()
     presets = get_model_presets()
 
-    meta_fields = {"type", "preset", "description", "architecture", "sparse_type", "attention_features"}
+    meta_fields = {"type", "preset", "description", "architecture", "sparse_type", "attention_features", "model_class_map"}
 
     preset_name = config.get("preset")
     if preset_name and preset_name in presets:
@@ -693,6 +698,17 @@ def create_model_from_config(config: dict) -> Any:
         merged_config = dict(preset_config)
         merged_config.update(config)
         architecture = merged_config.get("architecture", preset_name)
+        
+        model_class_map = merged_config.get("model_class_map", {})
+        if workload_type and workload_type in model_class_map:
+            model_name = model_class_map[workload_type]
+            if registry.is_registered(model_name):
+                for field in meta_fields:
+                    merged_config.pop(field, None)
+                model_class = registry.get_all_infos()[model_name].model_class
+                filtered_config = _filter_params_for_model(model_class, merged_config)
+                return registry.create(model_name, **filtered_config)
+        
         for field in meta_fields:
             merged_config.pop(field, None)
         model_name = _find_model_by_architecture(registry, architecture)

@@ -489,3 +489,78 @@ class TestHunyuanFromConfig:
         """Test creating HunyuanImage Diffusion from type field."""
         model = create_model_from_config({"type": "hunyuan_image_3_diffusion"})
         assert isinstance(model, HunyuanImage3DiffusionModel)
+
+
+class TestPresetWorkloadMapping:
+    """Test preset to model class mapping based on workload type."""
+
+    def test_hunyuan_image_3_inference_mapping(self):
+        """Test hunyuan-image-3 + inference → hunyuan_image_3_text."""
+        presets = get_model_presets()
+        if "hunyuan-image-3" not in presets:
+            pytest.skip("hunyuan-image-3 preset not available")
+
+        model = create_model_from_config(
+            {"preset": "hunyuan-image-3"},
+            workload_type="inference"
+        )
+        assert isinstance(model, HunyuanImage3TextModel)
+        assert model.hidden_size == 4096
+        assert model.num_layers == 32
+
+    def test_hunyuan_image_3_diffusion_mapping(self):
+        """Test hunyuan-image-3 + diffusion → hunyuan_image_3_diffusion."""
+        presets = get_model_presets()
+        if "hunyuan-image-3" not in presets:
+            pytest.skip("hunyuan-image-3 preset not available")
+
+        model = create_model_from_config(
+            {"preset": "hunyuan-image-3"},
+            workload_type="diffusion"
+        )
+        assert isinstance(model, HunyuanImage3DiffusionModel)
+        assert model.hidden_size == 4096
+        assert model.num_layers == 32
+
+    def test_hunyuan_image_3_training_mapping(self):
+        """Test hunyuan-image-3 + training → inference model (no training map)."""
+        presets = get_model_presets()
+        if "hunyuan-image-3" not in presets:
+            pytest.skip("hunyuan-image-3 preset not available")
+
+        model = create_model_from_config(
+            {"preset": "hunyuan-image-3", "architecture": "hunyuan_image_3_text"},
+            workload_type="training"
+        )
+        assert isinstance(model, HunyuanImage3TextModel)
+        assert model.hidden_size == 4096
+        assert model.num_layers == 32
+
+    def test_llama_inference_mapping(self):
+        """Test llama-7b + inference → llama (no model_class_map)."""
+        model = create_model_from_config(
+            {"preset": "llama-7b"},
+            workload_type="inference"
+        )
+        from llm_perf.modeling.models import LlamaModel
+        assert isinstance(model, LlamaModel)
+
+    def test_model_class_map_in_preset(self):
+        """Test that model_class_map is present in hunyuan-image-3 preset."""
+        presets = get_model_presets()
+        if "hunyuan-image-3" not in presets:
+            pytest.skip("hunyuan-image-3 preset not available")
+
+        preset = presets["hunyuan-image-3"]
+        assert "model_class_map" in preset
+        assert preset["model_class_map"]["inference"] == "hunyuan_image_3_text"
+        assert preset["model_class_map"]["diffusion"] == "hunyuan_image_3_diffusion"
+
+    def test_no_model_class_map_uses_architecture(self):
+        """Test that presets without model_class_map use architecture."""
+        model = create_model_from_config(
+            {"preset": "deepseek-v3"},
+            workload_type="training"
+        )
+        from llm_perf.modeling.models import DeepSeekModel
+        assert isinstance(model, DeepSeekModel)

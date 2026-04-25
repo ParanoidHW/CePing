@@ -10,6 +10,7 @@ import os
 import ssl
 import sys
 from pathlib import Path
+from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
@@ -98,11 +99,17 @@ def create_topology(topology_config: dict) -> NetworkTopology:
         )
 
 
-def create_model_from_registry(model_type: str, config: dict):
-    """Create a model instance using the registry."""
+def create_model_from_registry(model_type: str, config: dict, workload_type: Optional[str] = None):
+    """Create a model instance using the registry.
+    
+    Args:
+        model_type: Model type string
+        config: Model configuration dict
+        workload_type: Workload type (training, inference, diffusion, etc.)
+    """
     full_config = dict(config)
     full_config.setdefault("type", model_type)
-    return create_model_from_config(full_config)
+    return create_model_from_config(full_config, workload_type=workload_type)
 
 
 @app.route("/")
@@ -207,7 +214,17 @@ def evaluate():
 
         model_config = data.get("model", {})
         model_type = model_config.get("type", "llama")
-        model = create_model_from_registry(model_type, model_config)
+        
+        workload_data = data.get("workload")
+        workload_type = None
+        if workload_data:
+            if isinstance(workload_data, str):
+                workload_type = "training" if "training" in workload_data else "inference"
+            elif isinstance(workload_data, dict):
+                scenario = workload_data.get("scenario", "training")
+                workload_type = scenario
+        
+        model = create_model_from_registry(model_type, model_config, workload_type=workload_type)
 
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
@@ -392,7 +409,7 @@ def evaluate_training():
 
         model_config = data["model"]
         model_type = model_config.get("type", "llama")
-        model = create_model_from_registry(model_type, model_config)
+        model = create_model_from_registry(model_type, model_config, workload_type="training")
 
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
@@ -495,7 +512,7 @@ def evaluate_inference():
 
         model_config = data["model"]
         model_type = model_config.get("type", "llama")
-        model = create_model_from_registry(model_type, model_config)
+        model = create_model_from_registry(model_type, model_config, workload_type="inference")
 
         device = Device.from_preset(data["device"])
         topology = create_topology(data["topology"])
@@ -586,7 +603,7 @@ def evaluate_pipeline(pipeline_name: str):
         elif pipeline_name == "inference":
             model_config = data.get("model", {})
             model_type = model_config.get("type", "llama")
-            model = create_model_from_registry(model_type, model_config)
+            model = create_model_from_registry(model_type, model_config, workload_type="inference")
 
             analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
             result = analyzer.analyze(
