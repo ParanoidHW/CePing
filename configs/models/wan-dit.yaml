@@ -4,6 +4,8 @@ architecture: wan_dit
 sparse_type: dense
 attention_features:
   - standard
+supported_workloads:
+  - diffusion
 
 config:
   hidden_size: 5120

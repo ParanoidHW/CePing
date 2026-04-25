@@ -112,6 +112,8 @@ from .registry import (
     register_all_models,
     get_model_presets,
     get_presets_by_sparse_type,
+    get_presets_by_workload,
+    get_presets_by_workload_grouped,
     create_model_from_config,
 )
 
@@ -196,6 +198,8 @@ __all__ = [
     "register_all_models",
     "get_model_presets",
     "get_presets_by_sparse_type",
+    "get_presets_by_workload",
+    "get_presets_by_workload_grouped",
     "create_model_from_config",
     "SimpleModelConfig",
 ]

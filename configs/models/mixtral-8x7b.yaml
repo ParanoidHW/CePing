@@ -4,6 +4,9 @@ architecture: mixtral
 sparse_type: standard_moe
 attention_features:
   - gqa
+supported_workloads:
+  - training
+  - inference
 
 config:
   vocab_size: 32000

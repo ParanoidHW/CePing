@@ -5,6 +5,9 @@ sparse_type: qwen3_5_moe
 attention_features:
   - linear_attention
   - gqa
+supported_workloads:
+  - training
+  - inference
 
 config:
   vocab_size: 248320

@@ -3,6 +3,8 @@ preset_type: pipeline
 architecture: wan_pipeline
 sparse_type: dense
 attention_features: []
+supported_workloads:
+  - diffusion
 
 config:
   text_encoder: wan-text-encoder

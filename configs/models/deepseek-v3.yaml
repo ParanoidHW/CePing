@@ -4,6 +4,9 @@ architecture: deepseek
 sparse_type: deepseek_moe
 attention_features:
   - mla
+supported_workloads:
+  - training
+  - inference
 
 config:
   vocab_size: 129280

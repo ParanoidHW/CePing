@@ -3,6 +3,8 @@ preset_type: component
 architecture: vae
 sparse_type: dense
 attention_features: []
+supported_workloads:
+  - diffusion
 
 config:
   use_3d: true

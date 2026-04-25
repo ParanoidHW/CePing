@@ -64,15 +64,24 @@ async function loadData() {
         state.devices = deviceData.devices;
         state.devicePresets = deviceData.device_info;
         
-        const modelRes = await fetch('/api/model/presets');
-        state.modelPresets = await modelRes.json();
-        populateModelPresets();
+        const initialWorkload = elements.workloadScenario ? elements.workloadScenario.value : 'training';
+        await loadModelPresetsForWorkload(initialWorkload);
         
         const topoRes = await fetch('/api/topology/presets');
         state.topologyPresets = await topoRes.json();
     } catch (error) {
         console.error('Failed to load data:', error);
         showError('Failed to load configuration data. Please refresh.');
+    }
+}
+
+async function loadModelPresetsForWorkload(workloadType) {
+    try {
+        const modelRes = await fetch(`/api/models?workload_type=${workloadType}`);
+        state.modelPresets = await modelRes.json();
+        populateModelPresets();
+    } catch (error) {
+        console.error('Failed to load model presets for workload:', error);
     }
 }
 
@@ -102,8 +111,10 @@ function setupEventListeners() {
     elements.totalDevices.addEventListener('input', calculateDP);
     
     if (elements.workloadScenario) {
-        elements.workloadScenario.addEventListener('change', (e) => {
-            switchWorkloadScenario(e.target.value);
+        elements.workloadScenario.addEventListener('change', async (e) => {
+            const workloadType = e.target.value;
+            await loadModelPresetsForWorkload(workloadType);
+            switchWorkloadScenario(workloadType);
         });
     }
     

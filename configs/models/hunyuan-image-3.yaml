@@ -1,10 +1,13 @@
-description: HunyuanImage 3.0 Text Model
+description: HunyuanImage 3.0 (Text + Diffusion)
 preset_type: model
-architecture: hunyuan_image_3_text
+architecture: hunyuan_image_3
 sparse_type: hunyuan_moe
 attention_features:
   - qk_norm
   - gqa
+supported_workloads:
+  - inference
+  - diffusion
 
 config:
   vocab_size: 133120
@@ -19,18 +22,12 @@ config:
   num_shared_experts: 1
   use_qk_norm: true
   max_seq_len: 4096
+  image_height: 64
+  image_width: 64
+  latent_channels: 16
   dtype: fp16
 
 param_schema:
-  training:
-    - name: batch_size
-      label: Batch Size
-      type: number
-      default: 32
-    - name: seq_len
-      label: Sequence Length
-      type: number
-      default: 4096
   inference:
     - name: batch_size
       label: Batch Size
@@ -44,3 +41,20 @@ param_schema:
       label: Generation Length
       type: number
       default: 128
+  diffusion:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 1
+    - name: image_height
+      label: Image Height (latent)
+      type: number
+      default: 64
+    - name: image_width
+      label: Image Width (latent)
+      type: number
+      default: 64
+    - name: num_steps
+      label: Diffusion Steps
+      type: number
+      default: 50

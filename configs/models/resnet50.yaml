@@ -3,6 +3,9 @@ preset_type: component
 architecture: resnet
 sparse_type: dense
 attention_features: []
+supported_workloads:
+  - training
+  - inference
 
 config:
   variant: resnet50

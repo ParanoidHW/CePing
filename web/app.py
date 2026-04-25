@@ -27,7 +27,7 @@ from llm_perf.analyzer import UnifiedAnalyzer, get_workload, infer_workload, lis
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.topology import NetworkTopology
-from llm_perf.modeling import create_model_from_config, get_model_presets, get_presets_by_sparse_type
+from llm_perf.modeling import create_model_from_config, get_model_presets, get_presets_by_sparse_type, get_presets_by_workload, get_presets_by_workload_grouped
 from llm_perf.scenarios import ColocateAnalyzer, ModelAllocation
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.strategy.parallel_context import ParallelContext
@@ -124,6 +124,14 @@ def get_devices():
 
 @app.route("/api/models", methods=["GET"])
 def get_registered_models():
+    workload_type = request.args.get("workload_type", None)
+    
+    if workload_type:
+        return jsonify({
+            "presets": get_presets_by_workload(workload_type),
+            "by_sparse_type": get_presets_by_workload_grouped(workload_type),
+        })
+    
     return jsonify(
         {
             "presets": get_model_presets(),

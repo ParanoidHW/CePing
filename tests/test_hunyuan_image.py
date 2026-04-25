@@ -458,33 +458,34 @@ class TestHunyuanMoEActiveParams:
 class TestHunyuanFromConfig:
     """Test creating HunyuanImage from config."""
 
-    def test_create_from_preset_text(self):
-        """Test creating HunyuanImage Text from preset."""
+    def test_create_from_preset_with_architecture_text(self):
+        """Test creating HunyuanImage Text from preset with architecture."""
         presets = get_model_presets()
-        if "hunyuan-image-3-text" not in presets:
-            pytest.skip("hunyuan-image-3-text preset not yet available")
+        if "hunyuan-image-3" not in presets:
+            pytest.skip("hunyuan-image-3 preset not available")
 
-        model = create_model_from_config({"preset": "hunyuan-image-3-text"})
+        model = create_model_from_config({"preset": "hunyuan-image-3", "architecture": "hunyuan_image_3_text"})
         assert isinstance(model, HunyuanImage3TextModel)
         assert model.hidden_size == 4096
         assert model.num_layers == 32
 
-    def test_create_from_preset_diffusion(self):
-        """Test creating HunyuanImage Diffusion from preset."""
+    def test_create_from_preset_with_architecture_diffusion(self):
+        """Test creating HunyuanImage Diffusion from preset with architecture."""
         presets = get_model_presets()
-        if "hunyuan-image-3-diffusion" not in presets:
-            pytest.skip("hunyuan-image-3-diffusion preset not yet available")
+        if "hunyuan-image-3" not in presets:
+            pytest.skip("hunyuan-image-3 preset not available")
 
-        model = create_model_from_config({"preset": "hunyuan-image-3-diffusion"})
+        model = create_model_from_config({"preset": "hunyuan-image-3", "architecture": "hunyuan_image_3_diffusion"})
         assert isinstance(model, HunyuanImage3DiffusionModel)
         assert model.hidden_size == 4096
         assert model.num_layers == 32
 
-    def test_create_from_type(self):
-        """Test creating HunyuanImage from type field."""
-        presets = get_model_presets()
-        if "hunyuan-image-3-text" not in presets:
-            pytest.skip("hunyuan-image-3-text preset not yet available")
-
-        model = create_model_from_config({"type": "hunyuan-image-3-text"})
+    def test_create_from_type_text(self):
+        """Test creating HunyuanImage Text from type field."""
+        model = create_model_from_config({"type": "hunyuan_image_3_text"})
         assert isinstance(model, HunyuanImage3TextModel)
+
+    def test_create_from_type_diffusion(self):
+        """Test creating HunyuanImage Diffusion from type field."""
+        model = create_model_from_config({"type": "hunyuan_image_3_diffusion"})
+        assert isinstance(model, HunyuanImage3DiffusionModel)

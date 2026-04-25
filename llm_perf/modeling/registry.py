@@ -37,6 +37,7 @@ class ModelInfo:
         sparse_type: str,
         attention_features: list,
         default_config: dict,
+        supported_workloads: list = None,
     ):
         self.name = name
         self.model_class = model_class
@@ -45,6 +46,7 @@ class ModelInfo:
         self.sparse_type = sparse_type
         self.attention_features = attention_features
         self.default_config = default_config
+        self.supported_workloads = supported_workloads or ["training", "inference"]
 
 
 class ModelingRegistry:
@@ -67,6 +69,7 @@ class ModelingRegistry:
         sparse_type: str = "dense",
         attention_features: list = [],
         default_config: dict = {},
+        supported_workloads: list = None,
     ) -> None:
         """Register a model."""
         self._models[name] = ModelInfo(
@@ -77,6 +80,7 @@ class ModelingRegistry:
             sparse_type=sparse_type,
             attention_features=attention_features,
             default_config=default_config,
+            supported_workloads=supported_workloads,
         )
 
     def is_registered(self, name: str) -> bool:
@@ -437,6 +441,7 @@ def _load_presets_from_yaml() -> dict:
             "architecture": preset_data.get("architecture", preset_name),
             "sparse_type": preset_data.get("sparse_type", "dense"),
             "attention_features": preset_data.get("attention_features", []),
+            "supported_workloads": preset_data.get("supported_workloads", ["training", "inference"]),
         }
 
         if "config" in preset_data:
@@ -617,6 +622,61 @@ def get_presets_by_sparse_type() -> dict:
         elif sparse_type == "hunyuan_moe":
             result["sparse_hunyuan_moe"].append(preset_info)
 
+    return result
+
+
+def get_presets_by_workload(workload_type: str) -> dict:
+    """Get presets filtered by workload type.
+    
+    Args:
+        workload_type: Workload type string (training, inference, diffusion, etc.)
+        
+    Returns:
+        Dict of presets that support the given workload type
+    """
+    presets = get_model_presets()
+    filtered = {}
+    
+    for name, config in presets.items():
+        supported_workloads = config.get("supported_workloads", ["training", "inference"])
+        if workload_type in supported_workloads:
+            filtered[name] = config
+    
+    return filtered
+
+
+def get_presets_by_workload_grouped(workload_type: str) -> dict:
+    """Get presets filtered by workload type, grouped by sparse_type.
+    
+    Args:
+        workload_type: Workload type string
+        
+    Returns:
+        Dict grouped by sparse_type with only workload-supporting presets
+    """
+    filtered_presets = get_presets_by_workload(workload_type)
+    result = {
+        "dense": [],
+        "sparse_standard_moe": [],
+        "sparse_deepseek_moe": [],
+        "sparse_qwen3_5_moe": [],
+        "sparse_hunyuan_moe": [],
+    }
+    
+    for name, config in filtered_presets.items():
+        sparse_type = config.get("sparse_type", "dense")
+        preset_info = {"name": name, **config}
+        if sparse_type == "dense":
+            result["dense"].append(preset_info)
+        elif sparse_type == "standard_moe":
+            result["sparse_standard_moe"].append(preset_info)
+        elif sparse_type == "deepseek_moe":
+            result["sparse_deepseek_moe"].append(preset_info)
+        elif sparse_type == "qwen3_5_moe":
+            result["sparse_qwen3_5_moe"].append(preset_info)
+        elif sparse_type == "hunyuan_moe":
+            result["sparse_hunyuan_moe"].append(preset_info)
+    
     return result
 
 
