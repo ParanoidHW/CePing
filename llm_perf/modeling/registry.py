@@ -17,6 +17,7 @@ from llm_perf.modeling.vision import ShardedResNet
 from llm_perf.modeling.encoder import ShardedVAE
 from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
 from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel, Qwen3_5Model
+from llm_perf.modeling.hunyuan_image import HunyuanImage3TextModel, HunyuanImage3DiffusionModel
 
 if TYPE_CHECKING:
     pass
@@ -293,6 +294,55 @@ def register_all_models() -> None:
         },
     )
 
+    registry.register(
+        name="hunyuan_image_3_text",
+        model_class=HunyuanImage3TextModel,
+        description="HunyuanImage 3.0 Text Model with MoE and QK Norm",
+        architecture="hunyuan_image_3_text",
+        sparse_type="hunyuan_moe",
+        attention_features=["qk_norm", "gqa"],
+        default_config={
+            "vocab_size": 133120,
+            "hidden_size": 4096,
+            "num_layers": 32,
+            "num_heads": 32,
+            "num_kv_heads": 8,
+            "head_dim": 128,
+            "moe_intermediate_size": 3072,
+            "num_experts": 64,
+            "num_experts_per_token": 8,
+            "num_shared_experts": 1,
+            "use_qk_norm": True,
+            "max_seq_len": 4096,
+            "dtype": "fp16",
+        },
+    )
+
+    registry.register(
+        name="hunyuan_image_3_diffusion",
+        model_class=HunyuanImage3DiffusionModel,
+        description="HunyuanImage 3.0 Diffusion Model for image generation",
+        architecture="hunyuan_image_3_diffusion",
+        sparse_type="hunyuan_moe",
+        attention_features=["qk_norm", "gqa"],
+        default_config={
+            "hidden_size": 4096,
+            "num_layers": 32,
+            "num_heads": 32,
+            "num_kv_heads": 8,
+            "head_dim": 128,
+            "moe_intermediate_size": 3072,
+            "num_experts": 64,
+            "num_experts_per_token": 8,
+            "num_shared_experts": 1,
+            "use_qk_norm": True,
+            "image_height": 64,
+            "image_width": 64,
+            "latent_channels": 16,
+            "dtype": "fp16",
+        },
+    )
+
 
 def _get_llm_param_schema() -> dict:
     """Get parameter schema for LLM models (llama, mixtral, deepseek)."""
@@ -550,6 +600,7 @@ def get_presets_by_sparse_type() -> dict:
         "sparse_standard_moe": [],
         "sparse_deepseek_moe": [],
         "sparse_qwen3_5_moe": [],
+        "sparse_hunyuan_moe": [],
     }
 
     for name, config in presets.items():
@@ -563,6 +614,8 @@ def get_presets_by_sparse_type() -> dict:
             result["sparse_deepseek_moe"].append(preset_info)
         elif sparse_type == "qwen3_5_moe":
             result["sparse_qwen3_5_moe"].append(preset_info)
+        elif sparse_type == "hunyuan_moe":
+            result["sparse_hunyuan_moe"].append(preset_info)
 
     return result
 

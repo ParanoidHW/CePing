@@ -1,0 +1,46 @@
+description: HunyuanImage 3.0 Text Model
+preset_type: model
+architecture: hunyuan_image_3_text
+sparse_type: hunyuan_moe
+attention_features:
+  - qk_norm
+  - gqa
+
+config:
+  vocab_size: 133120
+  hidden_size: 4096
+  num_layers: 32
+  num_heads: 32
+  num_kv_heads: 8
+  head_dim: 128
+  moe_intermediate_size: 3072
+  num_experts: 64
+  num_experts_per_token: 8
+  num_shared_experts: 1
+  use_qk_norm: true
+  max_seq_len: 4096
+  dtype: fp16
+
+param_schema:
+  training:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 32
+    - name: seq_len
+      label: Sequence Length
+      type: number
+      default: 4096
+  inference:
+    - name: batch_size
+      label: Batch Size
+      type: number
+      default: 8
+    - name: prompt_len
+      label: Prompt Length
+      type: number
+      default: 1024
+    - name: generation_len
+      label: Generation Length
+      type: number
+      default: 128

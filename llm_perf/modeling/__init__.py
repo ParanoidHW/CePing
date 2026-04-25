@@ -79,6 +79,13 @@ from .qwen3_5 import (
     generate_layer_types,
 )
 
+from .hunyuan_image import (
+    HunyuanImage3TextModel,
+    HunyuanImage3DiffusionModel,
+    ShardedHunyuanMoEBlock,
+    ShardedHunyuanAttention,
+)
+
 from .encoder import (
     ShardedViTEncoder,
     ShardedViTBlock,
@@ -167,6 +174,10 @@ __all__ = [
     "ShardedQwen3_5MoEBlock",
     "ShardedQwen3_5DenseBlock",
     "generate_layer_types",
+    "HunyuanImage3TextModel",
+    "HunyuanImage3DiffusionModel",
+    "ShardedHunyuanMoEBlock",
+    "ShardedHunyuanAttention",
     "ShardedViTEncoder",
     "ShardedViTBlock",
     "ShardedPatchEmbedding",
