@@ -1040,7 +1040,6 @@ function renderGenericSummary(result) {
         ${detailedHtml}
     `;
 }
-}
 
 function renderDetailedBreakdown(detailed) {
     if (!detailed) return '';
