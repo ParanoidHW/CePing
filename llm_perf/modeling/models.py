@@ -37,6 +37,8 @@ class ShardedTransformerBlock(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "transformer_block"
+
     def __init__(
         self,
         hidden_size: int,
@@ -283,6 +285,8 @@ class ShardedMoEBlock(ShardedModule):
         shared_expert_intermediate: Shared expert intermediate size
         dtype: Data type
     """
+
+    _submodule_name = "transformer_block"
 
     def __init__(
         self,

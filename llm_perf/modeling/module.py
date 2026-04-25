@@ -35,7 +35,10 @@ class ShardedModule:
         _weights: Weight tensors dict {name: ShardedTensor}
         _activations: Activation tensors dict {name: ShardedTensor}
         _name: Module name
+        _submodule_name: Submodule type name for breakdown display (e.g., "attention", "ffn")
     """
+
+    _submodule_name: str = ""
 
     def __init__(self):
         self._submodules: Dict[str, ShardedModule] = {}

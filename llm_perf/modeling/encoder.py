@@ -50,6 +50,8 @@ class ShardedViTBlock(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "transformer_block"
+
     def __init__(
         self,
         hidden_size: int,

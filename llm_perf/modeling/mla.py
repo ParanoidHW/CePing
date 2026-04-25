@@ -46,6 +46,8 @@ class ShardedMLA(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "mla"
+
     def __init__(
         self,
         hidden_size: int,

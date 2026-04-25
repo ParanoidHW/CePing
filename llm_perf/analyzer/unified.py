@@ -4,6 +4,7 @@ Analyzes performance based on compute patterns, NOT model types.
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from llm_perf.hardware.cluster import Cluster
@@ -17,7 +18,7 @@ from llm_perf.modeling.module import ModuleInstance
 from llm_perf.modeling.tensor import ShardedTensor
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.strategy.parallel_context import CommDomain, ParallelContext, SPType
-from llm_perf.utils.constants import DTYPE_SIZES, SubmoduleType
+from llm_perf.utils.constants import DTYPE_SIZES
 
 from .base import (
     CommunicationBreakdown,
@@ -36,29 +37,75 @@ from .workload_loader import get_workload
 
 logger = logging.getLogger(__name__)
 
-MODULE_CLASS_TO_TYPE = {
-    "ShardedTransformerBlock": SubmoduleType.TRANSFORMER_BLOCK,
-    "ShardedMoEBlock": SubmoduleType.TRANSFORMER_BLOCK,
-    "ShardedWanDiTBlock": SubmoduleType.TRANSFORMER_BLOCK,
-    "ShardedT5Block": SubmoduleType.TRANSFORMER_BLOCK,
-    "ShardedQwen3_5MoEBlock": SubmoduleType.TRANSFORMER_BLOCK,
-    "ShardedQwen3_5DenseBlock": SubmoduleType.TRANSFORMER_BLOCK,
-    "ShardedAttention": SubmoduleType.ATTENTION,
-    "ShardedLinearAttention": SubmoduleType.ATTENTION,
-    "ShardedFFN": SubmoduleType.FFN,
-    "ShardedMoE": SubmoduleType.MOE,
-    "ShardedMLA": SubmoduleType.ATTENTION,
-    "ShardedEmbedding": SubmoduleType.EMBEDDING,
-    "ShardedLMHead": SubmoduleType.LM_HEAD,
-    "ShardedRMSNorm": SubmoduleType.RMS_NORM,
-    "ShardedLayerNorm": SubmoduleType.RMS_NORM,
-}
 
-NESTED_MODULE_TYPES = {SubmoduleType.ATTENTION, SubmoduleType.FFN, SubmoduleType.MOE}
+def infer_submodule_name_from_class(cls_name: str) -> str:
+    """从类名推断子模块名称（fallback方案）.
 
-NESTED_MODULE_CLASSES = {
-    cls_name for cls_name, sub_type in MODULE_CLASS_TO_TYPE.items() if sub_type in NESTED_MODULE_TYPES
-}
+    规则：
+    1. 前缀 "Sharded" 移除
+    2. 后缀 "Block" 移除
+    3. 特殊处理：常见类型直接映射
+    4. CamelCase to snake_case（智能处理缩写）
+    """
+    name = cls_name.replace("Sharded", "")
+    if name.endswith("Block"):
+        name = name[:-5]
+    
+    if name == "Attention":
+        return "attention"
+    elif name == "LinearAttention":
+        return "linear_attention"
+    elif name == "MLA":
+        return "mla"
+    elif name == "FFN":
+        return "ffn"
+    elif name == "MoE":
+        return "moe"
+    elif name == "Embedding":
+        return "embedding"
+    elif name == "LMHead":
+        return "lm_head"
+    elif name in ["RMSNorm", "LayerNorm"]:
+        return name.lower().replace("norm", "_norm")
+    elif name == "Transformer":
+        return "transformer_block"
+    
+    abbreviations = ["MLA", "FFN", "MoE", "ViT", "DiT", "VAE", "LM", "RMS"]
+    
+    result = []
+    i = 0
+    while i < len(name):
+        matched_abbr = None
+        for abbr in abbreviations:
+            if name[i:i+len(abbr)] == abbr:
+                matched_abbr = abbr
+                break
+        
+        if matched_abbr:
+            if i > 0 and result[-1] != "_":
+                result.append("_")
+            result.append(matched_abbr.lower())
+            i += len(matched_abbr)
+        elif name[i].isupper():
+            if i > 0 and result[-1] != "_":
+                result.append("_")
+            result.append(name[i].lower())
+            i += 1
+        elif name[i] == "_":
+            result.append("_")
+            i += 1
+        elif name[i].isdigit():
+            result.append(name[i])
+            i += 1
+        else:
+            result.append(name[i])
+            i += 1
+    
+    snake_name = "".join(result)
+    snake_name = re.sub(r"_+", "_", snake_name)
+    snake_name = snake_name.strip("_")
+    
+    return snake_name
 
 
 def _aggregate_submodel_memory(phases: List[PhaseResult]) -> Dict[str, Dict[str, float]]:
@@ -163,13 +210,19 @@ class UnifiedAnalyzer:
         return ctx
 
     def _infer_submodule_type(self, sub_name: str, sub_inst: Any = None) -> str:
-        """使用精确匹配识别子模块类型."""
+        """识别子模块类型（解耦设计：优先使用 _submodule_name，fallback从类名推断）."""
         if sub_inst and hasattr(sub_inst, "module") and sub_inst.module:
-            module_class = type(sub_inst.module).__name__
-
-            if module_class in MODULE_CLASS_TO_TYPE:
-                return MODULE_CLASS_TO_TYPE[module_class].value
-
+            module = sub_inst.module
+            
+            if hasattr(module, "_submodule_name") and module._submodule_name:
+                return module._submodule_name
+            
+            module_class = type(module).__name__
+            inferred_name = infer_submodule_name_from_class(module_class)
+            
+            if inferred_name and inferred_name != "unknown":
+                return inferred_name
+            
             module_class_lower = module_class.lower()
             if "vae" in module_class_lower:
                 return "vae"
@@ -182,19 +235,28 @@ class UnifiedAnalyzer:
 
         sub_lower = sub_name.lower()
         if sub_lower.startswith("layers.") or sub_lower.startswith("blocks."):
-            return SubmoduleType.TRANSFORMER_BLOCK.value
+            return "transformer_block"
         elif "embedding" in sub_lower or "emb" in sub_lower:
-            return SubmoduleType.EMBEDDING.value
+            return "embedding"
         elif "attention" in sub_lower or "attn" in sub_lower:
-            return SubmoduleType.ATTENTION.value
+            return "attention"
+        elif "linear_attention" in sub_lower:
+            return "linear_attention"
+        elif "mla" in sub_lower:
+            return "mla"
         elif "ffn" in sub_lower or "mlp" in sub_lower:
-            return SubmoduleType.FFN.value
+            return "ffn"
         elif "moe" in sub_lower:
-            return SubmoduleType.MOE.value
+            return "moe"
         elif "lm_head" in sub_lower or "output" in sub_lower:
-            return SubmoduleType.LM_HEAD.value
+            return "lm_head"
         elif "norm" in sub_lower:
-            return SubmoduleType.RMS_NORM.value
+            if "rms" in sub_lower:
+                return "rms_norm"
+            elif "layer" in sub_lower:
+                return "layer_norm"
+            else:
+                return "rms_norm"
         elif "conv" in sub_lower:
             return "conv"
         elif "resblock" in sub_lower or "res" in sub_lower:
@@ -730,13 +792,13 @@ class UnifiedAnalyzer:
         parent_inst: ModuleInstance,
         phase: Phase,
     ) -> List["SubmoduleResult"]:
-        """分析嵌套子模块（如 transformer_block 内部的 attention, ffn）."""
+        """分析嵌套子模块（如 transformer_block 内部的 attention, ffn, moe）."""
         from .base import SubmoduleResult
 
         nested_items = [
             (sub_name, sub_inst)
             for sub_name, sub_inst in parent_inst._submodule_instances.items()
-            if type(sub_inst.module).__name__ in NESTED_MODULE_CLASSES
+            if self._is_nested_submodule(sub_inst)
         ]
 
         if not nested_items:
@@ -759,9 +821,7 @@ class UnifiedAnalyzer:
             first_name, first_inst = instances[0]
             delta_comm_bytes = sum(op.data_bytes for op in first_inst.total_comm_ops)
 
-            nested_type = MODULE_CLASS_TO_TYPE.get(
-                type(first_inst.module).__name__, SubmoduleType.FFN
-            ).value
+            nested_type = self._infer_submodule_type(first_name, first_inst)
 
             signature_cache[sig] = SubmoduleResult(
                 name=first_name,
@@ -777,7 +837,7 @@ class UnifiedAnalyzer:
                 communication_bytes=delta_comm_bytes,
                 nested_submodules=[],
             )
-            logger.debug(f"[NESTED_CACHE] signature={sig}, instances={len(instances)}, first={first_name}")
+            logger.debug(f"[NESTED_CACHE] signature={sig}, instances={len(instances)}, first={first_name}, type={nested_type}")
 
         nested = []
         for sig, instances in signature_groups.items():
@@ -801,6 +861,22 @@ class UnifiedAnalyzer:
                 )
 
         return nested
+
+    def _is_nested_submodule(self, sub_inst: ModuleInstance) -> bool:
+        """判断是否为嵌套子模块（attention, ffn, moe, linear_attention, mla等）."""
+        if hasattr(sub_inst, "module") and sub_inst.module:
+            module = sub_inst.module
+            
+            if hasattr(module, "_submodule_name") and module._submodule_name:
+                nested_types = ["attention", "linear_attention", "mla", "ffn", "moe"]
+                return module._submodule_name in nested_types
+            
+            module_class = type(module).__name__
+            inferred_name = infer_submodule_name_from_class(module_class)
+            nested_types = ["attention", "linear_attention", "mla", "ffn", "moe"]
+            return inferred_name in nested_types
+        
+        return False
 
     def _estimate_phase(
         self,

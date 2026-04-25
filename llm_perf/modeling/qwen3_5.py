@@ -77,6 +77,8 @@ class ShardedQwen3_5MoEBlock(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "transformer_block"
+
     def __init__(
         self,
         hidden_size: int,
@@ -505,6 +507,8 @@ class ShardedQwen3_5DenseBlock(ShardedModule):
         intermediate_size: SwiGLU FFN intermediate size
         dtype: Data type
     """
+
+    _submodule_name = "transformer_block"
 
     def __init__(
         self,

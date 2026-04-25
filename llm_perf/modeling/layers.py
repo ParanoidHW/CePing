@@ -28,6 +28,8 @@ class ShardedEmbedding(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "embedding"
+
     def __init__(
         self,
         num_embeddings: int,
@@ -92,6 +94,8 @@ class ShardedRMSNorm(ShardedModule):
         hidden_size: Hidden size
         dtype: Data type
     """
+
+    _submodule_name = "rms_norm"
 
     def __init__(
         self,
@@ -290,6 +294,8 @@ class ShardedAttention(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "attention"
+
     def __init__(
         self,
         hidden_size: int,
@@ -407,6 +413,8 @@ class ShardedFFN(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "ffn"
+
     def __init__(
         self,
         hidden_size: int,
@@ -494,6 +502,8 @@ class ShardedLMHead(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "lm_head"
+
     def __init__(
         self,
         hidden_size: int,
@@ -545,6 +555,8 @@ class ShardedMoE(ShardedModule):
         shared_expert_intermediate: Shared expert intermediate size (optional)
         dtype: Data type
     """
+
+    _submodule_name = "moe"
 
     def __init__(
         self,
@@ -733,6 +745,8 @@ class ShardedLinearAttention(ShardedModule):
         kernel_dim: Feature map dimension (default: 4 for Qwen3.5)
         dtype: Data type
     """
+
+    _submodule_name = "linear_attention"
 
     def __init__(
         self,

@@ -33,6 +33,8 @@ class ShardedLayerNorm(ShardedModule):
         dtype: Data type
     """
 
+    _submodule_name = "layer_norm"
+
     def __init__(
         self,
         hidden_size: int,
@@ -79,6 +81,8 @@ class ShardedT5Block(ShardedModule):
         intermediate_size: FFN intermediate size
         dtype: Data type
     """
+
+    _submodule_name = "transformer_block"
 
     def __init__(
         self,
@@ -198,18 +202,16 @@ class ShardedWanDiTBlock(ShardedModule):
 
     Args:
         hidden_size: Hidden size
-        num_heads: Number of attention heads
-        intermediate_size: FFN intermediate size
-        text_dim: Text embedding dimension
-        dtype: Data type
     """
+
+    _submodule_name = "transformer_block"
 
     def __init__(
         self,
         hidden_size: int,
-        num_heads: int,
-        intermediate_size: int,
-        text_dim: int = 4096,
+        num_heads: int = 24,
+        cross_attn_heads: int = 24,
+        intermediate_size: int = 13824,
         dtype: str = "fp16",
     ):
         super().__init__()
