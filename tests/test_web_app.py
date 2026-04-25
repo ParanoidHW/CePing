@@ -51,7 +51,9 @@ class TestWorkloadScenarios:
                     "scenario": "diffusion",
                     "batch_size": 1,
                     "diffusion_steps": 50,
-                    "output_image_size": 1024,
+                    "generation_mode": "T2I",
+                    "output_image_width": 1024,
+                    "output_image_height": 1024,
                 },
             },
         )
@@ -72,6 +74,44 @@ class TestWorkloadScenarios:
         
         assert "prefill" not in result or result["prefill"] is None
         assert "decode" not in result or result["decode"] is None or result["decode"]["tps"] == 0
+        
+        params = result.get("params", {})
+        assert params.get("height") == 1024, f"Expected height=1024, got {params.get('height')}"
+        assert params.get("width") == 1024, f"Expected width=1024, got {params.get('width')}"
+
+    def test_diffusion_resolution_from_frontend_params(self):
+        """Test that frontend output_image_width/height maps to analyzer height/width."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"preset": "hunyuan-image-3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {
+                    "scenario": "diffusion",
+                    "batch_size": 1,
+                    "diffusion_steps": 50,
+                    "generation_mode": "T2I",
+                    "output_image_width": 1024,
+                    "output_image_height": 1024,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        
+        result = data["result"]
+        params = result.get("params", {})
+        
+        assert params.get("height") == 1024, f"height should be 1024 (from output_image_height), got {params.get('height')}"
+        assert params.get("width") == 1024, f"width should be 1024 (from output_image_width), got {params.get('width')}"
 
     def test_diffusion_result_no_ttft_tpot(self):
         """Test diffusion result does NOT contain TTFT/TPOT."""
