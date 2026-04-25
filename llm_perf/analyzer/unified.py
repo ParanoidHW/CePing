@@ -571,6 +571,7 @@ class UnifiedAnalyzer:
             "qk_rope_head_dim",
             "qk_nope_head_dim",
             "v_head_dim",
+            "layer_type",
         ]
         config_values = []
         for attr in config_attrs:

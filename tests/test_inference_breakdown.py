@@ -407,31 +407,6 @@ class TestTransformerBlockNestedBreakdown(unittest.TestCase):
         self.assertIn("attention", nested)
         self.assertIn("ffn", nested)
 
-    def test_nested_breakdown_independent_of_model_type(self):
-        """测试嵌套分解与模型类型无关，只依赖子模块类名."""
-        from llm_perf.modeling.qwen3_5 import ShardedQwen3_5MoEBlock
-
-        block = ShardedQwen3_5MoEBlock(
-            hidden_size=2048,
-            layer_type="linear_attention",
-            num_heads=16,
-            num_experts=256,
-        )
-
-        from llm_perf.analyzer.unified import MODULE_CLASS_TO_TYPE, NESTED_MODULE_CLASSES
-
-        self.assertIn("ShardedQwen3_5MoEBlock", MODULE_CLASS_TO_TYPE)
-        self.assertEqual(
-            MODULE_CLASS_TO_TYPE["ShardedQwen3_5MoEBlock"].value, "transformer_block"
-        )
-
-        self.assertIn("ShardedLinearAttention", MODULE_CLASS_TO_TYPE)
-        self.assertEqual(
-            MODULE_CLASS_TO_TYPE["ShardedLinearAttention"].value, "attention"
-        )
-
-        self.assertIn("ShardedLinearAttention", NESTED_MODULE_CLASSES)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -979,9 +979,13 @@ function renderDetailedBreakdown(detailed) {
     const memByType = detailed.memory?.by_type || {};
     const { total, ...breakdownItems } = memByType;
 
-    const orderedTypes = ['weight', 'gradient', 'optimizer', 'activation'];
+    const orderedPriority = ['weight', 'gradient', 'optimizer', 'activation'];
+    const allTypes = Object.keys(breakdownItems).filter(k => !k.startsWith('total') && !k.startsWith('params'));
+    const orderedTypes = [
+        ...orderedPriority.filter(t => breakdownItems[t] !== undefined),
+        ...allTypes.filter(t => !orderedPriority.includes(t) && breakdownItems[t] !== undefined)
+    ];
     const memRows = orderedTypes
-        .filter(type => breakdownItems[type] !== undefined)
         .map(type => `<tr><td>${type}</td><td>${breakdownItems[type].toFixed(2)} GB</td></tr>`)
         .join('');
 
@@ -1157,7 +1161,34 @@ function renderDetailedBreakdown(detailed) {
 }
 
 function renderBreakdown(breakdown) {
-    if (!breakdown) return '';
+    if (!breakdown || !breakdown.time_breakdown) return '';
+    
+    const tb = breakdown.time_breakdown;
+    const priorityCategories = [
+        {key: 'compute_sec', name: 'Compute'},
+        {key: 'backward_sec', name: 'Backward'},
+        {key: 'optimizer_sec', name: 'Optimizer'},
+        {key: 'communication_sec', name: 'Communication'},
+        {key: 'memory_sec', name: 'Memory Wait'},
+    ];
+    
+    const allSecKeys = Object.keys(tb).filter(k => k.endsWith('_sec'));
+    const additionalCategories = allSecKeys
+        .filter(k => !priorityCategories.find(c => c.key === k))
+        .map(k => ({key: k, name: k.replace('_sec', '').replace(/_/g, ' ')}));
+    
+    const categories = [...priorityCategories, ...additionalCategories];
+    
+    const rows = categories.map(cat => {
+        const sec = tb[cat.key] || 0;
+        const percentKey = cat.key.replace('_sec', '_percent');
+        const percent = tb[percentKey] || 0;
+        return `<tr>
+            <td>${cat.name}</td>
+            <td>${(sec * 1000).toFixed(1)} ms</td>
+            <td>${percent.toFixed(1)}%</td>
+        </tr>`;
+    }).join('');
     
     return `
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">性能分解</h3>
@@ -1167,31 +1198,7 @@ function renderBreakdown(breakdown) {
                 <th>时间</th>
                 <th>占比</th>
             </tr>
-            <tr>
-                <td>Compute</td>
-                <td>${(breakdown.time_breakdown?.compute_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(breakdown.time_breakdown?.compute_percent || 0).toFixed(1)}%</td>
-            </tr>
-            <tr>
-                <td>Backward</td>
-                <td>${(breakdown.time_breakdown?.backward_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(breakdown.time_breakdown?.backward_percent || 0).toFixed(1)}%</td>
-            </tr>
-            <tr>
-                <td>Optimizer</td>
-                <td>${(breakdown.time_breakdown?.optimizer_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(breakdown.time_breakdown?.optimizer_percent || 0).toFixed(1)}%</td>
-            </tr>
-            <tr>
-                <td>Communication</td>
-                <td>${(breakdown.time_breakdown?.communication_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(breakdown.time_breakdown?.communication_percent || 0).toFixed(1)}%</td>
-            </tr>
-            <tr>
-                <td>Memory Wait</td>
-                <td>${(breakdown.time_breakdown?.memory_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(breakdown.time_breakdown?.memory_percent || 0).toFixed(1)}%</td>
-            </tr>
+            ${rows}
         </table>
     `;
 }
@@ -1200,6 +1207,36 @@ function renderInferenceBreakdown(breakdown) {
     if (!breakdown || !breakdown.inference_breakdown) return '';
     
     const inf = breakdown.inference_breakdown;
+    const priorityCategories = [
+        {key: 'prefill_sec', name: 'Prefill', showPercent: true},
+        {key: 'decode_sec', name: 'Decode', showPerToken: true},
+        {key: 'communication_sec', name: 'Communication', showPercent: true},
+    ];
+    
+    const allSecKeys = Object.keys(inf).filter(k => k.endsWith('_sec'));
+    const additionalCategories = allSecKeys
+        .filter(k => !priorityCategories.find(c => c.key === k) && inf[k] > 0)
+        .map(k => ({key: k, name: k.replace('_sec', '').replace(/_/g, ' '), showPercent: true}));
+    
+    const categories = [...priorityCategories, ...additionalCategories];
+    
+    const rows = categories.map(cat => {
+        const sec = inf[cat.key] || 0;
+        const percentKey = cat.key.replace('_sec', '_percent');
+        const percent = inf[percentKey] || 0;
+        
+        let name = cat.name;
+        if (cat.showPerToken && inf.decode_per_token_sec) {
+            name = `${cat.name} (${inf.decode_per_token_sec.toFixed(3)} ms/token)`;
+        }
+        
+        return `<tr>
+            <td>${name}</td>
+            <td>${(sec * 1000 || 0).toFixed(1)} ms</td>
+            <td>${percent.toFixed(1)}%</td>
+        </tr>`;
+    }).join('');
+    
     return `
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">性能分解</h3>
         <table class="breakdown-table">
@@ -1208,28 +1245,7 @@ function renderInferenceBreakdown(breakdown) {
                 <th>时间</th>
                 <th>占比</th>
             </tr>
-            <tr>
-                <td>Prefill</td>
-                <td>${(inf.prefill_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(inf.prefill_percent || 0).toFixed(1)}%</td>
-            </tr>
-            <tr>
-                <td>Decode (${inf.decode_per_token_sec ? inf.decode_per_token_sec.toFixed(3) + ' ms/token' : '-'})</td>
-                <td>${(inf.decode_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(inf.decode_percent || 0).toFixed(1)}%</td>
-            </tr>
-            <tr>
-                <td>Communication</td>
-                <td>${(inf.communication_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(inf.communication_percent || 0).toFixed(1)}%</td>
-            </tr>
-            ${inf.kv_cache_sec > 0 ? `
-            <tr>
-                <td>KV Cache Access</td>
-                <td>${(inf.kv_cache_sec * 1000 || 0).toFixed(1)} ms</td>
-                <td>${(inf.kv_cache_percent || 0).toFixed(1)}%</td>
-            </tr>
-            ` : ''}
+            ${rows}
         </table>
     `;
 }
