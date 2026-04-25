@@ -598,14 +598,16 @@ def get_model_presets() -> dict:
 
 
 def get_presets_by_sparse_type() -> dict:
-    """Get presets grouped by sparse_type."""
+    """Get presets grouped by sparse_type.
+    
+    Automatically groups presets into dense/sparse based on sparse_type field.
+    All non-dense types (standard_moe, deepseek_moe, qwen3_5_moe, hunyuan_moe, etc.)
+    are unified as 'sparse'.
+    """
     presets = get_model_presets()
     result = {
         "dense": [],
-        "sparse_standard_moe": [],
-        "sparse_deepseek_moe": [],
-        "sparse_qwen3_5_moe": [],
-        "sparse_hunyuan_moe": [],
+        "sparse": [],
     }
 
     for name, config in presets.items():
@@ -613,14 +615,8 @@ def get_presets_by_sparse_type() -> dict:
         preset_info = {"name": name, **config}
         if sparse_type == "dense":
             result["dense"].append(preset_info)
-        elif sparse_type == "standard_moe":
-            result["sparse_standard_moe"].append(preset_info)
-        elif sparse_type == "deepseek_moe":
-            result["sparse_deepseek_moe"].append(preset_info)
-        elif sparse_type == "qwen3_5_moe":
-            result["sparse_qwen3_5_moe"].append(preset_info)
-        elif sparse_type == "hunyuan_moe":
-            result["sparse_hunyuan_moe"].append(preset_info)
+        else:
+            result["sparse"].append(preset_info)
 
     return result
 
@@ -652,15 +648,13 @@ def get_presets_by_workload_grouped(workload_type: str) -> dict:
         workload_type: Workload type string
         
     Returns:
-        Dict grouped by sparse_type with only workload-supporting presets
+        Dict grouped by sparse_type (dense/sparse) with only workload-supporting presets.
+        All non-dense types are unified as 'sparse'.
     """
     filtered_presets = get_presets_by_workload(workload_type)
     result = {
         "dense": [],
-        "sparse_standard_moe": [],
-        "sparse_deepseek_moe": [],
-        "sparse_qwen3_5_moe": [],
-        "sparse_hunyuan_moe": [],
+        "sparse": [],
     }
     
     for name, config in filtered_presets.items():
@@ -668,14 +662,8 @@ def get_presets_by_workload_grouped(workload_type: str) -> dict:
         preset_info = {"name": name, **config}
         if sparse_type == "dense":
             result["dense"].append(preset_info)
-        elif sparse_type == "standard_moe":
-            result["sparse_standard_moe"].append(preset_info)
-        elif sparse_type == "deepseek_moe":
-            result["sparse_deepseek_moe"].append(preset_info)
-        elif sparse_type == "qwen3_5_moe":
-            result["sparse_qwen3_5_moe"].append(preset_info)
-        elif sparse_type == "hunyuan_moe":
-            result["sparse_hunyuan_moe"].append(preset_info)
+        else:
+            result["sparse"].append(preset_info)
     
     return result
 

@@ -8,7 +8,6 @@ Ensures:
 5. Backend API returns filtered models based on workload
 """
 
-import pytest
 from pathlib import Path
 import yaml
 
@@ -100,11 +99,11 @@ class TestWorkloadModelDecouplingRegistry:
         grouped = get_presets_by_workload_grouped("diffusion")
 
         assert "dense" in grouped
-        assert "sparse_hunyuan_moe" in grouped
+        assert "sparse" in grouped
 
-        hunyuan_presets = grouped["sparse_hunyuan_moe"]
-        hunyuan_names = [p["name"] for p in hunyuan_presets]
-        assert "hunyuan-image-3" in hunyuan_names
+        sparse_presets = grouped["sparse"]
+        sparse_names = [p["name"] for p in sparse_presets]
+        assert "hunyuan-image-3" in sparse_names
 
     def test_hunyuan_image_3_no_duplicate_architectures(self):
         """Test hunyuan-image-3 does not have duplicate architecture names."""
@@ -186,3 +185,70 @@ class TestWorkloadTypesDefinition:
 
         wan_dit_workloads = get_supported_workloads("wan_dit")
         assert "diffusion" in [w.value for w in wan_dit_workloads]
+
+
+class TestSparseTypeUnification:
+    """Test sparse_type unification to dense/sparse."""
+
+    def test_get_presets_by_sparse_type_no_hardcoding(self):
+        """Test get_presets_by_sparse_type uses auto-grouping, no hardcoded types."""
+        from llm_perf.modeling import get_presets_by_sparse_type
+
+        result = get_presets_by_sparse_type()
+        
+        assert len(result) == 2
+        assert "dense" in result
+        assert "sparse" in result
+        
+        dense_names = [p["name"] for p in result["dense"]]
+        assert "llama-7b" in dense_names
+        assert "llama-13b" in dense_names
+        assert "qwen3-5" in dense_names
+        
+        sparse_names = [p["name"] for p in result["sparse"]]
+        assert "deepseek-v3" in sparse_names
+        assert "hunyuan-image-3" in sparse_names
+        assert "qwen3-5-moe" in sparse_names
+        assert "mixtral-8x7b" in sparse_names
+
+    def test_get_presets_by_workload_grouped_auto_grouping(self):
+        """Test get_presets_by_workload_grouped uses auto-grouping."""
+        from llm_perf.modeling import get_presets_by_workload_grouped
+
+        training_grouped = get_presets_by_workload_grouped("training")
+        assert len(training_grouped) == 2
+        assert "dense" in training_grouped
+        assert "sparse" in training_grouped
+        
+        inference_grouped = get_presets_by_workload_grouped("inference")
+        assert len(inference_grouped) == 2
+        
+        diffusion_grouped = get_presets_by_workload_grouped("diffusion")
+        assert len(diffusion_grouped) == 2
+
+    def test_all_sparse_models_grouped_as_sparse(self):
+        """Test all sparse-type models are unified under 'sparse'."""
+        from llm_perf.modeling import get_presets_by_sparse_type, get_model_presets
+
+        presets = get_model_presets()
+        sparse_result = get_presets_by_sparse_type()
+        
+        for name, config in presets.items():
+            sparse_type = config.get("sparse_type", "dense")
+            if sparse_type != "dense":
+                sparse_names = [p["name"] for p in sparse_result["sparse"]]
+                assert name in sparse_names, f"{name} should be in sparse group"
+
+    def test_api_returns_unified_sparse_groups(self):
+        """Test API returns unified sparse groups."""
+        from web.app import app
+
+        client = app.test_client()
+        
+        response = client.get("/api/models?workload_type=training")
+        data = response.get_json()
+        
+        by_sparse_type = data.get("by_sparse_type", {})
+        assert len(by_sparse_type) == 2
+        assert "dense" in by_sparse_type
+        assert "sparse" in by_sparse_type
