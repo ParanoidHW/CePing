@@ -234,7 +234,15 @@ def evaluate():
                 workload_type = scenario
         
         if preset_name:
-            model = create_model_from_registry(preset_name, model_config, workload_type=workload_type)
+            if preset_name == "hunyuan-image-3" and workload_type == "diffusion":
+                models = {
+                    "encoder": create_model_from_config({"type": "hunyuan-t5-encoder"}),
+                    "backbone": create_model_from_config({"type": "hunyuan_image_3_diffusion"}),
+                    "decoder": create_model_from_config({"type": "hunyuan-vae-decoder"}),
+                }
+                model = models
+            else:
+                model = create_model_from_registry(preset_name, model_config, workload_type=workload_type)
             model_type = preset_name
         else:
             model_type = model_config.get("type", "llama")
