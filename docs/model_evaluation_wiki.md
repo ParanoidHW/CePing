@@ -13,6 +13,7 @@
 5. [Attention FLOPs 计算详解](#5-attention-flops-计算详解)
 6. [模型对比总结](#6-模型对比总结)
 7. [评估流程总结](#7-评估流程总结)
+8. [子模块分解解耦机制](#8-子模块分解解耦机制)
 
 ---
 
@@ -2390,6 +2391,138 @@ print(f"KV cache: {breakdown['kv_cache_memory_gb']:.2f} GB")
 # 通信分解
 print(f"AllReduce: {breakdown['allreduce_bytes'] / 1e9:.2f} GB")
 print(f"AllToAll: {breakdown['alltoall_bytes'] / 1e9:.2f} GB")
+```
+
+---
+
+## 8. 子模块分解解耦机制
+
+本章节说明子模块分解的解耦设计，确保新增模型无需修改代码即可自动显示。
+
+详细文档见 `docs/architecture_decoupling.md`。
+
+### 8.1 解耦设计原则
+
+**后端数据驱动**：所有分解使用字典结构，新增类型自动出现
+
+```python
+{
+    "by_submodule_type": {
+        "embedding": {...},
+        "transformer_block": {...},
+        "lm_head": {...},
+        "new_type": {...}  # 新增模型自动出现
+    }
+}
+```
+
+**前端自动发现**：使用 `Object.keys()` 遍历所有类型
+
+```javascript
+const allTypes = Object.keys(bySubmoduleType);  # 自动发现所有类型
+```
+
+### 8.2 子模块类型识别机制
+
+**优先级**：显式声明 > 类名推断 > 名称推断
+
+```python
+class ShardedModule:
+    _submodule_name: str = ""  # 显式声明（推荐）
+
+def _infer_submodule_type(self, sub_name, sub_inst):
+    """识别子模块类型."""
+    # 1. 优先：显式声明
+    if hasattr(module, "_submodule_name"):
+        return module._submodule_name
+    
+    # 2. fallback：类名推断
+    inferred = infer_submodule_name_from_class(type(module).__name__)
+    
+    # 3. fallback：名称推断
+    if "attention" in sub_name.lower():
+        return "attention"
+```
+
+### 8.3 新增模型天然兼容
+
+**步骤 1：定义模型类**
+
+```python
+class ShardedNewAttention(ShardedModule):
+    _submodule_name = "new_attention"  # 显式声明
+    
+class ShardedNewFFN(ShardedModule):
+    # 自动推断：ShardedNewFFN → new_ffn
+    
+class ShardedNewModelBlock(ShardedModule):
+    _submodule_name = "transformer_block"
+    
+    def __init__(self, ...):
+        self.attention = ShardedNewAttention(...)  # 自动识别
+        self.ffn = ShardedNewFFN(...)              # 自动识别
+```
+
+**步骤 2：前端自动显示**
+
+无需修改代码，前端自动显示：
+
+```
+子模块分解表格：
+| transformer_block | xxx ms | xx% | xxx ms | xx% | xxx GB |
+| - new_attention   | xxx ms | xx% | xxx ms | xx% | xxx GB |
+| - new_ffn         | xxx ms | xx% | xxx ms | xx% | xxx GB |
+```
+
+### 8.4 结构签名缓存机制
+
+**问题**：Qwen3.5 混合注意力（linear + full）所有 Block 签名相同，只分析一次
+
+**解决**：`_compute_structure_signature` 添加 `layer_type` 属性
+
+```python
+config_attrs = [
+    "hidden_size", "num_heads", ...,
+    "layer_type",  # 区分 linear vs full
+]
+```
+
+**效果**：
+
+- linear_attention Block 和 full_attention Block 结构签名不同
+- 分别缓存和分析
+- 前端显示完整分解：linear_attention + attention (full) + moe
+
+### 8.5 常见子模块类型
+
+| 类型 | _submodule_name | 类名推断 | 适用模型 |
+|------|----------------|---------|---------|
+| embedding | "embedding" | ShardedEmbedding | 所有 LLM |
+| attention | "attention" | ShardedAttention | Standard Attention |
+| linear_attention | "linear_attention" | ShardedLinearAttention | Qwen3.5 |
+| mla | "mla" | ShardedMLA | DeepSeek |
+| ffn | "ffn" | ShardedFFN | Dense FFN |
+| moe | "moe" | ShardedMoE | MoE FFN |
+| lm_head | "lm_head" | ShardedLMHead | 所有 LLM |
+| rms_norm | "rms_norm" | ShardedRMSNorm | LLaMA/Qwen |
+| transformer_block | "transformer_block" | ShardedTransformerBlock | 通用 Block |
+| wan_dit | 自动推断 | ShardedWanDiTBlock | Wan DiT |
+| qwen3_5_moe | 自动推断 | ShardedQwen3_5MoEBlock | Qwen3.5 MoE |
+
+### 8.6 测试验证
+
+测试文件：`tests/test_frontend_decoupling.py`, `tests/test_submodule_breakdown_decoupling.py`
+
+```python
+def test_qwen35_full_attention_in_nested_breakdown(self, setup):
+    """Test Qwen3.5 full_attention appears in nested_breakdown."""
+    analyzer = setup["analyzer"]
+    result = analyzer.analyze("training", batch_size=4, seq_len=1024)
+    
+    nested = detailed["by_submodule_type"]["transformer_block"]["nested_breakdown"]
+    assert "linear_attention" in nested
+    assert "attention" in nested  # full_attention
+    assert "moe" in nested
 ```
 
 ---

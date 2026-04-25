@@ -771,3 +771,169 @@ calculateDP() {
 
 1. 后端: detailed_breakdown 添加新维度
 2. 前端: renderDetailedBreakdown 添加渲染逻辑
+
+## 11. 解耦设计原则
+
+前端渲染采用**完全解耦设计**，所有类别/类型通过数据自动发现，无需硬编码任何列表。
+
+详细文档见 `docs/architecture_decoupling.md`。
+
+### 11.1 数据驱动原则
+
+**后端数据结构**：所有分解使用字典结构，自动包含所有类别
+
+```python
+{
+    "time_breakdown": {
+        "compute_sec": 0.1,
+        "backward_sec": 0.02,
+        "new_category_sec": 0.05  # 新增类别自动出现
+    },
+    "by_submodule_type": {
+        "embedding": {...},
+        "transformer_block": {...},
+        "new_type": {...}  # 新增类型自动出现
+    }
+}
+```
+
+**前端渲染**：使用 `Object.keys()` 自动获取所有字段
+
+```javascript
+const allTypes = Object.keys(bySubmoduleType);  // 自动发现所有类型
+const allSecKeys = Object.keys(tb).filter(k => k.endsWith('_sec'));  // 自动发现所有时间类别
+```
+
+### 11.2 内存分解解耦
+
+**位置**：app.js:983
+
+```javascript
+const memByType = detailed.memory?.by_type || {};
+const { total, ...breakdownItems } = memByType;
+
+// 自动发现所有类型（非硬编码）
+const allTypes = Object.keys(breakdownItems).filter(k => !k.startsWith('total'));
+
+// 优先顺序排列（仅排序，不限制）
+const orderedPriority = ['weight', 'gradient', 'optimizer', 'activation'];
+const orderedTypes = [
+    ...orderedPriority.filter(t => breakdownItems[t] !== undefined),
+    ...allTypes.filter(t => !orderedPriority.includes(t))  # 新类型自动追加
+];
+```
+
+**效果**：新增内存类型（如 `kv_cache`）自动显示
+
+### 11.3 子模块分解解耦
+
+**位置**：app.js:1004
+
+```javascript
+const bySubmoduleType = detailed.by_submodule_type || {};
+
+// 自动遍历所有类型
+for (const [submoduleType, data] of Object.entries(bySubmoduleType)) {
+    // embedding, transformer_block, lm_head, new_type...
+    
+    // 自动遍历嵌套类型
+    if (data.nested_breakdown) {
+        for (const [nestedType, nestedData] of Object.entries(data.nested_breakdown)) {
+            // attention, ffn, moe, linear_attention, full_attention, new_nested...
+        }
+    }
+}
+```
+
+**效果**：
+- 新增子模块类型（如 `new_attention`）自动显示
+- 新增嵌套类型（如 `full_attention`）自动显示
+
+### 11.4 时间分解解耦
+
+**位置**：app.js:1175
+
+```javascript
+const tb = breakdown.time_breakdown || {};
+const allSecKeys = Object.keys(tb).filter(k => k.endsWith('_sec'));
+
+// 自动发现所有时间类别
+// compute_sec, backward_sec, optimizer_sec, communication_sec, memory_sec, new_category_sec
+```
+
+**效果**：新增时间类别自动显示
+
+### 11.5 通信分解解耦
+
+**位置**：app.js:1076+
+
+```javascript
+const commByPara = detailed.communication?.by_parallelism || {};
+const commByOp = detailed.communication?.by_operation || {};
+
+// 自动遍历所有并行类型
+for (const [paraType, data] of Object.entries(commByPara)) {
+    // tp, pp, dp, ep, ulysses, ring, new_parallelism...
+}
+
+// 自动遍历所有原语类型
+for (const [opType, data] of Object.entries(commByOp)) {
+    // all_reduce, all_gather, reduce_scatter, all_to_all, new_op...
+}
+```
+
+**效果**：
+- 新增通信域（如 `ep`）自动显示
+- 新增通信原语（如 `all_to_all`）自动显示
+
+### 11.6 所有分解类型解耦状态
+
+| 分解类型 | 解耦状态 | 实现方式 | 位置 |
+|---------|---------|---------|------|
+| 耗时分解 | ✅ 已解耦 | Object.keys(time_breakdown) | app.js:1175 |
+| 推理分解 | ✅ 已解耦 | Object.keys(inference_breakdown) | app.js:1216 |
+| 子模块分解 | ✅ 已解耦 | Object.keys(bySubmoduleType) | app.js:1004 |
+| 嵌套分解 | ✅ 已解耦 | Object.keys(nested_breakdown) | app.js:1031 |
+| 内存类型分解 | ✅ 已解耦 | Object.keys(memory_by_type) | app.js:983 |
+| 通信域分解 | ✅ 已解耦 | Object.keys(communication_by_domain) | app.js:1076+ |
+| 通信原语分解 | ✅ 已解耦 | Object.keys(communication_by_op) | app.js:1076+ |
+
+### 11.7 新增模型天然兼容
+
+**无需修改前端代码**：
+
+1. 后端添加 `_submodule_name` 属性
+2. 数据结构自动包含新类型
+3. 前端 `Object.keys()` 自动发现
+
+**示例**：
+
+```python
+class ShardedNewAttention(ShardedModule):
+    _submodule_name = "new_attention"  # 显式声明
+```
+
+```javascript
+// 前端自动显示
+for (const [type, data] of Object.entries(bySubmoduleType)) {
+    // → embedding, transformer_block, lm_head, new_attention...
+}
+```
+
+### 11.8 结构签名缓存机制
+
+**问题**：Qwen3.5 混合注意力（linear + full）所有 Block 签名相同，只分析一次
+
+**解决**：`_compute_structure_signature` 添加 `layer_type` 属性
+
+```python
+config_attrs = [
+    "hidden_size", "num_heads", ...,
+    "layer_type",  # 新增！区分 linear vs full
+]
+```
+
+**效果**：
+- linear_attention Block 和 full_attention Block 结构签名不同
+- 分别缓存和分析
+- 前端显示完整分解：linear_attention + attention (full) + moe
