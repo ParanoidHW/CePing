@@ -305,5 +305,133 @@ class TestInferenceBreakdownHTTPAPI(unittest.TestCase):
             self.assertIn("activations_gb", memory)
 
 
+class TestTransformerBlockNestedBreakdown(unittest.TestCase):
+    """测试 transformer_block 嵌套分解与模型类型无关."""
+
+    def test_llama_has_attention_ffn_breakdown(self):
+        """测试 LLaMA transformer_block 有 attention + ffn 分解."""
+        model = create_model_from_config({"type": "llama-7b"})
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology.create_2tier_simple(
+            inter_node_bw_gbps=100, intra_node_bw_gbps=200
+        )
+        cluster = Cluster.create_homogeneous(
+            device.config, num_devices=8, topology=topology
+        )
+        strategy = StrategyConfig(tp_degree=8, pp_degree=1, dp_degree=1)
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        detailed = result.detailed_breakdown
+        by_sub = detailed.get("by_submodule_type", {})
+        self.assertIn("transformer_block", by_sub)
+
+        transformer_data = by_sub["transformer_block"]
+        self.assertIn("nested_breakdown", transformer_data)
+
+        nested = transformer_data["nested_breakdown"]
+        self.assertIn("attention", nested)
+        self.assertIn("ffn", nested)
+
+    def test_qwen35_moe_has_attention_moe_breakdown(self):
+        """测试 Qwen3.5 MoE transformer_block 有 attention + moe 分解."""
+        from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel
+
+        model = Qwen3_5MoEModel(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            num_experts=256,
+            num_experts_per_token=8,
+            shared_expert_intermediate=512,
+        )
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology.create_2tier_simple(
+            inter_node_bw_gbps=100, intra_node_bw_gbps=200
+        )
+        cluster = Cluster.create_homogeneous(
+            device.config, num_devices=8, topology=topology
+        )
+        strategy = StrategyConfig(tp_degree=8, pp_degree=1, dp_degree=1, ep_degree=2)
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        detailed = result.detailed_breakdown
+        by_sub = detailed.get("by_submodule_type", {})
+        self.assertIn("transformer_block", by_sub)
+
+        transformer_data = by_sub["transformer_block"]
+        self.assertIn("nested_breakdown", transformer_data)
+
+        nested = transformer_data["nested_breakdown"]
+        self.assertIn("attention", nested)
+        self.assertIn("moe", nested)
+
+    def test_qwen35_dense_has_attention_ffn_breakdown(self):
+        """测试 Qwen3.5 Dense transformer_block 有 attention + ffn 分解."""
+        from llm_perf.modeling.qwen3_5 import Qwen3_5Model
+
+        model = Qwen3_5Model(
+            vocab_size=248320,
+            hidden_size=2048,
+            num_layers=4,
+            num_heads=16,
+            intermediate_size=6144,
+        )
+        device = Device.from_preset("H100-SXM-80GB")
+        topology = NetworkTopology.create_2tier_simple(
+            inter_node_bw_gbps=100, intra_node_bw_gbps=200
+        )
+        cluster = Cluster.create_homogeneous(
+            device.config, num_devices=8, topology=topology
+        )
+        strategy = StrategyConfig(tp_degree=8, pp_degree=1, dp_degree=1)
+        analyzer = UnifiedAnalyzer(model, device, cluster, strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        detailed = result.detailed_breakdown
+        by_sub = detailed.get("by_submodule_type", {})
+        self.assertIn("transformer_block", by_sub)
+
+        transformer_data = by_sub["transformer_block"]
+        self.assertIn("nested_breakdown", transformer_data)
+
+        nested = transformer_data["nested_breakdown"]
+        self.assertIn("attention", nested)
+        self.assertIn("ffn", nested)
+
+    def test_nested_breakdown_independent_of_model_type(self):
+        """测试嵌套分解与模型类型无关，只依赖子模块类名."""
+        from llm_perf.modeling.qwen3_5 import ShardedQwen3_5MoEBlock
+
+        block = ShardedQwen3_5MoEBlock(
+            hidden_size=2048,
+            layer_type="linear_attention",
+            num_heads=16,
+            num_experts=256,
+        )
+
+        from llm_perf.analyzer.unified import MODULE_CLASS_TO_TYPE, NESTED_MODULE_CLASSES
+
+        self.assertIn("ShardedQwen3_5MoEBlock", MODULE_CLASS_TO_TYPE)
+        self.assertEqual(
+            MODULE_CLASS_TO_TYPE["ShardedQwen3_5MoEBlock"].value, "transformer_block"
+        )
+
+        self.assertIn("ShardedLinearAttention", MODULE_CLASS_TO_TYPE)
+        self.assertEqual(
+            MODULE_CLASS_TO_TYPE["ShardedLinearAttention"].value, "attention"
+        )
+
+        self.assertIn("ShardedLinearAttention", NESTED_MODULE_CLASSES)
+
+
 if __name__ == "__main__":
     unittest.main()
