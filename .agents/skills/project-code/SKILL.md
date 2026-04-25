@@ -165,25 +165,40 @@ def bind(self, ctx, pp_strategy=None):
 
 ### 4. 架构设计保持解耦
 
-设计方案时需要做好解耦，不同模块间减少信息的重复读写和存取，保持最小集的数据生产者，所有消费者统一从这些生产者获取数据：
+设计方案时需要做好解耦，不同模块间减少信息的重复读写和存取，保持最小集的数据生产者，所有消费者统一从这些生产者获取数据，消费者段尽可能减少显式的注册表信息：
 
 ```python
 # 好的设计：模块解耦
-def data_producer(inputs):
-    # some codes
-    return data
+class Producer:
+    def data_producer(self, inputs):
+        # some codes to produce data
+        self.intermediate_data = ....
 
-def data_consumer(inputs, others):
-    data = data_producer(inputs)
+    @property
+    def data(self):
+        return self.intermediate_data
 
-    # data process
-    abstract = data_process(data)
 
-    return abstract
+class Consumer:
+    def data_consumer(self, inputs, producer):
+        # data process
+        abstract = self.data_process(producer.data)
+
+        return abstract
 
 
 # 坏的设计：消费者自己生产和组装数据
-def data_consumer
+class Consumer:
+    def data_producer(self, inputs):
+        self.intermediate_data = ...
+
+    def data_consumer(self, inputs):
+        # data process
+        abstract = self.data_producer(data)
+
+        return abstract
+
+```
 
 ---
 
