@@ -847,71 +847,96 @@ function collectWorkloadConfig(scenario) {
 function displayResults(result) {
     elements.results.style.display = 'block';
     
-    if (state.currentPipeline === 'diffusion-video') {
+    const workloadType = result.workload_type || 'training';
+    const scenario = elements.workloadScenario?.value || 'training';
+    
+    if (workloadType === 'inference' && (scenario === 'diffusion' || state.currentPipeline === 'diffusion-video')) {
         const phases = result.phases || [];
         const totalTime = result.total_time_sec || 0;
         
-        const encodePhase = phases.find(p => p.name === 'encode') || {};
         const denoisePhase = phases.find(p => p.name === 'denoise') || {};
+        const encodePhase = phases.find(p => p.name === 'encode') || {};
         const decodePhase = phases.find(p => p.name === 'decode') || {};
         
-        const encodePct = (encodePhase.total_time_sec || 0) / totalTime * 100;
-        const denoisePct = (denoisePhase.total_time_sec || 0) / totalTime * 100;
-        const decodePct = (decodePhase.total_time_sec || 0) / totalTime * 100;
+        const denoisePct = totalTime > 0 ? (denoisePhase.total_time_sec || 0) / totalTime * 100 : 0;
+        const encodePct = totalTime > 0 ? (encodePhase.total_time_sec || 0) / totalTime * 100 : 0;
+        const decodePct = totalTime > 0 ? (decodePhase.total_time_sec || 0) / totalTime * 100 : 0;
         
         const params = result.params || {};
+        const diffusionSteps = denoisePhase.repeat_count || params.num_steps || 50;
+        const stepTime = (denoisePhase.total_time_sec || 0) / diffusionSteps;
+        
+        const pixelsPerStep = params.height && params.width 
+            ? params.height * params.width 
+            : (params.num_frames || 81) * (params.height || 720) * (params.width || 1280);
+        const throughput = pixelsPerStep > 0 ? pixelsPerStep / totalTime : 0;
         
         elements.resultsContent.innerHTML = `
             <div class="result-grid">
                 <div class="result-card highlight">
-                    <div class="result-value">${(totalTime).toFixed(1)}s</div>
+                    <div class="result-value">${totalTime.toFixed(1)}s</div>
                     <div class="result-label">Total Time</div>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${(stepTime * 1000).toFixed(0)}ms</div>
+                    <div class="result-label">Step Time</div>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${diffusionSteps}</div>
+                    <div class="result-label">Diffusion Steps</div>
                 </div>
                 <div class="result-card">
                     <div class="result-value">${(result.peak_memory_gb || 0).toFixed(1)}GB</div>
                     <div class="result-label">Peak Memory</div>
                 </div>
+            </div>
+            <div class="result-grid" style="margin-top: 1rem;">
                 <div class="result-card">
-                    <div class="result-value">${((result.throughput?.pixels_per_sec || 0) / 1000000).toFixed(2)}M</div>
+                    <div class="result-value">${(throughput / 1000000).toFixed(2)}M</div>
                     <div class="result-label">Pixels/sec</div>
                 </div>
-                <div class="result-card">
-                    <div class="result-value">${denoisePhase.repeat_count || params.num_inference_steps || 50}</div>
-                    <div class="result-label">Inference Steps</div>
-                </div>
             </div>
-            <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">组件耗时分解</h3>
+            <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">耗时分解</h3>
             <table class="breakdown-table">
                 <tr>
-                    <th>组件</th>
+                    <th>阶段</th>
                     <th>时间</th>
                     <th>占比</th>
                 </tr>
+                ${encodePhase.total_time_sec > 0 ? `
                 <tr>
-                    <td>Text Encoder (encode)</td>
+                    <td>Encode</td>
                     <td>${((encodePhase.total_time_sec || 0) * 1000).toFixed(2)} ms</td>
-                    <td>${encodePct.toFixed(3)}%</td>
+                    <td>${encodePct.toFixed(1)}%</td>
                 </tr>
+                ` : ''}
                 <tr>
-                    <td>DiT Denoising (${denoisePhase.repeat_count || params.num_inference_steps || 50} steps)</td>
+                    <td>Denoise (${diffusionSteps} steps)</td>
                     <td>${(denoisePhase.total_time_sec || 0).toFixed(2)} s</td>
                     <td>${denoisePct.toFixed(1)}%</td>
                 </tr>
+                ${decodePhase.total_time_sec > 0 ? `
                 <tr>
-                    <td>VAE Decoder (decode)</td>
+                    <td>Decode</td>
                     <td>${((decodePhase.total_time_sec || 0) * 1000).toFixed(2)} ms</td>
-                    <td>${decodePct.toFixed(3)}%</td>
+                    <td>${decodePct.toFixed(1)}%</td>
                 </tr>
+                ` : ''}
             </table>
+            ${params.height && params.width ? `
             <div style="margin-top: 1rem; padding: 1rem; background: var(--gray-100); border-radius: 8px;">
-                <strong>生成配置:</strong> ${params.num_frames || 81}帧 @ ${params.height || 720}x${params.width || 1280} | CFG: ${params.use_cfg ? '启用' : '禁用'}
+                <strong>生成配置:</strong> ${params.height}x${params.width} | Steps: ${diffusionSteps} | CFG: ${params.use_cfg ? '启用' : '禁用'}
             </div>
+            ` : params.num_frames ? `
+            <div style="margin-top: 1rem; padding: 1rem; background: var(--gray-100); border-radius: 8px;">
+                <strong>生成配置:</strong> ${params.num_frames}帧 @ ${params.height || 720}x${params.width || 1280} | CFG: ${params.use_cfg ? '启用' : '禁用'}
+            </div>
+            ` : ''}
+            ${renderDetailedBreakdown(result.detailed_breakdown)}
         `;
         elements.results.scrollIntoView({ behavior: 'smooth' });
         return;
     }
-    
-    const scenario = elements.workloadScenario?.value || 'training';
     
     if (scenario === 'training' || scenario === 'rl_training') {
         const detailed = result.detailed_breakdown;

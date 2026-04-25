@@ -255,8 +255,15 @@ def evaluate():
                 mode = "training" if workload.endswith("-training") or "training" in workload else "inference"
             elif isinstance(workload_data, dict):
                 scenario = workload_data.get("scenario", "training")
-                mode = "training" if scenario in ("training", "rl_training") else "inference"
-                workload = infer_workload(model_type, mode)
+                if scenario == "diffusion":
+                    workload = "denoise-inference"
+                    mode = "inference"
+                elif scenario in ("training", "rl_training"):
+                    workload = infer_workload(model_type, "training")
+                    mode = "training"
+                else:
+                    workload = infer_workload(model_type, "inference")
+                    mode = "inference"
         
         if not workload:
             mode = data.get("mode", "inference")

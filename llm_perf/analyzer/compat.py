@@ -32,7 +32,7 @@ def infer_workload(model_type: str, mode: str) -> str:
 
     model_lower = model_type.lower()
 
-    if "wan" in model_lower or "dit" in model_lower:
+    if "wan" in model_lower or "dit" in model_lower or "hunyuan" in model_lower or "diffusion" in model_lower:
         base = "diffusion"
     elif "vae" in model_lower:
         base = "conv"

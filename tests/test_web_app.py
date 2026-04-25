@@ -34,6 +34,104 @@ class TestWorkloadScenarios:
         assert data["success"] is True
         assert data["result"]["peak_memory_gb"] > 0
 
+    def test_workload_diffusion_scenario_hunyuan(self):
+        """Test diffusion workload scenario with HunyuanImage 3.0."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"preset": "hunyuan-image-3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {
+                    "scenario": "diffusion",
+                    "batch_size": 1,
+                    "diffusion_steps": 50,
+                    "output_image_size": 1024,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        
+        result = data["result"]
+        assert result["peak_memory_gb"] > 0
+        assert result["total_time_sec"] > 0
+        
+        phases = result["phases"]
+        denoise_phase = next((p for p in phases if p["name"] == "denoise"), None)
+        assert denoise_phase is not None
+        assert denoise_phase["total_time_sec"] > 0
+        assert denoise_phase["repeat_count"] == 50
+        
+        assert "prefill" not in result or result["prefill"] is None
+        assert "decode" not in result or result["decode"] is None or result["decode"]["tps"] == 0
+
+    def test_diffusion_result_no_ttft_tpot(self):
+        """Test diffusion result does NOT contain TTFT/TPOT."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"preset": "hunyuan-image-3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {"scenario": "diffusion", "diffusion_steps": 50},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+
+        if result.get("prefill"):
+            assert result["prefill"]["ttft_sec"] == 0 or "ttft_sec" not in result["prefill"]
+        
+        if result.get("decode"):
+            assert result["decode"]["tpot_sec"] == 0 or "tpot_sec" not in result["decode"]
+
+    def test_diffusion_has_step_time(self):
+        """Test diffusion result has step_time metrics."""
+        client = app.test_client()
+
+        response = client.post(
+            "/api/evaluate",
+            json={
+                "model": {"preset": "hunyuan-image-3"},
+                "device": "H100-SXM-80GB",
+                "num_devices": 8,
+                "devices_per_node": 8,
+                "topology": {"type": "2-Tier Simple", "intra_node_bw_gbps": 200},
+                "strategy": {"tp": 8, "pp": 1, "dp": 1},
+                "workload": {"scenario": "diffusion", "diffusion_steps": 50},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        result = data["result"]
+
+        phases = result["phases"]
+        denoise_phase = next((p for p in phases if p["name"] == "denoise"), None)
+        assert denoise_phase is not None
+        
+        step_time_sec = denoise_phase["single_time_sec"]
+        assert step_time_sec > 0
+        
+        total_denoise_time = denoise_phase["total_time_sec"]
+        repeat_count = denoise_phase["repeat_count"]
+        assert abs(total_denoise_time - step_time_sec * repeat_count) < 0.001
+
     def test_workload_inference_scenario(self):
         """Test inference workload scenario via /api/evaluate."""
         client = app.test_client()
