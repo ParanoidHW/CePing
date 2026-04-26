@@ -1,5 +1,64 @@
 # 开发日志
 
+## 2026-04-26: 新增 XlsxReporter 导出功能
+
+### 任务背景
+用户需求：评估结果需要导出为 Excel 格式，便于离线分析和报告生成。
+
+### 实施方案
+基于现有 reporter 模块架构，新增 XlsxReporter：
+
+#### 1. 数据转换辅助模块
+文件：`llm_perf/reporter/utils.py`
+- `flatten_submodules(phases)` - 扁平化所有子模块（含嵌套展开）
+- `format_bytes_gb(bytes)` - 格式化内存为 GB
+- `format_time_ms(sec)` - 格式化时间为 ms
+- `format_percentage(value)` - 格式化百分比
+- `group_by_submodule_type(flat)` - 按子模块类型聚合
+- `group_by_component(flat)` - 按组件聚合
+
+#### 2. XlsxReporter
+文件：`llm_perf/reporter/xlsx_reporter.py`
+- 继承 BaseReporter
+- `report(result) -> bytes` - 返回 xlsx 文件内容
+- `save(result, path)` - 保存到文件
+
+xlsx 结构（5个 sheet）：
+1. **总览** - 基本信息、吞吐量、总时间、峰值内存
+2. **内存分解_按类型** - weight, gradient, optimizer, activation
+3. **内存分解_按子模型** - encoder, backbone, decoder 等
+4. **计算分解_按类型** - 各子模块类型的时间、FLOPs、占比
+5. **Phase详情** - 各 phase 的完整数据
+
+#### 3. Web 端点
+文件：`web/app.py`
+- 新增 `/api/export/xlsx` POST 端点
+- 接收 result_data，调用 XlsxReporter 生成 xlsx bytes
+- 返回文件下载响应（Content-Disposition: attachment）
+
+#### 4. 前端导出按钮
+文件：`web/static/js/app.js`
+- 在 state 中添加 currentResult 保存评估结果
+- 新增 `exportToXlsx()` 函数调用导出端点
+- 新增 `addExportButton()` 在结果区域显示"导出 Excel"按钮
+
+文件：`web/static/css/style.css`
+- 新增 `.btn-secondary` 样式用于导出按钮
+
+### 提交记录
+- `4e8e937 feat(reporter): add XlsxReporter for Excel export`
+- `e758713 feat(web): add xlsx export endpoint`
+- `feb757c feat(web): add Excel export button in frontend`
+- `7113526 test: add XlsxReporter tests`
+
+### 测试覆盖
+新增 17 个测试用例，全部通过：
+- TestXlsxReporter: reporter 功能测试（10个）
+- TestReporterUtils: 辅助函数测试（5个）
+- TestWebXlsxExport: web 端点测试（3个）
+
+---
+
 ## 2026-04-25: 全面重构前后端场景显示解耦架构
 
 ### 任务背景
