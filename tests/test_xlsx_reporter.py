@@ -1,5 +1,6 @@
 """Tests for XlsxReporter."""
 
+import pytest
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -224,6 +225,51 @@ class TestReporterUtils:
         assert grouped["attention"]["time_sec"] == 0.03
         assert grouped["attention"]["flops"] == 3e9
         assert grouped["ffn"]["time_sec"] == 0.03
+
+    def test_group_by_submodule_type_nested(self):
+        """Test group_by_submodule_type with nested submodules."""
+        from llm_perf.reporter.utils import group_by_submodule_type
+
+        flat = [
+            {"submodule_type": "embedding", "time_sec": 0.01, "flops": 1e9},
+            {"submodule_type": "transformer_block", "time_sec": 0.05, "flops": 5e9},
+            {"submodule_type": "attention", "time_sec": 0.02, "flops": 2e9, "parent_type": "transformer_block"},
+            {"submodule_type": "ffn", "time_sec": 0.03, "flops": 3e9, "parent_type": "transformer_block"},
+        ]
+
+        grouped = group_by_submodule_type(flat)
+        assert "embedding" in grouped
+        assert "transformer_block" in grouped
+        assert "attention_nested" in grouped
+        assert "ffn_nested" in grouped
+        
+        assert grouped["embedding"]["time_sec"] == 0.01
+        assert grouped["transformer_block"]["time_sec"] == 0.05
+        assert grouped["attention_nested"]["time_sec"] == 0.02
+        assert grouped["ffn_nested"]["time_sec"] == 0.03
+        
+        assert grouped["attention_nested"]["parent_type"] == "transformer_block"
+        assert grouped["ffn_nested"]["parent_type"] == "transformer_block"
+
+    def test_group_by_submodule_type_total_time_no_double_count(self):
+        """Test that total time doesn't double-count nested submodules."""
+        from llm_perf.reporter.utils import group_by_submodule_type
+
+        flat = [
+            {"submodule_type": "embedding", "time_sec": 0.01, "flops": 1e9},
+            {"submodule_type": "transformer_block", "time_sec": 0.05, "flops": 5e9},
+            {"submodule_type": "attention", "time_sec": 0.02, "flops": 2e9, "parent_type": "transformer_block"},
+            {"submodule_type": "ffn", "time_sec": 0.03, "flops": 3e9, "parent_type": "transformer_block"},
+        ]
+
+        grouped = group_by_submodule_type(flat)
+        
+        total_compute_time = sum(
+            g.get("time_sec", 0) for k, g in grouped.items() if not k.endswith("_nested")
+        )
+        
+        assert total_compute_time == pytest.approx(0.06)
+        assert total_compute_time < grouped["transformer_block"]["time_sec"] + grouped["attention_nested"]["time_sec"] + grouped["ffn_nested"]["time_sec"]
 
 
 class TestWebXlsxExport:

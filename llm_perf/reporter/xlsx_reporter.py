@@ -189,8 +189,12 @@ class XlsxReporter(BaseReporter):
         flat_submodules = flatten_submodules(phases)
         grouped = group_by_submodule_type(flat_submodules)
 
-        total_compute_time = sum(g.get("time_sec", 0) for g in grouped.values())
-        total_comm_time = sum(g.get("communication_time_sec", 0) for g in grouped.values())
+        total_compute_time = sum(
+            g.get("time_sec", 0) for k, g in grouped.items() if not k.endswith("_nested")
+        )
+        total_comm_time = sum(
+            g.get("communication_time_sec", 0) for k, g in grouped.items() if not k.endswith("_nested")
+        )
 
         if not grouped:
             ws.cell(row=2, column=1, value="无数据")

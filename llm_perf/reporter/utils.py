@@ -116,33 +116,66 @@ def group_by_submodule_type(flat_submodules: List[Dict[str, Any]]) -> Dict[str, 
 
     Returns:
         Dict mapping submodule_type to aggregated metrics
+        
+    Note:
+        Nested submodules (with parent_type) are aggregated separately with '_nested' suffix
+        to avoid double-counting in total time calculation.
     """
     grouped = {}
+    nested_grouped = {}
+    
     for sm in flat_submodules:
         sm_type = sm.get("submodule_type", "unknown")
-        if sm_type not in grouped:
-            grouped[sm_type] = {
-                "time_sec": 0,
-                "flops": 0,
-                "weight_memory_gb": 0,
-                "gradient_memory_gb": 0,
-                "optimizer_memory_gb": 0,
-                "activation_memory_gb": 0,
-                "communication_gb": 0,
-                "communication_time_sec": 0,
-                "count": 0,
-            }
-        grouped[sm_type]["time_sec"] += sm.get("time_sec", 0)
-        grouped[sm_type]["flops"] += sm.get("flops", 0)
-        grouped[sm_type]["weight_memory_gb"] += sm.get("weight_memory_gb", 0)
-        grouped[sm_type]["gradient_memory_gb"] += sm.get("gradient_memory_gb", 0)
-        grouped[sm_type]["optimizer_memory_gb"] += sm.get("optimizer_memory_gb", 0)
-        grouped[sm_type]["activation_memory_gb"] += sm.get("activation_memory_gb", 0)
-        grouped[sm_type]["communication_gb"] += sm.get("communication_gb", 0)
-        grouped[sm_type]["communication_time_sec"] += sm.get("communication_time_sec", 0)
-        grouped[sm_type]["count"] += sm.get("count", 1)
+        parent_type = sm.get("parent_type")
+        
+        if parent_type:
+            nested_type = f"{sm_type}_nested"
+            if nested_type not in nested_grouped:
+                nested_grouped[nested_type] = {
+                    "time_sec": 0,
+                    "flops": 0,
+                    "weight_memory_gb": 0,
+                    "gradient_memory_gb": 0,
+                    "optimizer_memory_gb": 0,
+                    "activation_memory_gb": 0,
+                    "communication_gb": 0,
+                    "communication_time_sec": 0,
+                    "count": 0,
+                    "parent_type": parent_type,
+                }
+            nested_grouped[nested_type]["time_sec"] += sm.get("time_sec", 0)
+            nested_grouped[nested_type]["flops"] += sm.get("flops", 0)
+            nested_grouped[nested_type]["weight_memory_gb"] += sm.get("weight_memory_gb", 0)
+            nested_grouped[nested_type]["gradient_memory_gb"] += sm.get("gradient_memory_gb", 0)
+            nested_grouped[nested_type]["optimizer_memory_gb"] += sm.get("optimizer_memory_gb", 0)
+            nested_grouped[nested_type]["activation_memory_gb"] += sm.get("activation_memory_gb", 0)
+            nested_grouped[nested_type]["communication_gb"] += sm.get("communication_gb", 0)
+            nested_grouped[nested_type]["communication_time_sec"] += sm.get("communication_time_sec", 0)
+            nested_grouped[nested_type]["count"] += sm.get("count", 1)
+        else:
+            if sm_type not in grouped:
+                grouped[sm_type] = {
+                    "time_sec": 0,
+                    "flops": 0,
+                    "weight_memory_gb": 0,
+                    "gradient_memory_gb": 0,
+                    "optimizer_memory_gb": 0,
+                    "activation_memory_gb": 0,
+                    "communication_gb": 0,
+                    "communication_time_sec": 0,
+                    "count": 0,
+                }
+            grouped[sm_type]["time_sec"] += sm.get("time_sec", 0)
+            grouped[sm_type]["flops"] += sm.get("flops", 0)
+            grouped[sm_type]["weight_memory_gb"] += sm.get("weight_memory_gb", 0)
+            grouped[sm_type]["gradient_memory_gb"] += sm.get("gradient_memory_gb", 0)
+            grouped[sm_type]["optimizer_memory_gb"] += sm.get("optimizer_memory_gb", 0)
+            grouped[sm_type]["activation_memory_gb"] += sm.get("activation_memory_gb", 0)
+            grouped[sm_type]["communication_gb"] += sm.get("communication_gb", 0)
+            grouped[sm_type]["communication_time_sec"] += sm.get("communication_time_sec", 0)
+            grouped[sm_type]["count"] += sm.get("count", 1)
 
-    return grouped
+    return {**grouped, **nested_grouped}
 
 
 def group_by_component(flat_submodules: List[Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
