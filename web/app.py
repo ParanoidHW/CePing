@@ -12,8 +12,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from flask_cors import CORS
+from io import BytesIO
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -24,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm_perf.analyzer import UnifiedAnalyzer, get_workload, infer_workload, list_workloads
+from llm_perf.analyzer import UnifiedAnalyzer, UnifiedResult, get_workload, infer_workload, list_workloads
+from llm_perf.reporter import XlsxReporter
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.device import Device
 from llm_perf.hardware.topology import NetworkTopology
@@ -718,6 +720,61 @@ def evaluate_colocate():
         )
 
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/export/xlsx", methods=["POST"])
+def export_xlsx():
+    """Export evaluation result as XLSX file."""
+    try:
+        data = request.json
+        result_dict = data.get("result")
+
+        if not result_dict:
+            return jsonify({"success": False, "error": "No result data provided"}), 400
+
+        reporter = XlsxReporter()
+
+        from llm_perf.analyzer.base import WorkloadType, ScenarioType
+
+        workload_type_str = result_dict.get("workload_type", "inference")
+        workload_type = WorkloadType(workload_type_str) if workload_type_str else WorkloadType.INFERENCE
+
+        scenario_type_str = result_dict.get("scenario_type")
+        scenario_type = ScenarioType(scenario_type_str) if scenario_type_str else None
+
+        result = UnifiedResult(
+            workload_name=result_dict.get("workload_name", ""),
+            workload_type=workload_type,
+            scenario_type=scenario_type,
+            phases=[],
+            total_time_sec=result_dict.get("total_time_sec", 0),
+            peak_memory_gb=result_dict.get("peak_memory_gb", 0),
+            throughput=result_dict.get("throughput", {}),
+            params=result_dict.get("params", {}),
+            metadata=result_dict.get("metadata", {}),
+            breakdown=result_dict.get("breakdown"),
+            detailed_breakdown=result_dict.get("detailed_breakdown"),
+            mfu=result_dict.get("mfu"),
+            qps=result_dict.get("qps"),
+        )
+
+        xlsx_bytes = reporter.report(result)
+
+        buffer = BytesIO(xlsx_bytes)
+        buffer.seek(0)
+
+        filename = f"{result_dict.get('workload_name', 'result')}_report.xlsx"
+
+        return send_file(
+            buffer,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    except Exception as e:
+        logger.error(f"XLSX export error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
