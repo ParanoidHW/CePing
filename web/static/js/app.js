@@ -20,6 +20,7 @@ const state = {
     videoParams: null,
     rlCurrentPhase: 'train',
     diffusionCurrentMode: 'T2I',
+    currentResult: null,
 };
 
 const elements = {
@@ -847,6 +848,7 @@ function collectWorkloadConfig(scenario) {
 
 function displayResults(result) {
     elements.results.style.display = 'block';
+    state.currentResult = result;
     
     const scenarioType = result.scenario_type || result.workload_type || 'training';
     
@@ -865,7 +867,68 @@ function displayResults(result) {
         renderGenericSummary(result);
     }
     
+    addExportButton();
     elements.results.scrollIntoView({ behavior: 'smooth' });
+}
+
+function addExportButton() {
+    const existingBtn = document.getElementById('export-xlsx-btn');
+    if (existingBtn) {
+        existingBtn.remove();
+    }
+    
+    const exportBtn = document.createElement('button');
+    exportBtn.id = 'export-xlsx-btn';
+    exportBtn.className = 'btn-secondary';
+    exportBtn.style.marginTop = '1rem';
+    exportBtn.innerHTML = '<span class="btn-text">导出 Excel</span>';
+    exportBtn.onclick = exportToXlsx;
+    
+    elements.resultsContent.appendChild(exportBtn);
+}
+
+async function exportToXlsx() {
+    if (!state.currentResult) {
+        showError('No result to export');
+        return;
+    }
+    
+    const btn = document.getElementById('export-xlsx-btn');
+    const btnText = btn.querySelector('.btn-text');
+    btn.disabled = true;
+    btnText.textContent = '导出中...';
+    
+    try {
+        const response = await fetch('/api/export/xlsx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ result: state.currentResult })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            showError(errorData.error || 'Export failed');
+            return;
+        }
+        
+        const blob = await response.blob();
+        const filename = state.currentResult.workload_name || 'result';
+        
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filename}_report.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+    } catch (error) {
+        showError('Export error: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btnText.textContent = '导出 Excel';
+    }
 }
 
 function renderDiffusionSummary(result) {
