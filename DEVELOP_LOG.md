@@ -1,5 +1,43 @@
 # 开发日志
 
+## 2026-04-27: 修复 Activation 内存分解 Bug
+
+### 问题根因
+`by_type["activation"]` 从 submodule 聚合，但 forward/inference 模式下 submodule 的 `activation_memory_gb` 为 0。phase 级别有正确的 activation 数据（45.1GB），但没有传递到 by_type。
+
+### 实施方案
+
+#### 1. 修正 by_type 聚合逻辑
+文件：`llm_perf/analyzer/unified.py`
+- `by_type["activation"]` 从 phase 级别 `memory_breakdown["activation_gb"]` 聚合
+- 不再从 submodule 的 `activation_memory_gb` 聚合（forward 模式为 0）
+
+#### 2. 新增 activation 详细分解
+- 新增 `by_phase_activation` 数据结构：各 phase 的 activation（prefill/decode）
+- 包含 phase 名称、activation_gb、component、compute_type
+
+#### 3. 修改前端展示
+文件：`web/static/js/app.js`
+- 新增 "激活内存分解 (按Phase)" 表格
+- 显示各 phase 的激活内存及占比
+
+#### 4. 修改 xlsx 导出
+文件：`llm_perf/reporter/xlsx_reporter.py`
+- 新增 `SHEET_ACTIVATION_BY_PHASE = "激活内存分解_按Phase"`
+- 新增 `_create_activation_by_phase_sheet()` 方法
+
+#### 5. 新增测试用例
+文件：`tests/test_inference_breakdown.py`
+- `test_inference_by_type_has_nonzero_activation` - 验证 by_type['activation'] 不为 0
+- `test_inference_has_by_phase_activation` - 验证 by_phase_activation 有数据
+- `test_activation_matches_phase_memory_breakdown` - 验证数值一致性
+
+文件：`tests/test_xlsx_reporter.py`
+- 更新 `test_xlsx_reporter_has_all_sheets` - 包含新增 sheet
+
+### 测试结果
+38 passed (3 new tests added)
+
 ## 2026-04-26: 新增 XlsxReporter 导出功能
 
 ### 任务背景
