@@ -27,12 +27,12 @@ class TestScenarioTypeInference:
 
     def test_diffusion_pipeline_returns_diffusion_scenario(self):
         """Test 'diffusion-pipeline' returns diffusion scenario_type."""
-        scenario = infer_scenario_type("diffusion-pipeline", WorkloadType.INFERENCE)
+        scenario = infer_scenario_type("diffusion-pipeline", WorkloadType.DIFFUSION)
         assert scenario == ScenarioType.DIFFUSION
 
     def test_denoise_inference_returns_diffusion_scenario(self):
         """Test 'denoise-inference' returns diffusion scenario_type."""
-        scenario = infer_scenario_type("denoise-inference", WorkloadType.INFERENCE)
+        scenario = infer_scenario_type("denoise-inference", WorkloadType.DIFFUSION)
         assert scenario == ScenarioType.DIFFUSION
 
     def test_rl_ppo_returns_rl_training_scenario(self):
@@ -74,7 +74,7 @@ class TestUnifiedResultScenarioType:
         """Test diffusion result has correct scenario_type."""
         result = UnifiedResult(
             workload_name="diffusion-pipeline",
-            workload_type=WorkloadType.INFERENCE,
+            workload_type=WorkloadType.DIFFUSION,
             total_time_sec=10.0,
         )
         data = result.to_dict()
@@ -99,7 +99,7 @@ class TestUnifiedResultScenarioType:
         """Test diffusion result does NOT have LLM inference decode metrics."""
         result = UnifiedResult(
             workload_name="diffusion-pipeline",
-            workload_type=WorkloadType.INFERENCE,
+            workload_type=WorkloadType.DIFFUSION,
             phases=[
                 PhaseResult(name="encode", component="encoder", compute_type=ComputeType.FORWARD, total_time_sec=0.1),
                 PhaseResult(name="denoise", component="backbone", compute_type=ComputeType.FORWARD, total_time_sec=5.0, repeat_count=50),

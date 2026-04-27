@@ -1,6 +1,6 @@
 name: diffusion-pipeline
 description: 扩散模型完整Pipeline（encoder + backbone去噪 + decoder）
-workload_type: inference
+workload_type: diffusion
 
 component_mapping:
   encoder: encoder

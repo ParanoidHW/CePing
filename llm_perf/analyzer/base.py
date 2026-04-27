@@ -22,6 +22,7 @@ class WorkloadType(str, Enum):
 
     TRAINING = "training"
     INFERENCE = "inference"
+    DIFFUSION = "diffusion"
     MIXED = "mixed"
 
 

@@ -598,7 +598,7 @@ class UnifiedAnalyzer:
         hidden_size = getattr(component, "hidden_size", 4096)
         compute_pattern = phase.compute_pattern or self._infer_compute_pattern(component)
 
-        is_diffusion_model = hasattr(component, "image_height") and hasattr(component, "image_width")
+        is_diffusion_model = workload.workload_type == WorkloadType.DIFFUSION
 
         if phase.name == "prefill":
             seq_len = params.get("prompt_len", params.get("seq_len", 512))
