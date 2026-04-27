@@ -408,5 +408,75 @@ class TestTransformerBlockNestedBreakdown(unittest.TestCase):
         self.assertIn("ffn", nested)
 
 
+class TestActivationMemoryFix(unittest.TestCase):
+    """测试激活内存分解修复."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = create_model_from_config({"type": "llama-7b"})
+        cls.device = Device.from_preset("H100-SXM-80GB")
+        cls.topology = NetworkTopology.create_2tier_simple(
+            inter_node_bw_gbps=100, intra_node_bw_gbps=200
+        )
+        cls.cluster = Cluster.create_homogeneous(
+            cls.device.config, num_devices=8, topology=cls.topology
+        )
+        cls.strategy = StrategyConfig(tp_degree=8, pp_degree=1, dp_degree=1)
+
+    def test_inference_by_type_has_nonzero_activation(self):
+        """测试 by_type['activation'] 不为0（从 phase-level 聚合）."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown", {})
+        mem_by_type = detailed.get("memory", {}).get("by_type", {})
+
+        self.assertIn("activation", mem_by_type)
+        activation_gb = mem_by_type.get("activation", 0)
+        self.assertGreater(activation_gb, 0, "by_type['activation'] should be > 0 for inference")
+
+    def test_inference_has_by_phase_activation(self):
+        """测试 by_phase_activation 存在且有数据."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown", {})
+        by_phase_activation = detailed.get("memory", {}).get("by_phase_activation", {})
+
+        self.assertTrue(len(by_phase_activation) > 0, "by_phase_activation should have data")
+
+        total_phase_activation = sum(
+            data.get("activation_gb", 0) for data in by_phase_activation.values()
+        )
+        self.assertGreater(total_phase_activation, 0, "Total phase activation should be > 0")
+
+    def test_activation_matches_phase_memory_breakdown(self):
+        """测试 by_type['activation'] 等于 phase-level activation 总和."""
+        analyzer = UnifiedAnalyzer(self.model, self.device, self.cluster, self.strategy)
+        result = analyzer.analyze(
+            "llm-inference", batch_size=1, prompt_len=512, generation_len=128
+        )
+
+        result_dict = result.to_dict()
+        detailed = result_dict.get("detailed_breakdown", {})
+        by_type_activation = detailed.get("memory", {}).get("by_type", {}).get("activation", 0)
+
+        phase_activation_sum = sum(
+            phase.memory_breakdown.get("activation_gb", 0)
+            for phase in result.phases
+        )
+
+        self.assertAlmostEqual(
+            by_type_activation, phase_activation_sum, places=2,
+            msg="by_type['activation'] should equal sum of phase-level activation"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

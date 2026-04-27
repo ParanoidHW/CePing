@@ -19,6 +19,7 @@ class XlsxReporter(BaseReporter):
     SHEET_OVERVIEW = "总览"
     SHEET_MEMORY_BY_TYPE = "内存分解_按类型"
     SHEET_MEMORY_BY_SUBMODEL = "内存分解_按子模型"
+    SHEET_ACTIVATION_BY_PHASE = "激活内存分解_按Phase"
     SHEET_COMPUTE_BY_TYPE = "计算分解_按类型"
     SHEET_PHASE_DETAIL = "Phase详情"
 
@@ -48,6 +49,7 @@ class XlsxReporter(BaseReporter):
         self._create_overview_sheet(wb, result_dict)
         self._create_memory_by_type_sheet(wb, result_dict)
         self._create_memory_by_submodel_sheet(wb, result_dict)
+        self._create_activation_by_phase_sheet(wb, result_dict)
         self._create_compute_by_type_sheet(wb, result_dict)
         self._create_phase_detail_sheet(wb, result_dict)
 
@@ -177,6 +179,40 @@ class XlsxReporter(BaseReporter):
             row_idx += 1
 
         self._auto_adjust_column_width(ws, [20, 12, 12, 12, 12, 12])
+
+    def _create_activation_by_phase_sheet(self, wb: Workbook, result_dict: Dict[str, Any]) -> None:
+        """Create activation memory breakdown by phase sheet."""
+        ws = wb.create_sheet(self.SHEET_ACTIVATION_BY_PHASE)
+
+        headers = ["Phase", "激活内存(GB)", "占比"]
+        self._write_header_row(ws, headers, 1)
+
+        detailed = result_dict.get("detailed_breakdown", {})
+        by_phase_activation = detailed.get("memory", {}).get("by_phase_activation", {})
+
+        if not by_phase_activation:
+            ws.cell(row=2, column=1, value="无数据")
+            self._auto_adjust_column_width(ws, [15, 15, 10])
+            return
+
+        total_activation = sum(
+            data.get("activation_gb", 0) for data in by_phase_activation.values()
+        )
+
+        row_idx = 2
+        for phase_name, data in by_phase_activation.items():
+            activation_gb = data.get("activation_gb", 0)
+            pct = (activation_gb / total_activation * 100) if total_activation > 0 else 0
+            ws.cell(row=row_idx, column=1, value=phase_name).font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=2, value=f"{activation_gb:.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=3, value=f"{pct:.1f}%").font = self.VALUE_FONT
+            row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="总计").font = Font(bold=True)
+        ws.cell(row=row_idx, column=2, value=f"{total_activation:.2f}").font = Font(bold=True)
+        ws.cell(row=row_idx, column=3, value="100.0%").font = Font(bold=True)
+
+        self._auto_adjust_column_width(ws, [15, 15, 10])
 
     def _create_compute_by_type_sheet(self, wb: Workbook, result_dict: Dict[str, Any]) -> None:
         """Create compute breakdown by submodule type sheet."""

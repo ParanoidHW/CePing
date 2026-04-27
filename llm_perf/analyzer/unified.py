@@ -2027,18 +2027,21 @@ class UnifiedAnalyzer:
                     by_nested_type[nested_type]["communication"]["time_sec"] += nested.communication_time_sec
 
         # Calculate total memory breakdown
+        # Activation should be aggregated from phase-level (memory_breakdown["activation_gb"]),
+        # NOT from submodule-level, because forward/inference mode submodules have 0 activation_memory_gb
         total_params_count = sum(data["memory"]["params_count"] for data in by_submodule_type.values())
+        phase_activation_total = sum(
+            phase.memory_breakdown.get("activation_gb", 0.0) for phase in phases
+        )
         total_memory_breakdown = {
             "params_count": total_params_count,
             "params_count_billion": total_params_count / 1e9,
             "weight_gb": sum(data["memory"]["weight_gb"] for data in by_submodule_type.values()),
             "gradient_gb": sum(data["memory"]["gradient_gb"] for data in by_submodule_type.values()),
             "optimizer_gb": sum(data["memory"]["optimizer_gb"] for data in by_submodule_type.values()),
-            "activation_gb": sum(data["memory"]["activation_gb"] for data in by_submodule_type.values()),
-            "activations_gb": sum(
-                data["memory"]["activation_gb"] for data in by_submodule_type.values()
-            ),  # Backward compat
-            "total_gb": 0,  # Will be calculated below
+            "activation_gb": phase_activation_total,
+            "activations_gb": phase_activation_total,
+            "total_gb": 0,
         }
         total_memory_gb = (
             total_memory_breakdown["weight_gb"]
@@ -2047,6 +2050,20 @@ class UnifiedAnalyzer:
             + total_memory_breakdown["activation_gb"]
         )
         total_memory_breakdown["total_gb"] = total_memory_gb
+        
+        # Build by_phase_activation: activation breakdown by phase
+        by_phase_activation = {}
+        for phase in phases:
+            phase_activation = phase.memory_breakdown.get("activation_gb", 0.0)
+            if phase_activation > 0:
+                phase_name = phase.name
+                if phase_name not in by_phase_activation:
+                    by_phase_activation[phase_name] = {
+                        "activation_gb": 0.0,
+                        "component": phase.component,
+                        "compute_type": phase.compute_type.value,
+                    }
+                by_phase_activation[phase_name]["activation_gb"] += phase_activation
 
         total_compute_flops = sum(data["compute"]["flops"] for data in by_submodule_type.values())
         total_comm_bytes = sum(data["communication"]["bytes"] for data in by_submodule_type.values())
@@ -2098,6 +2115,7 @@ class UnifiedAnalyzer:
                 },
                 "by_submodel": _aggregate_submodel_memory(phases),
                 "by_submodule_type": by_submodule_type,
+                "by_phase_activation": by_phase_activation,
             },
             "compute": {
                 "by_submodule_type": {

@@ -1233,12 +1233,34 @@ function renderDetailedBreakdown(detailed) {
         `;
     }).join('');
 
+    const byPhaseActivation = detailed.memory?.by_phase_activation || {};
+    const phaseActivationTotal = Object.values(byPhaseActivation)
+        .reduce((sum, p) => sum + (p.activation_gb || 0), 0);
+    const phaseActivationRows = Object.entries(byPhaseActivation)
+        .map(([phaseName, data]) => {
+            const actGb = data.activation_gb || 0;
+            const pct = phaseActivationTotal > 0 ? (actGb / phaseActivationTotal * 100) : 0;
+            return `<tr><td>${phaseName}</td><td>${actGb.toFixed(2)} GB</td><td>${pct.toFixed(1)}%</td></tr>`;
+        }).join('');
+    const phaseActivationTotalRow = phaseActivationTotal > 0 
+        ? `<tr style="font-weight: bold; border-top: 2px solid var(--gray-200);"><td>总计</td><td>${phaseActivationTotal.toFixed(2)} GB</td><td>100%</td></tr>` 
+        : '';
+    const phaseActivationTable = phaseActivationRows 
+        ? `<h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">激活内存分解 (按Phase)</h3>
+           <table class="breakdown-table">
+               <tr><th>Phase</th><th>激活内存</th><th>占比</th></tr>
+               ${phaseActivationRows}${phaseActivationTotalRow}
+           </table>`
+        : '';
+
     return `
         <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--gray-700);">详细内存分解 (按类型)</h3>
         <table class="breakdown-table">
             <tr><th>内存类型</th><th>大小</th></tr>
             ${memRows}${totalRow || '<tr><td colspan="2">无数据</td></tr>'}
         </table>
+
+        ${phaseActivationTable}
 
         ${progressBarHtml}
         
