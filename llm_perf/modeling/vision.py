@@ -32,8 +32,33 @@ class ShardedConv2d(ShardedModule):
             name="weight",
         )
 
-    def forward(self, x):
-        return Conv2dOp.apply(x, self.weight, self.stride, self.padding)
+    def forward(self, x: ShardedTensor) -> ShardedTensor:
+        N, C_in, H, W = x.shape
+        C_out, _, kH, kW = self.weight.shape
+        sh, sw = self.stride
+        ph, pw = self.padding
+        H_out = (H + 2 * ph - kH) // sh + 1
+        W_out = (W + 2 * pw - kW) // sw + 1
+
+        output = ShardedTensor(
+            shape=(N, C_out, H_out, W_out),
+            shardable={},
+            dtype=self.weight.dtype,
+            name="conv2d_output",
+        )
+
+        output._op_history = x._op_history + [
+            Conv2dOp(
+                dtype=x.dtype,
+                input=x,
+                weight=self.weight,
+                output=output,
+                stride=self.stride,
+                padding=self.padding,
+            )
+        ]
+
+        return output
 
 
 class ShardedConv3d(ShardedModule):
@@ -58,8 +83,34 @@ class ShardedConv3d(ShardedModule):
             name="weight",
         )
 
-    def forward(self, x):
-        return Conv3dOp.apply(x, self.weight, self.stride, self.padding)
+    def forward(self, x: ShardedTensor) -> ShardedTensor:
+        N, C_in, D, H, W = x.shape
+        C_out, _, kD, kH, kW = self.weight.shape
+        sd, sh, sw = self.stride
+        pd, ph, pw = self.padding
+        D_out = (D + 2 * pd - kD) // sd + 1
+        H_out = (H + 2 * ph - kH) // sh + 1
+        W_out = (W + 2 * pw - kW) // sw + 1
+
+        output = ShardedTensor(
+            shape=(N, C_out, D_out, H_out, W_out),
+            shardable={1: "tp"},
+            dtype=self.weight.dtype,
+            name="conv3d_output",
+        )
+
+        output._op_history = x._op_history + [
+            Conv3dOp(
+                dtype=x.dtype,
+                input=x,
+                weight=self.weight,
+                output=output,
+                stride=self.stride,
+                padding=self.padding,
+            )
+        ]
+
+        return output
 
 
 class ShardedGroupNorm(ShardedModule):
@@ -83,8 +134,25 @@ class ShardedGroupNorm(ShardedModule):
             name="bias",
         )
 
-    def forward(self, x):
-        return GroupNormOp.apply(x, self.weight, self.bias, self.num_groups)
+    def forward(self, x: ShardedTensor) -> ShardedTensor:
+        output = ShardedTensor(
+            shape=x.shape,
+            shardable=x.shardable,
+            dtype=self.weight.dtype,
+            name="groupnorm_output",
+        )
+
+        output._op_history = x._op_history + [
+            GroupNormOp(
+                dtype=x.dtype,
+                input=x,
+                weight=self.weight,
+                output=output,
+                num_groups=self.num_groups,
+            )
+        ]
+
+        return output
 
 
 class ShardedResNetBlock2d(ShardedModule):

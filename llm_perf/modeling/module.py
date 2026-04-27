@@ -516,7 +516,16 @@ class ModuleInstance:
     def _infer_physical_flops(self, op: Any) -> int:
         """Derive physical FLOPs from operation."""
         from llm_perf.kernels.functional import flash_attention, linear, rms_norm, silu
-        from llm_perf.kernels.op import ActivationOp, AttentionOp, EmbeddingOp, MatmulOp, RMSNormOp
+        from llm_perf.kernels.op import (
+            ActivationOp,
+            AttentionOp,
+            Conv2dOp,
+            Conv3dOp,
+            EmbeddingOp,
+            GroupNormOp,
+            MatmulOp,
+            RMSNormOp,
+        )
 
         try:
             if isinstance(op, MatmulOp):
@@ -564,6 +573,50 @@ class ModuleInstance:
                 input_shape = self._infer_physical_shape(op.input_ids)
                 result = embedding(vocab_size, embedding_dim, input_shape, dtype=op.dtype)
                 flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
+            elif isinstance(op, Conv2dOp):
+                from llm_perf.kernels.functional import conv2d
+
+                input_physical = self._infer_physical_shape(op.input)
+                weight_physical = self._infer_physical_shape(op.weight)
+                result = conv2d(
+                    input_physical,
+                    weight_physical,
+                    stride=op.stride,
+                    padding=op.padding,
+                    dtype=op.dtype,
+                )
+                flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
+            elif isinstance(op, Conv3dOp):
+                from llm_perf.kernels.functional import conv3d
+
+                input_physical = self._infer_physical_shape(op.input)
+                weight_physical = self._infer_physical_shape(op.weight)
+                result = conv3d(
+                    input_physical,
+                    weight_physical,
+                    stride=op.stride,
+                    padding=op.padding,
+                    dtype=op.dtype,
+                )
+                flops = result.flops
+                logger.debug(
+                    f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
+                )
+                return flops
+            elif isinstance(op, GroupNormOp):
+                input_physical = self._infer_physical_shape(op.input)
+                numel = 1
+                for dim in input_physical:
+                    numel *= dim
+                flops = numel * 7
                 logger.debug(
                     f"[OP_FLOPS] op_type={op.__class__.__name__}, flops={flops / 1e9:.2f}G"
                 )
