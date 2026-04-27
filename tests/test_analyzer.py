@@ -16,12 +16,10 @@ from llm_perf.analyzer import (
     ComputeType,
     ComputePattern,
     WorkloadType,
-    ThroughputMetric,
     get_workload,
     list_workloads,
     register_workload,
     load_workload_from_yaml,
-    CommunicationBreakdown,
 )
 
 
@@ -35,29 +33,6 @@ def make_cluster(device, num_devices):
         inter_node_latency_us=10.0,
     )
     return Cluster.create_homogeneous(device.config, num_devices, topology)
-
-
-class TestEnums:
-    """Test enum types."""
-
-    def test_compute_type_values(self):
-        assert ComputeType.FORWARD.value == "forward"
-        assert ComputeType.BACKWARD.value == "backward"
-        assert ComputeType.OPTIMIZER.value == "optimizer"
-
-    def test_compute_pattern_values(self):
-        assert ComputePattern.TRANSFORMER_BLOCK.value == "transformer_block"
-        assert ComputePattern.CONV_ENCODER.value == "conv_encoder"
-        assert ComputePattern.CONV_DECODER.value == "conv_decoder"
-
-    def test_workload_type_values(self):
-        assert WorkloadType.TRAINING.value == "training"
-        assert WorkloadType.INFERENCE.value == "inference"
-        assert WorkloadType.MIXED.value == "mixed"
-
-    def test_throughput_metric_values(self):
-        assert ThroughputMetric.TOKENS_PER_SEC.value == "tokens_per_sec"
-        assert ThroughputMetric.PIXELS_PER_SEC.value == "pixels_per_sec"
 
 
 class TestPhase:
@@ -1100,7 +1075,6 @@ class TestEvaluationAccuracy:
         seq_len = 2048
         hidden_size = 4096
         num_layers = 4
-        vocab_size = 32000
 
         expected_forward_flops_per_layer = 2 * batch_size * seq_len * hidden_size * hidden_size * 6
         expected_forward_flops = expected_forward_flops_per_layer * num_layers

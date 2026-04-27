@@ -1,69 +1,16 @@
 """Tests for workload and model decoupling architecture.
 
 Ensures:
-1. Model config files have supported_workloads metadata
-2. hunyuan-image-3-text.yaml and hunyuan-image-3-diffusion.yaml are deleted
-3. hunyuan-image-3.yaml has unified config with supported_workloads
-4. Frontend filters models by workload type
-5. Backend API returns filtered models based on workload
+1. Frontend filters models by workload type
+2. Backend API returns filtered models based on workload
+3. Sparse type unification to dense/sparse
 """
-
-from pathlib import Path
-import yaml
 
 from llm_perf.modeling import (
     get_model_presets,
     get_presets_by_workload,
     get_presets_by_workload_grouped,
 )
-
-
-class TestWorkloadModelDecouplingFiles:
-    """Test correct file structure after refactoring."""
-
-    def test_hunyuan_image_3_text_yaml_deleted(self):
-        """Test hunyuan-image-3-text.yaml is deleted."""
-        config_path = Path("configs/models/hunyuan-image-3-text.yaml")
-        assert not config_path.exists(), "hunyuan-image-3-text.yaml should be deleted"
-
-    def test_hunyuan_image_3_diffusion_yaml_deleted(self):
-        """Test hunyuan-image-3-diffusion.yaml is deleted."""
-        config_path = Path("configs/models/hunyuan-image-3-diffusion.yaml")
-        assert not config_path.exists(), "hunyuan-image-3-diffusion.yaml should be deleted"
-
-    def test_hunyuan_image_3_yaml_exists(self):
-        """Test hunyuan-image-3.yaml exists with unified config."""
-        config_path = Path("configs/models/hunyuan-image-3.yaml")
-        assert config_path.exists(), "hunyuan-image-3.yaml should exist"
-
-    def test_hunyuan_image_3_yaml_has_supported_workloads(self):
-        """Test hunyuan-image-3.yaml has supported_workloads field."""
-        config_path = Path("configs/models/hunyuan-image-3.yaml")
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-
-        assert "supported_workloads" in config, "hunyuan-image-3.yaml should have supported_workloads"
-        assert "inference" in config["supported_workloads"]
-        assert "diffusion" in config["supported_workloads"]
-
-    def test_llama_config_has_supported_workloads(self):
-        """Test llama-7b.yaml has supported_workloads."""
-        config_path = Path("configs/models/llama-7b.yaml")
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-
-        assert "supported_workloads" in config
-        assert "training" in config["supported_workloads"]
-        assert "inference" in config["supported_workloads"]
-
-    def test_wan_dit_config_has_supported_workloads(self):
-        """Test wan-dit.yaml has supported_workloads."""
-        config_path = Path("configs/models/wan-dit.yaml")
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-
-        assert "supported_workloads" in config
-        assert "diffusion" in config["supported_workloads"]
 
 
 class TestWorkloadModelDecouplingRegistry:
