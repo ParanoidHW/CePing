@@ -594,7 +594,12 @@ class UnifiedAnalyzer:
         """
         ctx = self._create_parallel_context(params)
         batch_size = params.get("batch_size", 1)
-        
+
+        hidden_size = getattr(component, "hidden_size", 4096)
+        compute_pattern = phase.compute_pattern or self._infer_compute_pattern(component)
+
+        is_diffusion_model = hasattr(component, "image_height") and hasattr(component, "image_width")
+
         if phase.name == "prefill":
             seq_len = params.get("prompt_len", params.get("seq_len", 512))
         elif phase.name == "decode":
@@ -602,21 +607,25 @@ class UnifiedAnalyzer:
             prompt_len = params.get("prompt_len", 512)
             generated_tokens = params.get("generated_tokens", 0)
             kv_seq_len = prompt_len + generated_tokens
+        elif is_diffusion_model and compute_pattern == ComputePattern.TRANSFORMER_BLOCK:
+            height = params.get("height", 720)
+            width = params.get("width", 1280)
+            vae_compression_ratio = 16
+            latent_h = height // vae_compression_ratio
+            latent_w = width // vae_compression_ratio
+            seq_len = latent_h * latent_w
         else:
             seq_len = params.get("seq_len", params.get("prompt_len", 512))
-        
+
         if phase.name == "decode":
             self._set_kv_seq_len(component, kv_seq_len)
-        
+
         logger.debug(
             f"[SUBMODULE_ANALYZE] tp={ctx.tp_degree}, pp={ctx.pp_degree}, "
             f"dp={ctx.dp_degree}, ep={ctx.ep_degree}, dtype={ctx.dtype}, "
-            f"batch_size={batch_size}, seq_len={seq_len}, phase={phase.name}"
+            f"batch_size={batch_size}, seq_len={seq_len}, phase={phase.name}, "
+            f"is_diffusion_model={is_diffusion_model}"
         )
-
-        hidden_size = getattr(component, "hidden_size", 4096)
-
-        compute_pattern = phase.compute_pattern or self._infer_compute_pattern(component)
 
         if compute_pattern == ComputePattern.CONV_ENCODER:
             num_frames = params.get("num_frames", 81)
@@ -632,11 +641,18 @@ class UnifiedAnalyzer:
             input_tensor = ShardedTensor(shape=(batch_size, latent_channels, latent_t, latent_h, latent_w))
         elif hasattr(component, "vocab_size"):
             input_tensor = ShardedTensor(shape=(batch_size, seq_len))
+        elif is_diffusion_model:
+            latent_channels = getattr(component, "latent_channels", 16)
+            input_tensor = ShardedTensor(shape=(batch_size, seq_len, latent_channels))
         else:
             input_tensor = ShardedTensor(shape=(batch_size, seq_len, hidden_size))
 
         try:
-            component(input_tensor)
+            if is_diffusion_model:
+                timestep = ShardedTensor(shape=(batch_size,), dtype="int32")
+                component(input_tensor, timestep)
+            else:
+                component(input_tensor)
         except Exception:
             pass
 
