@@ -64,6 +64,7 @@ class TestXlsxReporter:
             "激活内存分解_按Phase",
             "计算分解_按类型",
             "Phase详情",
+            "子模块详情",
             "通信分解_按并行方式",
             "通信分解_按原语",
         ]
@@ -133,6 +134,52 @@ class TestXlsxReporter:
 
         row2_phase = ws.cell(row=2, column=1).value
         assert row2_phase is not None
+
+    def test_xlsx_submodule_detail_sheet_content(self):
+        """Test submodule detail sheet has correct structure."""
+        result = self._create_test_result()
+        reporter = XlsxReporter()
+        xlsx_bytes = reporter.report(result)
+
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb["子模块详情"]
+
+        expected_headers = [
+            "Phase",
+            "子模块名",
+            "子模块类型",
+            "计算时间(ms)",
+            "FLOPs",
+            "权重内存(GB)",
+            "激活内存(GB)",
+            "通信时间(ms)",
+            "通信量(GB)",
+            "是否嵌套",
+            "父模块类型",
+        ]
+        for col_idx, header in enumerate(expected_headers, start=1):
+            assert ws.cell(row=1, column=col_idx).value == header
+
+        row2_phase = ws.cell(row=2, column=1).value
+        assert row2_phase is not None
+
+    def test_xlsx_submodule_detail_sheet_has_data(self):
+        """Test submodule detail sheet contains data from result."""
+        result = self._create_test_result()
+        reporter = XlsxReporter()
+        xlsx_bytes = reporter.report(result)
+
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb["子模块详情"]
+
+        assert ws.cell(row=2, column=1).value is not None
+        assert ws.cell(row=2, column=2).value is not None
+        assert ws.cell(row=2, column=3).value is not None
+
+        time_value = ws.cell(row=2, column=4).value
+        assert time_value is not None
+        assert isinstance(time_value, str)
+        assert float(time_value) >= 0
 
     def test_xlsx_comm_by_parallel_sheet_content(self):
         """Test communication by parallel type sheet has correct structure."""

@@ -22,6 +22,7 @@ class XlsxReporter(BaseReporter):
     SHEET_ACTIVATION_BY_PHASE = "激活内存分解_按Phase"
     SHEET_COMPUTE_BY_TYPE = "计算分解_按类型"
     SHEET_PHASE_DETAIL = "Phase详情"
+    SHEET_SUBMODULE_DETAIL = "子模块详情"
     SHEET_COMM_BY_PARALLEL = "通信分解_按并行方式"
     SHEET_COMM_BY_OPERATION = "通信分解_按原语"
 
@@ -54,6 +55,7 @@ class XlsxReporter(BaseReporter):
         self._create_activation_by_phase_sheet(wb, result_dict)
         self._create_compute_by_type_sheet(wb, result_dict)
         self._create_phase_detail_sheet(wb, result_dict)
+        self._create_submodule_detail_sheet(wb, result_dict)
         self._create_comm_by_parallel_sheet(wb, result_dict)
         self._create_comm_by_operation_sheet(wb, result_dict)
 
@@ -312,6 +314,51 @@ class XlsxReporter(BaseReporter):
             row_idx += 1
 
         self._auto_adjust_column_width(ws, [15, 15, 12, 15, 12, 15, 12])
+
+    def _create_submodule_detail_sheet(self, wb: Workbook, result_dict: Dict[str, Any]) -> None:
+        """Create submodule detail sheet with all flattened submodules."""
+        ws = wb.create_sheet(self.SHEET_SUBMODULE_DETAIL)
+
+        headers = [
+            "Phase",
+            "子模块名",
+            "子模块类型",
+            "计算时间(ms)",
+            "FLOPs",
+            "权重内存(GB)",
+            "激活内存(GB)",
+            "通信时间(ms)",
+            "通信量(GB)",
+            "是否嵌套",
+            "父模块类型",
+        ]
+        self._write_header_row(ws, headers, 1)
+
+        phases = result_dict.get("phases", [])
+        flat_submodules = flatten_submodules(phases)
+
+        if not flat_submodules:
+            ws.cell(row=2, column=1, value="无数据")
+            self._auto_adjust_column_width(ws, [12] * 11)
+            return
+
+        row_idx = 2
+        for sm in flat_submodules:
+            is_nested = sm.get("parent_type") is not None
+            ws.cell(row=row_idx, column=1, value=sm.get("phase_name", "")).font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=2, value=sm.get("name", "")).font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=3, value=sm.get("submodule_type", "")).font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=4, value=f"{sm.get('time_sec', 0) * 1000:.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=5, value=f"{sm.get('flops', 0):.2e}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=6, value=f"{sm.get('weight_memory_gb', 0):.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=7, value=f"{sm.get('activation_memory_gb', 0):.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=8, value=f"{sm.get('communication_time_sec', 0) * 1000:.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=9, value=f"{sm.get('communication_gb', 0):.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=10, value="是" if is_nested else "否").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=11, value=sm.get("parent_type", "")).font = self.VALUE_FONT
+            row_idx += 1
+
+        self._auto_adjust_column_width(ws, [12, 20, 15, 12, 12, 12, 12, 12, 12, 10, 15])
 
     def _create_comm_by_parallel_sheet(self, wb: Workbook, result_dict: Dict[str, Any]) -> None:
         """Create communication breakdown by parallel type sheet."""
