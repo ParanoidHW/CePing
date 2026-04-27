@@ -648,8 +648,19 @@ class UnifiedAnalyzer:
             input_tensor = ShardedTensor(shape=(batch_size, seq_len, hidden_size))
 
         try:
-            if is_diffusion_model:
-                timestep = ShardedTensor(shape=(batch_size,), dtype="int32")
+            if hasattr(component, "text_dim") and hasattr(component, "freq_dim"):
+                text_dim = component.text_dim
+                freq_dim = component.freq_dim
+                text_embed = ShardedTensor(shape=(batch_size, 256, text_dim))
+                time_embed = ShardedTensor(shape=(batch_size, freq_dim))
+                component(input_tensor, text_embed, time_embed)
+            elif is_diffusion_model:
+                timestep_dim = getattr(component, "freq_dim", None)
+                if timestep_dim is None and hasattr(component, "timestep_in_weight"):
+                    timestep_dim = component.timestep_in_weight.shape[0]
+                if timestep_dim is None:
+                    timestep_dim = 256
+                timestep = ShardedTensor(shape=(batch_size, timestep_dim))
                 component(input_tensor, timestep)
             else:
                 component(input_tensor)
