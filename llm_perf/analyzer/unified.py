@@ -15,7 +15,6 @@ from llm_perf.kernels.compute import ComputeKernelRegistry
 from llm_perf.kernels.functional import KernelResult, conv3d, flash_attention, linear
 from llm_perf.modeling import ShardedModule
 from llm_perf.modeling.module import ModuleInstance
-from llm_perf.modeling.tensor import ShardedTensor
 from llm_perf.strategy.base import StrategyConfig
 from llm_perf.strategy.parallel_context import CommDomain, ParallelContext, SPType
 from llm_perf.utils.constants import DTYPE_SIZES
@@ -33,6 +32,8 @@ from .base import (
     WorkloadType,
 )
 from .breakdown import generate_module_breakdown
+from .handlers import get_handler
+from .handlers.vision_handler import VisionHandler
 from .workload_loader import get_workload
 
 logger = logging.getLogger(__name__)
@@ -604,82 +605,39 @@ class UnifiedAnalyzer:
         """使用ShardedModule.bind()机制分析phase和子模块.
 
         支持嵌套子模块分析：transformer_block 内部分解为 attention 和 ffn。
+        
+        Handler机制：
+        - 根据compute_pattern选择VisionHandler（CONV_ENCODER/CONV_DECODER）
+        - 根据workload_type选择LLMHandler/DiffusionHandler
+        - Handler负责seq_len计算、input构造、forward执行
         """
         ctx = self._create_parallel_context(params)
         batch_size = params.get("batch_size", 1)
 
-        hidden_size = getattr(component, "hidden_size", 4096)
         compute_pattern = phase.compute_pattern or self._infer_compute_pattern(component)
 
-        is_diffusion_model = workload.workload_type == WorkloadType.DIFFUSION
+        if compute_pattern in [ComputePattern.CONV_ENCODER, ComputePattern.CONV_DECODER]:
+            handler = VisionHandler()
+        else:
+            handler = get_handler(workload.workload_type)
 
-        if phase.name == "prefill":
-            seq_len = params.get("prompt_len", params.get("seq_len", 512))
-        elif phase.name == "decode":
-            seq_len = 1
+        seq_len = handler.get_seq_len(component, params, phase.name)
+
+        if phase.name == "decode":
             prompt_len = params.get("prompt_len", 512)
             generated_tokens = params.get("generated_tokens", 0)
             kv_seq_len = prompt_len + generated_tokens
-        elif is_diffusion_model and compute_pattern == ComputePattern.TRANSFORMER_BLOCK:
-            height = params.get("height", 720)
-            width = params.get("width", 1280)
-            vae_compression_ratio = 16
-            latent_h = height // vae_compression_ratio
-            latent_w = width // vae_compression_ratio
-            seq_len = latent_h * latent_w
-        else:
-            seq_len = params.get("seq_len", params.get("prompt_len", 512))
-
-        if phase.name == "decode":
             self._set_kv_seq_len(component, kv_seq_len)
 
         logger.debug(
             f"[SUBMODULE_ANALYZE] tp={ctx.tp_degree}, pp={ctx.pp_degree}, "
             f"dp={ctx.dp_degree}, ep={ctx.ep_degree}, dtype={ctx.dtype}, "
             f"batch_size={batch_size}, seq_len={seq_len}, phase={phase.name}, "
-            f"is_diffusion_model={is_diffusion_model}"
+            f"handler={handler.__class__.__name__}"
         )
 
-        if compute_pattern == ComputePattern.CONV_ENCODER:
-            num_frames = params.get("num_frames", 81)
-            height = params.get("height", 720)
-            width = params.get("width", 1280)
-            channels = getattr(component, "in_channels", 3)
-            input_tensor = ShardedTensor(shape=(batch_size, channels, num_frames, height, width))
-        elif compute_pattern == ComputePattern.CONV_DECODER:
-            latent_t = (params.get("num_frames", 81) - 1) // 4 + 1
-            latent_h = params.get("height", 720) // 8
-            latent_w = params.get("width", 1280) // 8
-            latent_channels = getattr(component, "latent_channels", 16)
-            input_tensor = ShardedTensor(shape=(batch_size, latent_channels, latent_t, latent_h, latent_w))
-        elif hasattr(component, "vocab_size"):
-            input_tensor = ShardedTensor(shape=(batch_size, seq_len))
-        elif is_diffusion_model:
-            latent_channels = getattr(component, "latent_channels", 16)
-            input_tensor = ShardedTensor(shape=(batch_size, seq_len, latent_channels))
-        else:
-            input_tensor = ShardedTensor(shape=(batch_size, seq_len, hidden_size))
-
-        try:
-            if hasattr(component, "text_dim") and hasattr(component, "freq_dim"):
-                text_dim = component.text_dim
-                freq_dim = component.freq_dim
-                text_embed = ShardedTensor(shape=(batch_size, 256, text_dim))
-                time_embed = ShardedTensor(shape=(batch_size, freq_dim))
-                component(input_tensor, text_embed, time_embed)
-            elif is_diffusion_model:
-                timestep_dim = getattr(component, "freq_dim", None)
-                if timestep_dim is None and hasattr(component, "timestep_in_weight"):
-                    timestep_dim = component.timestep_in_weight.shape[0]
-                if timestep_dim is None:
-                    timestep_dim = 256
-                timestep = ShardedTensor(shape=(batch_size, timestep_dim))
-                component(input_tensor, timestep)
-            else:
-                component(input_tensor)
-        except Exception as e:
-            logger.error(f"[FORWARD_FAILED] component={component.__class__.__name__}, error={e}")
-            raise RuntimeError(f"Forward pass failed for {component.__class__.__name__}: {e}")
+        inputs = handler.create_inputs(component, batch_size, seq_len, params)
+        handler.forward(component, inputs)
 
         backend_config = BackendConfig(name="theory", device=self.device)
         backend = TheoryBackend(backend_config)
