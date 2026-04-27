@@ -22,6 +22,8 @@ class XlsxReporter(BaseReporter):
     SHEET_ACTIVATION_BY_PHASE = "激活内存分解_按Phase"
     SHEET_COMPUTE_BY_TYPE = "计算分解_按类型"
     SHEET_PHASE_DETAIL = "Phase详情"
+    SHEET_COMM_BY_PARALLEL = "通信分解_按并行方式"
+    SHEET_COMM_BY_OPERATION = "通信分解_按原语"
 
     HEADER_FILL = PatternFill(start_color="667eea", end_color="667eea", fill_type="solid")
     HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -52,6 +54,8 @@ class XlsxReporter(BaseReporter):
         self._create_activation_by_phase_sheet(wb, result_dict)
         self._create_compute_by_type_sheet(wb, result_dict)
         self._create_phase_detail_sheet(wb, result_dict)
+        self._create_comm_by_parallel_sheet(wb, result_dict)
+        self._create_comm_by_operation_sheet(wb, result_dict)
 
         buffer = BytesIO()
         wb.save(buffer)
@@ -308,6 +312,75 @@ class XlsxReporter(BaseReporter):
             row_idx += 1
 
         self._auto_adjust_column_width(ws, [15, 15, 12, 15, 12, 15, 12])
+
+    def _create_comm_by_parallel_sheet(self, wb: Workbook, result_dict: Dict[str, Any]) -> None:
+        """Create communication breakdown by parallel type sheet."""
+        ws = wb.create_sheet(self.SHEET_COMM_BY_PARALLEL)
+
+        headers = ["并行方式", "通信量(GB)", "时间(ms)"]
+        self._write_header_row(ws, headers, 1)
+
+        detailed = result_dict.get("detailed_breakdown", {})
+        by_parallelism = detailed.get("communication", {}).get("by_parallelism", {})
+
+        if not by_parallelism:
+            ws.cell(row=2, column=1, value="无数据")
+            self._auto_adjust_column_width(ws, [15, 15, 12])
+            return
+
+        total_bytes = 0
+        total_time = 0.0
+        row_idx = 2
+        for parallel_type, data in by_parallelism.items():
+            bytes_val = data.get("total_bytes", 0)
+            time_val = data.get("total_time_sec", 0.0)
+            bytes_gb = bytes_val / 1e9
+            time_ms = time_val * 1000
+            total_bytes += bytes_val
+            total_time += time_val
+
+            ws.cell(row=row_idx, column=1, value=parallel_type).font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=2, value=f"{bytes_gb:.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=3, value=f"{time_ms:.2f}").font = self.VALUE_FONT
+            row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="总计").font = Font(bold=True)
+        ws.cell(row=row_idx, column=2, value=f"{total_bytes / 1e9:.2f}").font = Font(bold=True)
+        ws.cell(row=row_idx, column=3, value=f"{total_time * 1000:.2f}").font = Font(bold=True)
+
+        self._auto_adjust_column_width(ws, [15, 15, 12])
+
+    def _create_comm_by_operation_sheet(self, wb: Workbook, result_dict: Dict[str, Any]) -> None:
+        """Create communication breakdown by operation type sheet."""
+        ws = wb.create_sheet(self.SHEET_COMM_BY_OPERATION)
+
+        headers = ["通信原语", "通信量(GB)", "时间(ms)", "并行方式"]
+        self._write_header_row(ws, headers, 1)
+
+        detailed = result_dict.get("detailed_breakdown", {})
+        by_operation = detailed.get("communication", {}).get("by_operation", {})
+
+        if not by_operation:
+            ws.cell(row=2, column=1, value="无数据")
+            self._auto_adjust_column_width(ws, [15, 15, 12, 15])
+            return
+
+        row_idx = 2
+        for op_name, data in by_operation.items():
+            bytes_val = data.get("total_bytes", 0)
+            time_val = data.get("total_time_sec", 0.0)
+            bytes_gb = bytes_val / 1e9
+            time_ms = time_val * 1000
+            by_ptype = data.get("by_ptype", {})
+            ptypes = ", ".join(by_ptype.keys()) if by_ptype else "-"
+
+            ws.cell(row=row_idx, column=1, value=op_name).font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=2, value=f"{bytes_gb:.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=3, value=f"{time_ms:.2f}").font = self.VALUE_FONT
+            ws.cell(row=row_idx, column=4, value=ptypes).font = self.VALUE_FONT
+            row_idx += 1
+
+        self._auto_adjust_column_width(ws, [15, 15, 12, 15])
 
     def _write_header_row(self, ws: Any, headers: List[str], row: int) -> None:
         """Write header row with styling."""

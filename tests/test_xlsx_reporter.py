@@ -64,6 +64,8 @@ class TestXlsxReporter:
             "激活内存分解_按Phase",
             "计算分解_按类型",
             "Phase详情",
+            "通信分解_按并行方式",
+            "通信分解_按原语",
         ]
         for sheet_name in expected_sheets:
             assert sheet_name in wb.sheetnames, f"Missing sheet: {sheet_name}"
@@ -131,6 +133,33 @@ class TestXlsxReporter:
 
         row2_phase = ws.cell(row=2, column=1).value
         assert row2_phase is not None
+
+    def test_xlsx_comm_by_parallel_sheet_content(self):
+        """Test communication by parallel type sheet has correct structure."""
+        result = self._create_test_result()
+        reporter = XlsxReporter()
+        xlsx_bytes = reporter.report(result)
+
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb["通信分解_按并行方式"]
+
+        assert ws.cell(row=1, column=1).value == "并行方式"
+        assert ws.cell(row=1, column=2).value == "通信量(GB)"
+        assert ws.cell(row=1, column=3).value == "时间(ms)"
+
+    def test_xlsx_comm_by_operation_sheet_content(self):
+        """Test communication by operation sheet has correct structure."""
+        result = self._create_test_result()
+        reporter = XlsxReporter()
+        xlsx_bytes = reporter.report(result)
+
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb["通信分解_按原语"]
+
+        assert ws.cell(row=1, column=1).value == "通信原语"
+        assert ws.cell(row=1, column=2).value == "通信量(GB)"
+        assert ws.cell(row=1, column=3).value == "时间(ms)"
+        assert ws.cell(row=1, column=4).value == "并行方式"
 
     def test_xlsx_reporter_save(self):
         """Test save() creates file."""
