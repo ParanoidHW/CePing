@@ -17,6 +17,7 @@ class XlsxReporter(BaseReporter):
     """Generate XLSX reports with multiple sheets."""
 
     SHEET_OVERVIEW = "总览"
+    SHEET_CONFIG_INFO = "配置信息"
     SHEET_MEMORY_BY_TYPE = "内存分解_按类型"
     SHEET_MEMORY_BY_SUBMODEL = "内存分解_按子模型"
     SHEET_ACTIVATION_BY_PHASE = "激活内存分解_按Phase"
@@ -50,6 +51,7 @@ class XlsxReporter(BaseReporter):
         result_dict = result.to_dict()
 
         self._create_overview_sheet(wb, result_dict)
+        self._create_config_sheet(wb, result)
         self._create_memory_by_type_sheet(wb, result_dict)
         self._create_memory_by_submodel_sheet(wb, result_dict)
         self._create_activation_by_phase_sheet(wb, result_dict)
@@ -441,3 +443,92 @@ class XlsxReporter(BaseReporter):
         """Set column widths."""
         for col_idx, width in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    def _create_config_sheet(self, wb: Workbook, result: UnifiedResult) -> None:
+        """Create configuration info sheet."""
+        ws = wb.create_sheet(self.SHEET_CONFIG_INFO)
+
+        headers = ["类型", "参数", "值"]
+        self._write_header_row(ws, headers, 1)
+
+        row_idx = 2
+
+        ws.cell(row=row_idx, column=1, value="模型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="名称").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=result.workload_name).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="模型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="类型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=result.workload_type.value).font = self.VALUE_FONT
+        row_idx += 1
+
+        metadata = result.metadata
+        strategy = metadata.get("strategy", {})
+        parallelism = strategy.get("parallelism", {})
+
+        ws.cell(row=row_idx, column=1, value="策略").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="TP").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=parallelism.get("tp")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="策略").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="PP").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=parallelism.get("pp")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="策略").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="DP").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=parallelism.get("dp")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="策略").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="EP").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=parallelism.get("ep")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="设备").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="名称").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=metadata.get("device")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="设备").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="数量").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=metadata.get("num_devices")).font = self.VALUE_FONT
+        row_idx += 1
+
+        model_config = metadata.get("model", {})
+
+        ws.cell(row=row_idx, column=1, value="模型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="hidden_size").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=model_config.get("hidden_size")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="模型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="num_layers").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=model_config.get("num_layers")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="模型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="num_heads").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=model_config.get("num_heads")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="模型").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="dtype").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=model_config.get("dtype")).font = self.VALUE_FONT
+        row_idx += 1
+
+        params = result.params
+
+        ws.cell(row=row_idx, column=1, value="评估").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="batch_size").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=params.get("batch_size")).font = self.VALUE_FONT
+        row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="评估").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=2, value="seq_len").font = self.VALUE_FONT
+        ws.cell(row=row_idx, column=3, value=params.get("seq_len")).font = self.VALUE_FONT
+        row_idx += 1
+
+        self._auto_adjust_column_width(ws, [12, 15, 15])

@@ -332,6 +332,18 @@ class UnifiedAnalyzer:
         logger.debug(
             f"[UNIFIED_RESULT] weight_gb={detailed_breakdown['memory']['by_type']['weight']:.2f}"
         )
+        model_config_dict = {}
+        if hasattr(self.model, "config"):
+            config = self.model.config
+            model_config_dict = {
+                "hidden_size": getattr(config, "hidden_size", None),
+                "num_layers": getattr(config, "num_layers", None),
+                "num_heads": getattr(config, "num_attention_heads", None),
+                "dtype": getattr(config, "dtype", None),
+                "vocab_size": getattr(config, "vocab_size", None),
+                "intermediate_size": getattr(config, "intermediate_size", None),
+            }
+
         return UnifiedResult(
             workload_name=workload.name,
             workload_type=workload.workload_type,
@@ -350,6 +362,7 @@ class UnifiedAnalyzer:
                 "ep_degree": self.strategy.ep_degree,
                 "kv_cache_gb": total_kv_cache_gb,
                 "topology": topology_dict,
+                "model": model_config_dict,
             },
             breakdown=breakdown,
             detailed_breakdown=detailed_breakdown,

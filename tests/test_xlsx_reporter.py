@@ -59,6 +59,7 @@ class TestXlsxReporter:
         wb = load_workbook(BytesIO(xlsx_bytes))
         expected_sheets = [
             "总览",
+            "配置信息",
             "内存分解_按类型",
             "内存分解_按子模型",
             "激活内存分解_按Phase",
@@ -250,6 +251,71 @@ class TestXlsxReporter:
         wb = load_workbook(BytesIO(xlsx_bytes))
         assert "总览" in wb.sheetnames
         assert "Phase详情" in wb.sheetnames
+
+    def test_xlsx_config_sheet_content(self):
+        """Test configuration info sheet has correct content."""
+        result = self._create_test_result()
+        reporter = XlsxReporter()
+        xlsx_bytes = reporter.report(result)
+
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        ws = wb["配置信息"]
+
+        assert ws.cell(row=1, column=1).value == "类型"
+        assert ws.cell(row=1, column=2).value == "参数"
+        assert ws.cell(row=1, column=3).value == "值"
+
+        assert ws.cell(row=2, column=1).value == "模型"
+        assert ws.cell(row=2, column=2).value == "名称"
+        assert ws.cell(row=2, column=3).value == result.workload_name
+
+        assert ws.cell(row=3, column=1).value == "模型"
+        assert ws.cell(row=3, column=2).value == "类型"
+        assert ws.cell(row=3, column=3).value == result.workload_type.value
+
+        strategy_rows = []
+        for row_idx in range(4, 8):
+            if ws.cell(row=row_idx, column=1).value == "策略":
+                param = ws.cell(row=row_idx, column=2).value
+                value = ws.cell(row=row_idx, column=3).value
+                strategy_rows.append((param, value))
+
+        assert any(r[0] == "TP" and r[1] == 8 for r in strategy_rows)
+        assert any(r[0] == "PP" and r[1] == 1 for r in strategy_rows)
+        assert any(r[0] == "DP" and r[1] == 1 for r in strategy_rows)
+        assert any(r[0] == "EP" and r[1] == 1 for r in strategy_rows)
+
+        device_rows = []
+        for row_idx in range(8, 10):
+            if ws.cell(row=row_idx, column=1).value == "设备":
+                param = ws.cell(row=row_idx, column=2).value
+                value = ws.cell(row=row_idx, column=3).value
+                device_rows.append((param, value))
+
+        assert any(r[0] == "名称" and r[1] == "H100-SXM-80GB" for r in device_rows)
+        assert any(r[0] == "数量" and r[1] == 8 for r in device_rows)
+
+        model_rows = []
+        for row_idx in range(10, 14):
+            if ws.cell(row=row_idx, column=1).value == "模型":
+                param = ws.cell(row=row_idx, column=2).value
+                value = ws.cell(row=row_idx, column=3).value
+                model_rows.append((param, value))
+
+        assert any(r[0] == "hidden_size" and r[1] == 4096 for r in model_rows)
+        assert any(r[0] == "num_layers" and r[1] == 32 for r in model_rows)
+        assert any(r[0] == "num_heads" and r[1] == 32 for r in model_rows)
+        assert any(r[0] == "dtype" and r[1] == "fp16" for r in model_rows)
+
+        eval_rows = []
+        for row_idx in range(14, 16):
+            if ws.cell(row=row_idx, column=1).value == "评估":
+                param = ws.cell(row=row_idx, column=2).value
+                value = ws.cell(row=row_idx, column=3).value
+                eval_rows.append((param, value))
+
+        assert any(r[0] == "batch_size" and r[1] == 32 for r in eval_rows)
+        assert any(r[0] == "seq_len" and r[1] == 2048 for r in eval_rows)
 
 
 class TestReporterUtils:
