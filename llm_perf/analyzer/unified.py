@@ -664,8 +664,9 @@ class UnifiedAnalyzer:
                 component(input_tensor, timestep)
             else:
                 component(input_tensor)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[FORWARD_FAILED] component={component.__class__.__name__}, error={e}")
+            raise RuntimeError(f"Forward pass failed for {component.__class__.__name__}: {e}")
 
         backend_config = BackendConfig(name="theory", device=self.device)
         backend = TheoryBackend(backend_config)
