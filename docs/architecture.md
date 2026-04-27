@@ -442,7 +442,84 @@ print(f"Saved inputs: {result.saved_inputs}")  # backward需要的输入
 
 ---
 
-### 5.1 Automatic Activation Memory Tracking
+### 5.1 Handler 机制（模型类型显式分发）
+
+**职责**: 模型类型显式分发，替代隐式hasattr检查
+
+**设计原则**: 显式优于隐性
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ WorkloadType → Handler Registry                                      │
+│  ┌─────────────────┐                                                 │
+│  │ WORKLOAD_TYPE   │       ┌──────────────────────────────────────┐ │
+│  │ ├─ TRAINING     │──────▶│ LLMHandler                          │ │
+│  │ ├─ INFERENCE    │──────▶│ LLMHandler                          │ │
+│  │ ├─ DIFFUSION    │──────▶│ DiffusionHandler                    │ │
+│  │ └─ MIXED        │──────▶│ LLMHandler (default)                │ │
+│  └─────────────────┘       └──────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ Handler Interface                                                    │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │ BaseModelHandler                                              │  │
+│  │ ├─ get_seq_len(component, params, phase_name) → int          │  │
+│  │ ├─ create_inputs(component, batch_size, seq_len, params) → []│  │
+│  │ └─ forward(component, inputs) → Any (raises RuntimeError)    │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**目录结构**:
+
+```
+llm_perf/analyzer/handlers/
+├── __init__.py          # Handler registry + get_handler()
+├── base_handler.py      # BaseModelHandler (ABC)
+├── llm_handler.py       # LLM (Training, Inference)
+├── diffusion_handler.py # Diffusion (DiT, VAE)
+└── vision_handler.py    # Vision (Conv encoder/decoder)
+```
+
+**Handler 注册机制**:
+
+```python
+from llm_perf.analyzer.handlers import get_handler
+from llm_perf.analyzer.base import WorkloadType
+
+handler = get_handler(WorkloadType.DIFFUSION)  # → DiffusionHandler
+handler = get_handler(WorkloadType.TRAINING)   # → LLMHandler
+```
+
+**接口定义**:
+
+| 方法 | 用途 | 返回 |
+|------|------|------|
+| `get_seq_len()` | 计算序列长度 | int |
+| `create_inputs()` | 创建forward输入 | List[ShardedTensor] |
+| `forward()` | 执行forward（显式错误处理） | Any |
+
+**各Handler实现**:
+
+| Handler | seq_len计算 | inputs结构 |
+|---------|-------------|-----------|
+| LLMHandler | prefill: prompt_len, decode: 1 | (batch, seq) 或 (batch, seq, hidden) |
+| DiffusionHandler | (height//16) × (width//16) | latent + timestep |
+| VisionHandler | frames × height × width | (batch, ch, t, h, w) |
+
+**激活内存Bug修复案例**:
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 激活内存45GB | timestep shape错误 + forward静默失败 | Handler机制 + 显式错误 |
+
+**测试覆盖**: `tests/test_handlers.py`（25个测试）
+
+---
+
+### 5.2 Automatic Activation Memory Tracking
 
 **职责**: 自动追踪激活内存，过滤 view tensor
 
@@ -727,7 +804,13 @@ default_params:
 
 ## 版本历史
 
-### v5.1 (当前)
+### v5.2 (当前)
+- **Handler机制**: 模型类型显式分发，替代隐式hasattr检查
+- **WorkloadType.DIFFUSION**: 新增扩散模型类型标识
+- **显式优于隐性**: forward失败抛出RuntimeError而非静默失败
+- **激活内存修复**: Diffusion timestep shape正确计算，45GB→0.57GB
+
+### v5.1
 - **类型系统**: ShardedParameter vs ShardedTensor 区分，__setattr__ 自动注册机制
 - **内存统计分离**: get_weights() / get_activations() 独立追踪
 - **ShardedFFN**: ffn_act_type 参数支持 SWIGLU/GELU/RELU/SILU

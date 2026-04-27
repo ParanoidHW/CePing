@@ -19,10 +19,10 @@ print(f"吞吐量: {result.tokens_per_sec:.1f} tokens/s")
 
 | 模型类型 | 支持模型 | 特性 |
 |---------|---------|------|
-| **Dense** | Llama-7B/13B/70B, GPT | GQA、RoPE、SwiGLU |
-| **MoE** | Mixtral-8x7B, DeepSeek-V3 | Expert Parallelism、共享专家 |
-| **Vision** | ResNet, VAE | CNN、图像分类/生成 |
-| **Video** | Wan2.1-T2V | 文本编码器 + DiT + 3D VAE |
+| **Dense** | Llama-7B/13B/70B, GPT, Qwen3.5 | GQA、RoPE、SwiGLU、Linear Attention |
+| **MoE** | Mixtral-8x7B, DeepSeek-V3, Qwen3.5-A3B | Expert Parallelism、共享专家、MLA |
+| **Vision** | ResNet, VAE, HunyuanImage 3.0 | CNN、图像分类/生成 |
+| **Video** | Wan2.1-T2V-14B | 文本编码器 + DiT + 3D VAE |
 
 ### 🖥️ 多硬件平台支持
 
@@ -53,6 +53,22 @@ Memory Breakdown:
 ├── Activations:    4.00 GB
 └── Gradients:     70.00 GB
 ```
+
+### 📤 导出功能
+
+支持评估结果导出为 Excel 格式：
+- 总览（吞吐量、MFU、QPS等核心指标）
+- 内存分解（按类型、按子模型）
+- 计算分解（按子模块类型）
+- Phase详情（prefill/decode/denoise各阶段）
+- 激活内存分解（按Phase展示）
+
+### 🔧 Handler机制
+
+显式模型类型分发，避免隐式检查带来的问题：
+- `LLMHandler`: 训练/推理场景
+- `DiffusionHandler`: 扩散模型（DiT、VAE）
+- `VisionHandler`: 视觉模型（CNN encoder/decoder）
 
 ### 🌐 网络拓扑建模
 
@@ -436,6 +452,12 @@ ModelingRegistry().register("my_model", MyModel)
 
 ## 路线图
 
+- [x] Wan2.1视频生成模型评估
+- [x] DeepSeek-V3 MLA + MoE架构
+- [x] Qwen3.5 Dense/MoE模型
+- [x] HunyuanImage 3.0支持
+- [x] xlsx导出功能
+- [x] Handler机制（显式类型分发）
 - [ ] FlashAttention kernel 精确建模
 - [ ] FSDP、Ulysses-SP、Unified-SP 支持
 - [ ] 自动策略搜索 (遗传算法)

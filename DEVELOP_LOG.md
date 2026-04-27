@@ -1,5 +1,77 @@
 # 开发日志
 
+## 2026-04-27: Handler 机制 + 激活内存修复
+
+### 问题背景
+Wan2.1扩散模型激活内存计算为45GB，实际应为0.57GB（推理模式逐层覆盖）。
+
+### 根因分析
+1. **timestep shape错误**: forward中timestep创建为(batch, seq_len, freq_dim)，应为(batch, freq_dim)
+2. **forward静默失败**: 异步执行context时shape不匹配，但hasattr检查导致静默跳过
+3. **隐式分发**: 通过hasattr(component, "timestep")判断是否传入timestep，而非显式类型标记
+
+### 解决方案
+引入Handler机制，显式模型类型分发：
+
+#### 1. Handler目录结构
+```
+llm_perf/analyzer/handlers/
+├── __init__.py          # get_handler(workload_type)
+├── base_handler.py      # BaseModelHandler(ABC)
+├── llm_handler.py       # LLM (Training/Inference)
+├── diffusion_handler.py # Diffusion (DiT/VAE)
+└── vision_handler.py    # Vision (Conv encoder/decoder)
+```
+
+#### 2. Handler注册机制
+```python
+HANDLER_REGISTRY = {
+    WorkloadType.TRAINING: LLMHandler(),
+    WorkloadType.INFERENCE: LLMHandler(),
+    WorkloadType.DIFFUSION: DiffusionHandler(),
+}
+```
+
+#### 3. 接口定义
+- `get_seq_len()`: 计算序列长度
+- `create_inputs()`: 创建forward输入（正确shape）
+- `forward()`: 执行forward，失败抛出RuntimeError而非静默
+
+#### 4. DiffusionHandler修复
+- timestep shape: (batch, freq_dim)而非(batch, seq_len, freq_dim)
+- Wan风格: latent + text_embed + time_embed
+
+#### 5. WorkloadType.DIFFUSION
+新增`WorkloadType.DIFFUSION = "diffusion"`用于显式类型标记
+
+#### 6. vision.py修复
+- Conv3d使用functional API: `conv3d()`而非`Conv3dOp.apply()`
+- 正确追踪intermediate tensors
+
+### 测试用例
+新增`tests/test_handlers.py`（25个测试）：
+- HandlerRegistry测试（5个）
+- LLMHandler测试（5个）
+- DiffusionHandler测试（3个）
+- VisionHandler测试（3个）
+- Forward错误测试（2个）
+
+测试精简：原有测试从~150个精简到~80个（47%减少），保留核心功能测试。
+
+### 提交记录
+- `731fdf9 refactor(analyzer): introduce ModelType Handler mechanism`
+- `3907d67 feat(analyzer): add WorkloadType.DIFFUSION for explicit type identification`
+- `3fb631a refactor(test): remove redundant test cases (47% reduction)`
+- `6061e45 fix(analyzer): replace silent forward failure with explicit error`
+- `2eb05b9 fix(wan): correct forward parameters for Wan2.1 T2V`
+- `0c4b8f2 fix(vision): use conv3d() functional API instead of Conv3dOp.apply()`
+
+### 验证结果
+- 激活内存：45GB → 0.57GB（修复后）
+- 测试通过：103 passed
+
+---
+
 ## 2026-04-27: 修复 Activation 内存分解 Bug
 
 ### 问题根因
