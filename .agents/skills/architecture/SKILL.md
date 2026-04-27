@@ -1,33 +1,7 @@
 ---
-name: project-code
-description: 项目开发规范，包括代码风格、测试和依赖管理。编码规范需要遵守``开发规范``小节
+name: architecture
+description: 项目架构设计准则
 ---
-
-## 开发过程
-
-主要过程：
-
-1. 理解特性需求并设计合适的开发方案，随后通过subagent调用``coder``技能根据规范进行开发。
-2. 开发完成后，通过subagent调用``reviewer``技能进行代码检视，并根据review.log中的检视意见进行处理。如果review.log开头已经写"检视完成，功能精度确认ok"，则结束检视进行提交；否则，继续修改并通过subagent调用``reviwer``技能进行检视，重复直到功能精度ok。
-3. 功能精度ok后，可以提交到本地。
-
-不限制subagent时间，时间长一点也可以，**禁止你自己进行检视**。
-
-### Git 提交规范
-
-如果没有特殊申明，你可以在修改并自验证完成后提交到本地（甚至是远程仓库，如果有权限的话），但需要自验证用例（包括新增的）全部通过后才可以提交。
-
-使用 Conventional Commits 格式：
-
-\[类型(范围)\]: 描述
-
-允许的类型：feat, fix, docs, style, refactor, test, chore
-
-示例：
-- \[feat(auth)\]: 添加 OAuth 登录支持
-- \[fix(api)\]: 修复用户查询返回空值的问题
-- \[docs(readme)\]: 更新安装说明
-
 
 ## 设计原则
 
@@ -265,7 +239,7 @@ class LlamaModel:
         self.lm_head = ShardedLMHead(...)
 
 # 不好的设计：深层继承
-class BaseModel:
+class BaseModel:hu
     pass
 class LanguageModel(BaseModel):
     pass
