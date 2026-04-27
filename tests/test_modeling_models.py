@@ -925,6 +925,38 @@ class TestWanDiTMemory:
         expected = 2 * 4096 * 10240
         assert ffn.params_count() == expected
 
+    def test_wan_dit_forward_params(self):
+        """Test Wan DiT forward requires 3 params: latent, text_embed, time_embed."""
+        from llm_perf.analyzer.handlers.diffusion_handler import DiffusionHandler
+
+        model = create_model_from_config({"type": "wan-dit"})
+        handler = DiffusionHandler()
+
+        batch_size = 1
+        seq_len = 100
+        inputs = handler.create_inputs(model, batch_size, seq_len, {})
+
+        assert len(inputs) == 3, f"Wan DiT needs 3 inputs, got {len(inputs)}"
+        assert inputs[0].shape == (batch_size, seq_len, 16), f"latent shape wrong"
+        assert inputs[1].shape == (batch_size, 256, model.text_dim), f"text_embed shape wrong"
+        assert inputs[2].shape == (batch_size, model.freq_dim), f"time_embed shape wrong"
+
+    def test_wan_dit_block_forward_params(self):
+        """Test Wan DiT Block forward requires 3 params."""
+        from llm_perf.analyzer.handlers.diffusion_handler import DiffusionHandler
+
+        model = create_model_from_config({"type": "wan-dit"})
+        block = model._submodules["blocks.0"]
+        handler = DiffusionHandler()
+
+        batch_size = 1
+        seq_len = 100
+        inputs = handler.create_inputs(block, batch_size, seq_len, {})
+
+        assert len(inputs) == 3, f"Wan DiT Block needs 3 inputs, got {len(inputs)}"
+        assert block.freq_dim == model.freq_dim, f"Block freq_dim should match model"
+        assert block.text_dim == model.text_dim, f"Block text_dim should match model"
+
 
 class TestSingleRegistryArchitecture:
     """Test unified registry architecture - only presets, no separate model registry."""

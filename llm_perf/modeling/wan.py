@@ -213,6 +213,7 @@ class ShardedWanDiTBlock(ShardedModule):
         cross_attn_heads: int = 24,
         intermediate_size: int = 13824,
         text_dim: int = 4096,
+        freq_dim: int = 256,
         dtype: str = "fp16",
     ):
         super().__init__()
@@ -220,6 +221,7 @@ class ShardedWanDiTBlock(ShardedModule):
         self.num_heads = num_heads
         self.intermediate_size = intermediate_size
         self.text_dim = text_dim
+        self.freq_dim = freq_dim
 
         self.norm1 = ShardedLayerNorm(hidden_size, elementwise_affine=False, dtype=dtype)
 
@@ -414,6 +416,7 @@ class ShardedWanDiT(ShardedModule):
                 num_heads=num_heads,
                 intermediate_size=intermediate_size,
                 text_dim=text_dim,
+                freq_dim=freq_dim,
                 dtype=dtype,
             )
             for _ in range(num_layers)
