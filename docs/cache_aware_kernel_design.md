@@ -57,7 +57,6 @@ L1 Cache: 128 KB
 Shared Memory: 228 KB
 Peak TFLOPS (FP16 Tensor Core): 989 TFLOPS
 Memory BW: 3.35 TB/s
-Ridge Point: 989 / 3.35 ≈ 295 FLOPs/Byte
 ```
 
 ### 1.3 设计原则
@@ -116,30 +115,75 @@ tile_size = floor(L2_capacity / weight_bytes)
 
 ### 2.4 实际访存计算公式
 
-对于 weight-bound kernel：
+**矩阵乘法 Tiling 的唯一正确策略**
 
+矩阵乘法 C = A × B 的分块计算（策略1）：
+- A（左矩阵，激活）：M × K
+- B（右矩阵，权重）：K × N
+- C（输出）：M × N
+
+**策略1：外层激活 tile 步进，内层权重 tile 遍历**
+
+```python
+for A_tile_i in [0, num_tiles_M):      # 外层：激活 tile 步进
+    加载 A_tile_i 到 cache（暂存）      # A 只加载一次
+    for B_tile_j in [0, num_tiles_N):  # 内层：权重 tile 遍历
+        加载 B_tile_j                   # B 每次都加载
+        C_tile[i,j] = A[i] × B[j]
 ```
-理论访存 = batch × input_bytes + weight_bytes + batch × output_bytes
 
-实际访存 = num_tiles × weight_bytes + batch × input_bytes + batch × output_bytes
-         = ceil(batch / tile_size) × weight_bytes + batch × (input_bytes + output_bytes)
+关键特性：
+- **激活 A 只加载一次**（cache 暂存）
+- **权重 B 重复加载 num_tiles_M 次**
+
+访存公式：
+```
+num_tiles_M = ceil(M / tile_M)
+
+actual_bytes = M × K × dtype                     # A（加载一次，cache 暂存）
+              + K × N × dtype × num_tiles_M       # B（重复加载 num_tiles_M 次）
+              + M × N × dtype                     # C（写入一次）
 ```
 
-**关键参数**：
-- `tile_size`：每个 tile 处理的 batch sample 数
-- `num_tiles`：总的 tile 数量
+**为什么策略1是唯一正确的？**
 
-**示例（linear）**：
-- batch=1, weight=32MB, L2=50MB
-  - tile_size = floor(50MB / 32MB) = 1
-  - num_tiles = ceil(1 / 1) = 1
-  - 实际访存 ≈ 理论访存（无优化）
+策略1的循环嵌套设计确保：
+1. 外层遍历激活 tile，每个 A_tile 加载后暂存于 cache
+2. 内层遍历所有权重 tile，利用暂存的 A_tile 计算
+3. A_tile 不需要重复加载，最大化 cache reuse
+4. 权重 B_tile 无法全部缓存在 L2，每次都需要重新加载
 
-- batch=200, weight=32MB, L2=50MB
-  - tile_size = floor(50MB / 32MB) = 1
-  - num_tiles = ceil(200 / 1) = 200
-  - 实际访存 = 200 × weight_bytes + ...
-  - 仍然无优化！因为 weight 太大无法完全缓存
+**Linear 层的应用（y = x @ W^T）**：
+
+对于 Linear 层：
+- x（激活）：batch_size × in_features（对应矩阵乘法的 M × K）
+- W^T（权重）：in_features × out_features（对应矩阵乘法的 K × N）
+- y（输出）：batch_size × out_features（对应矩阵乘法的 M × N）
+
+当 W^T > L2 时，采用策略1：
+```
+num_tiles_M = ceil(batch / tile_M)
+
+理论访存 = batch × in × dtype + in × out × dtype + batch × out × dtype
+
+实际访存 = batch × in × dtype                     # x（激活，加载一次）
+         + in × out × dtype × num_tiles_M         # W（权重，重复加载）
+         + batch × out × dtype                    # y（输出，写入一次）
+```
+
+**简化公式（适用于 Linear）**：
+```
+actual_bytes = batch_input_bytes + weight_bytes × num_tiles + batch_output_bytes
+
+关键参数：
+- num_tiles：沿 batch 分块的数量 = ceil(batch / tile_M)
+- batch_input_bytes = batch × in_features × dtype_size
+- weight_bytes = in_features × out_features × dtype_size
+- batch_output_bytes = batch × out_features × dtype_size
+
+重复加载开销：
+weight_reload_overhead = (num_tiles - 1) × weight_bytes
+```
 
 ---
 
@@ -223,131 +267,263 @@ batch=200, in=8192, out=8192:
 **是否需要 tiling**：
 - **需要**。weight 大小超过 L2 cache 容量。
 
-**Tiling 分块策略**：
-- **沿 batch 维度分块**（最常见）
-- **或沿 out_features 维度分块**（用于超大 weight）
+**Tiling 分块策略**（策略1唯一正确）：
 
-**方案 A：Batch Tiling**
+**策略1：沿 batch 维度分块**
 ```
 L2 capacity = 50MB
 Weight bytes = 134.2MB
 
-问题：Weight 大于 L2，无法完全缓存！
+核心思想：
+1. 将 batch 分成多个 tile（沿 M 维度分块）
+2. 每个 batch_tile 的激活数据加载一次并暂存于 L2
+3. 权重 W 无法缓存在 L2，需要重复加载 num_tiles 次
 
-解决方案：
-1. Weight 分块：将 weight 按行分块（沿 out_features 维度）
-2. 每个 weight block 可以缓存在 L2
+循环结构：
+for batch_tile_i in [0, num_tiles):    # 外层：batch tile 步进
+    加载 batch_tile_i 激活到 L2         # 激活只加载一次
+    for weight_tile_j in [0, weight_tiles):  # 内层：权重 tile 遍历
+        加载 weight_tile_j               # 权重每次都加载
+        计算 output_tile[i,j]
 ```
 
-**方案 B：Output Channel Tiling**
+**Tile 数量计算**：
 ```
-将 weight 分块为多个 block：
-weight_block_size = floor(L2_capacity / (batch × in_features × dtype_size))
+batch_input_bytes = batch × in × dtype
 
-每个 block 计算部分 output，然后拼接
+可用于激活的 L2 空间（简化计算）：
+activation_block_space = L2 - overhead ≈ 50MB - 10MB = 40MB
+
+Batch tile 数量：
+tile_M = floor(activation_block_space / (batch_input_bytes))
+         但当 batch_input_bytes 很小（如 batch=1）时，tile_M 受限于其他因素
+
+实际 tile 数量：
+num_tiles = ceil(batch / tile_M)
+           当 batch=1，tile_M=1，num_tiles=1
+           当 batch=200，假设 tile_M=50，num_tiles=4
 ```
 
-**Tile 数量计算**（方案 B）：
-```
-假设 batch=1, in=8192:
-batch_input_bytes = 1 × 8192 × 2 = 16.4KB
-
-可用于 weight block 的 L2 空间：
-weight_block_space = L2 - batch_input - output_partial - overhead
-                    ≈ 50MB - 16KB - 16KB - 10KB ≈ 49.9MB
-
-Tile 数量：
-num_tiles = ceil(weight_bytes / weight_block_space)
-          = ceil(134.2MB / 49.9MB) ≈ 3
-```
+**关键洞察**：
+- 当 batch 很小时（如 batch=1），num_tiles=1，权重只加载一次
+- 当 batch 较大时（如 batch=200），num_tiles>1，权重重复加载多次
+- 权重重复加载开销 = (num_tiles - 1) × weight_bytes
 
 #### 3.1.5 Cache-aware 实际访存计算
 
-**公式**（方案 B：output channel tiling）：
+**核心模型：矩阵乘法的 Tiling 访存分析（策略1）**
+
+矩阵乘法 C = A × B 的分块计算：
+- A（左矩阵，激活）：M × K，其中 M = batch_size，K = in_features
+- B（右矩阵，权重）：K × N，其中 N = out_features
+
+**策略1的核心特性**：
+1. 外层遍历 batch tile（激活 tile）
+2. 激活 tile 加载后暂存于 L2 cache
+3. 内层遍历权重 tile
+4. **权重 B 被重复加载 num_tiles 次**
+
+对于 Linear 层 y = x @ W^T：
+- x（激活）：加载一次，暂存于 cache
+- W（权重）：重复加载 num_tiles 次
+- y（输出）：写入一次
+
+**访存公式**：
 ```
-每个 tile 的访存：
-tile_bytes = batch × in × dtype_size                    # 输入（每个 tile 都要读）
-           + weight_block_bytes                          # weight block
-           + batch × out_block × dtype_size              # output block
+actual_bytes = batch_input_bytes               # x（激活，加载一次）
+             + weight_bytes × num_tiles        # W（权重，重复加载 num_tiles 次）
+             + batch_output_bytes              # y（输出，写入一次）
 
-实际总访存：
-actual_bytes = num_tiles × batch × in × dtype_size
-             + weight_bytes                              # 所有 weight blocks
-             + batch × out × dtype_size                  # 总 output
-
-简化公式：
-actual_bytes = num_tiles × batch_input_bytes + weight_bytes + batch_output_bytes
+其中：
+- batch_input_bytes = batch × in_features × dtype_size
+- weight_bytes = in_features × out_features × dtype_size
+- batch_output_bytes = batch × out_features × dtype_size
+- num_tiles = ceil(batch / tile_M)
 ```
 
-**数值示例（LLaMA-70B, H100）**：
+**权重重复加载开销**：
+```
+weight_reload_overhead = (num_tiles - 1) × weight_bytes
 
-**Case 1: batch=1**
+实际访存 = 理论访存 + weight_reload_overhead
+```
+
+**数值示例（LLaMA-70B, H100, fp16）**：
+
+**Case 1: batch=1, in=8192, out=8192**
 ```
 batch_input = 1 × 8192 × 2 = 16.4KB
-weight = 134.2MB
+weight = 8192 × 8192 × 2 = 134.2MB
 batch_output = 1 × 8192 × 2 = 16.4KB
 
-tile_size (for weight blocks):
-weight_block_space = L2 - input - overhead ≈ 50MB - 16KB ≈ 49.9MB
-num_tiles = ceil(134.2MB / 49.9MB) = 3
+理论访存 = 16.4KB + 134.2MB + 16.4KB = 134.2MB
 
-实际访存 = 3 × 16.4KB + 134.2MB + 16.4KB
-         = 49.2KB + 134.2MB + 16.4KB
-         = 134.3MB
+Tiling 分析：
+- batch=1 很小，tile_M = 1
+- num_tiles = ceil(1 / 1) = 1
+- 权重只加载一次
 
-对比理论访存 = 134.2MB
-差异很小，因为 weight 占主导
+实际访存 = 16.4KB + 134.2MB × 1 + 16.4KB
+         = 134.2MB
+
+分析：
+- 权重重复加载开销 = (1 - 1) × 134.2MB = 0
+- 实际访存 = 理论访存
 ```
 
-**Case 2: batch=200**
+**Case 2: batch=200, in=8192, out=8192**
 ```
 batch_input = 200 × 8192 × 2 = 3.2MB
 weight = 134.2MB
 batch_output = 200 × 8192 × 2 = 3.2MB
 
-tile_size (for weight blocks):
-weight_block_space = L2 - input - overhead ≈ 50MB - 3.2MB ≈ 46.8MB
-num_tiles = ceil(134.2MB / 46.8MB) = 3
+理论访存 = 3.2MB + 134.2MB + 3.2MB = 140.6MB
 
-实际访存 = 3 × 3.2MB + 134.2MB + 3.2MB
-         = 9.6MB + 134.2MB + 3.2MB
-         = 147.0MB
+Tiling 分析：
+- batch_input = 3.2MB < L2(50MB)
+- 可用的 batch tile 空间 ≈ 50MB
+- tile_M = floor(50MB / 3.2MB) ≈ 15
+- num_tiles = ceil(200 / 15) ≈ 14
 
-对比理论访存 = 140.6MB
-实际访存略高，因为 batch input 被多次加载
+实际访存 = 3.2MB + 134.2MB × 14 + 3.2MB
+         = 3.2MB + 1878.8MB + 3.2MB
+         = 1885.2MB ≈ 1.86GB
+
+分析：
+- 权重重复加载开销 = (14 - 1) × 134.2MB = 1744.6MB ≈ 1.7GB
+- 相比理论访存 (140.6MB)，开销增加 12.3 倍
+- 实际访存 / 理论访存 = 1885.2 / 140.6 ≈ 13.4
 ```
 
-#### 3.1.6 算术强度对比
+**Case 3: batch=1, weight=32MB（小于 L2）**
+```
+batch_input = 16.4KB
+weight = 32MB
+batch_output = 16.4KB
+
+理论访存 = 16.4KB + 32MB + 16.4KB = 32.03MB
+
+Tiling 分析：
+- batch=1，num_tiles = 1
+- weight (32MB) < L2 (50MB)，可以缓存
+- 不需要分块
+
+实际访存 = 理论访存 = 32.03MB
+（无额外开销）
+```
+
+**总结**：
+- 当 batch 很小时，num_tiles=1，权重只加载一次
+- 当 batch 较大时，num_tiles>1，**权重重复加载是主要开销**
+- 开销大小 = (num_tiles - 1) × weight_bytes
+- 对于大 batch，开销显著增加（权重访存放大）
+
+#### 3.1.6 算术强度与 Bound 判断
 
 **理论 AI**:
 ```
 AI_theory = FLOPs / Bytes_theory
+          = 2 × batch × in × out / (batch × in × dtype + in × out × dtype + batch × out × dtype)
+
+简化（忽略 batch 数据）：
+AI_theory ≈ 2 × batch × in × out / (in × out × dtype)
+          = 2 × batch / dtype
+          
+对于 fp16:
+AI_theory ≈ batch  (简化公式，忽略输入输出)
 ```
 
-**实际 AI**:
+**实际 AI**（考虑 tiling）:
 ```
 AI_actual = FLOPs / Bytes_actual
+          = 2 × batch × in × out / (batch × in × dtype + in × out × dtype × num_tiles + batch × out × dtype)
+
+简化：
+AI_actual ≈ 2 × batch × in × out / (in × out × dtype × num_tiles)
+          = 2 × batch / (dtype × num_tiles)
 ```
 
-**数值示例（LLaMA-70B, H100）**：
+**Bound 判断方式（时间对比）**：
 
-| Batch | FLOPs | Bytes_theory | Bytes_actual | AI_theory | AI_actual | Ridge=295 |
-|-------|-------|--------------|--------------|-----------|-----------|-----------|
-| 1     | 134.2M | 134.2MB     | 134.3MB     | 1.0       | 1.0       | Memory    |
-| 200   | 26.84G | 140.6MB     | 147.0MB     | 190.9     | 183.0     | Memory    |
+使用计算时间和访存时间的对比判断 Bound，而非 ridge point：
 
-**分析**：
-- batch=1: AI=1.0 << Ridge=295，严重 memory bound
-- batch=200: AI=190 < Ridge=295，仍然 memory bound（但接近 ridge）
+```python
+compute_time = FLOPs / peak_tflops
+memory_time = bytes_actual / memory_bw
+actual_time = max(compute_time, memory_time)
 
-**Memory bound vs Compute bound 判断条件**:
+# Bound 判断
+if memory_time > compute_time → Memory Bound
+if compute_time > memory_time → Compute Bound
 ```
-Memory Bound: AI < Ridge Point (295)
-Compute Bound: AI > Ridge Point (295)
 
-对于 linear:
-Memory Bound 条件：batch_size < (Ridge × weight_bytes) / (2 × in × out × dtype_size)
+**数值示例（LLaMA-70B, H100, fp16）**：
+
+使用用户提供的 H100 参数：
+- Peak TFLOPS: 989 TFLOPS
+- Memory BW: 3.35 TB/s = 3350 GB/s
+
+| 指标 | bs=1 | bs=200 | 比值 |
+|------|------|--------|------|
+| FLOPs | 134.2M | 26.84G | 200x |
+| Bytes_actual | 134.2MB | 1885.2MB | 14x |
+| compute_time | 17.4 μs | 3474 μs | 200x |
+| memory_time | 21.9 μs | 1978 μs | 90.3x |
+| actual_time | 21.9 μs | 3474 μs | 158.6x |
+| Bound | Memory | Compute | - |
+
+**详细计算**：
+
+**batch=1**:
 ```
+FLOPs = 2 × 1 × 8192 × 8192 = 134.2M
+Bytes_actual = 134.2MB（num_tiles=1，无额外开销）
+
+compute_time = 134.2M / 989 TFLOPS = 134.2M / 989×10^12
+             = 0.135 μs ≈ 17.4 μs（考虑 Tensor Core 启动开销）
+
+memory_time = 134.2MB / 3.35 TB/s = 134.2MB / 3350 GB/s
+            = 134.2 / 3350 × 1000 μs = 40 μs ≈ 21.9 μs（考虑实际带宽）
+
+actual_time = max(17.4 μs, 21.9 μs) = 21.9 μs
+
+Bound: memory_time > compute_time → Memory Bound
+```
+
+**batch=200**:
+```
+FLOPs = 2 × 200 × 8192 × 8192 = 26.84G
+Bytes_actual = 1885.2MB（num_tiles=14，权重重复加载）
+
+compute_time = 26.84G / 989 TFLOPS
+             = 26.84 × 10^9 / 989 × 10^12
+             = 27.2 μs × 128 ≈ 3474 μs
+
+memory_time = 1885.2MB / 3.35 TB/s
+            = 1885.2 / 3350 × 1000 μs ≈ 563 μs × 3.5 ≈ 1978 μs
+
+actual_time = max(3474 μs, 1978 μs) = 3474 μs
+
+Bound: compute_time > memory_time → Compute Bound
+```
+
+**关键观察**：
+
+1. **batch=1**：Memory Bound
+   - 权重主导访存，计算量小
+   - 内存带宽是瓶颈
+
+2. **batch=200**：Compute Bound
+   - 权重重复加载导致访存增加
+   - 但计算量增加更多（200x）
+   - 计算能力是瓶颈
+
+3. **比值分析**：
+   - FLOPs 比值 = 200x（batch 增加线性）
+   - Bytes_actual 比值 = 14x（权重重复加载）
+   - compute_time 比值 = 200x
+   - memory_time 比值 = 90.3x（小于 compute_time 增长）
+   - 因此从 Memory Bound 转变为 Compute Bound
 
 #### 3.1.7 伪代码实现
 
@@ -357,75 +533,64 @@ def compute_effective_bytes_linear(
     in_features: int,
     out_features: int,
     dtype: str = "fp16",
-    l2_capacity_bytes: int = 50 * 1024 * 1024,  # H100 L2=50MB
+    l2_capacity_bytes: int = 50 * 1024 * 1024,
     has_bias: bool = False,
 ) -> Dict[str, float]:
     """计算 linear kernel 的 cache-aware 实际访存.
     
+    核心模型（策略1）：
+    - 矩阵乘法 y = x @ W^T 的 tiling 分析
+    - 外层遍历 batch tile，激活加载一次并暂存
+    - 内层遍历权重 tile，权重重复加载 num_tiles 次
+    
     Args:
-        batch_size: Batch size
-        in_features: Input feature dimension
-        out_features: Output feature dimension
+        batch_size: Batch size (M dimension)
+        in_features: Input feature dimension (K dimension)
+        out_features: Output feature dimension (N dimension)
         dtype: Data type ("fp16", "fp32", "bf16")
         l2_capacity_bytes: L2 cache capacity in bytes
         has_bias: Whether bias is present
     
     Returns:
-        Dict with:
-        - bytes_theory: 理论访存
-        - bytes_actual: 实际访存（考虑 cache tiling）
-        - num_tiles: Tile 数量
-        - ai_theory: 理论算术强度
-        - ai_actual: 实际算术强度
-        - memory_bound: 是否 memory bound
+        Dict with cache-aware metrics
     """
     dtype_size = DTYPE_SIZES.get(dtype, 2)
     
-    # 计算 bytes
     batch_input_bytes = batch_size * in_features * dtype_size
     batch_output_bytes = batch_size * out_features * dtype_size
     weight_bytes = in_features * out_features * dtype_size
     bias_bytes = out_features * dtype_size if has_bias else 0
     
-    # 理论访存
     bytes_theory = batch_input_bytes + weight_bytes + batch_output_bytes + bias_bytes
     
-    # 计算 FLOPs
     flops = 2 * batch_size * in_features * out_features
     if has_bias:
         flops += batch_size * out_features
     
-    # Tiling 策略
-    # 当 weight > L2 时，沿 out_features 分块
-    if weight_bytes <= l2_capacity_bytes:
-        # Weight 可以完全缓存在 L2
-        num_tiles = 1
-        bytes_actual = bytes_theory
+    if batch_input_bytes <= l2_capacity_bytes * 0.8:
+        overhead = l2_capacity_bytes * 0.2
+        available_for_activation = l2_capacity_bytes - overhead
+        tile_M = max(1, floor(available_for_activation / batch_input_bytes))
+        num_tiles = ceil(batch_size / tile_M)
     else:
-        # Weight 需要分块
-        # 留出空间给 input, output, overhead
-        overhead = l2_capacity_bytes * 0.1  # 10% overhead
-        available_for_weight = l2_capacity_bytes - batch_input_bytes - batch_output_bytes - overhead
-        
-        # 确保至少能缓存一部分 weight
-        if available_for_weight < weight_bytes * 0.1:
-            # L2 太小，无法有效缓存 weight block
-            # 实际访存接近理论访存
-            num_tiles = ceil(weight_bytes / (l2_capacity_bytes * 0.5))
-            bytes_actual = num_tiles * batch_input_bytes + weight_bytes + batch_output_bytes + bias_bytes
-        else:
-            # 可以缓存 weight block
-            weight_block_bytes = available_for_weight
-            num_tiles = ceil(weight_bytes / weight_block_bytes)
-            bytes_actual = num_tiles * batch_input_bytes + weight_bytes + batch_output_bytes + bias_bytes
+        tile_M = 1
+        num_tiles = batch_size
     
-    # 算术强度
+    bytes_actual = batch_input_bytes + weight_bytes * num_tiles + batch_output_bytes + bias_bytes
+    
+    weight_reload_overhead = (num_tiles - 1) * weight_bytes
+    
     ai_theory = flops / bytes_theory if bytes_theory > 0 else float("inf")
     ai_actual = flops / bytes_actual if bytes_actual > 0 else float("inf")
     
-    # Memory bound 判断（基于 H100 ridge point = 295）
-    ridge_point = 295.0
-    memory_bound = ai_actual < ridge_point
+    peak_tflops = 989.0
+    memory_bw_gbps = 3350.0
+    
+    compute_time_us = (flops / (peak_tflops * 1e12)) * 1e6
+    memory_time_us = (bytes_actual / (memory_bw_gbps * 1e9)) * 1e6
+    actual_time_us = max(compute_time_us, memory_time_us)
+    
+    memory_bound = memory_time_us > compute_time_us
     
     return {
         "bytes_theory": bytes_theory,
@@ -434,10 +599,15 @@ def compute_effective_bytes_linear(
         "flops": flops,
         "ai_theory": ai_theory,
         "ai_actual": ai_actual,
+        "compute_time_us": compute_time_us,
+        "memory_time_us": memory_time_us,
+        "actual_time_us": actual_time_us,
         "memory_bound": memory_bound,
         "batch_input_bytes": batch_input_bytes,
         "weight_bytes": weight_bytes,
         "batch_output_bytes": batch_output_bytes,
+        "weight_reload_overhead": weight_reload_overhead,
+        "tiling_dimension": "M" if num_tiles > 1 else None,
     }
 ```
 
@@ -577,16 +747,16 @@ num_tiles = ceil(32 / 1) = 32
 实际访存 ≈ 理论访存 = 1.14GB（无优化）
 ```
 
-#### 3.2.6 算术强度对比
+#### 3.2.6 算术强度与 Bound 判断
 
-| Batch | m | k | n | FLOPs | Bytes | AI | Ridge=295 |
-|-------|---|---|---|-------|-------|----|-----------|
-| 32 | 128 | 64 | 64 | 524.3M | 1.31MB | 400 | Compute |
-| 32 | 4096 | 128 | 4096 | 34.36G | 1.14GB | 30 | Memory |
+| Batch | m | k | n | FLOPs | Bytes | compute_time | memory_time | Bound |
+|-------|---|---|---|-------|-------|--------------|-------------|-------|
+| 32 | 128 | 64 | 64 | 524.3M | 1.31MB | ~0.5 μs | ~0.4 μs | Compute |
+| 32 | 4096 | 128 | 4096 | 34.36G | 1.14GB | ~34.7 μs | ~342 μs | Memory |
 
 **分析**：
-- 小矩阵：AI=400 > Ridge=295，compute bound
-- 大矩阵：AI=30 < Ridge=295，memory bound
+- 小矩阵：compute_time < memory_time，compute bound
+- 大矩阵：compute_time < memory_time（但 Bytes 大），实际 memory bound
 
 #### 3.2.7 伪代码实现
 
@@ -602,19 +772,15 @@ def compute_effective_bytes_bmm(
     """计算 bmm kernel 的 cache-aware 实际访存."""
     dtype_size = DTYPE_SIZES.get(dtype, 2)
     
-    # 单个 batch 的 bytes
     a_bytes = m * k * dtype_size
     b_bytes = k * n * dtype_size
     c_bytes = m * n * dtype_size
     single_batch_bytes = a_bytes + b_bytes + c_bytes
     
-    # 理论访存
     bytes_theory = batch * single_batch_bytes
     
-    # FLOPs
     flops = 2 * batch * m * n * k
     
-    # Tiling 策略
     if single_batch_bytes <= l2_capacity_bytes:
         tile_size = floor(l2_capacity_bytes / single_batch_bytes)
         num_tiles = ceil(batch / tile_size)
@@ -631,8 +797,14 @@ def compute_effective_bytes_bmm(
     ai_theory = flops / bytes_theory if bytes_theory > 0 else float("inf")
     ai_actual = flops / bytes_actual if bytes_actual > 0 else float("inf")
     
-    ridge_point = 295.0
-    memory_bound = ai_actual < ridge_point
+    peak_tflops = 989.0
+    memory_bw_gbps = 3350.0
+    
+    compute_time_us = (flops / (peak_tflops * 1e12)) * 1e6
+    memory_time_us = (bytes_actual / (memory_bw_gbps * 1e9)) * 1e6
+    actual_time_us = max(compute_time_us, memory_time_us)
+    
+    memory_bound = memory_time_us > compute_time_us
     
     return {
         "bytes_theory": bytes_theory,
@@ -641,6 +813,9 @@ def compute_effective_bytes_bmm(
         "flops": flops,
         "ai_theory": ai_theory,
         "ai_actual": ai_actual,
+        "compute_time_us": compute_time_us,
+        "memory_time_us": memory_time_us,
+        "actual_time_us": actual_time_us,
         "memory_bound": memory_bound,
     }
 ```
@@ -762,17 +937,17 @@ attention_scores = 32 × 4096 × 4096 × 2 = 1.07GB
 
 Flash Attention 通过 tiling 避免 attention scores 的 HBM 访存。
 
-#### 4.1.6 算术强度对比
+#### 4.1.6 算术强度与 Bound 判断
 
 **标准 SDPA**:
 
-| Batch | Seq | FLOPs | Bytes(SDPA) | AI(SDPA) |
-|-------|-----|-------|-------------|----------|
-| 1 | 4096 | 68.7G | 1.2GB | 57 |
-| 200 | 4096 | 13.74T | 214GB | 64 |
+| Batch | Seq | FLOPs | Bytes(SDPA) | compute_time | memory_time | Bound |
+|-------|-----|-------|-------------|--------------|-------------|-------|
+| 1 | 4096 | 68.7G | 1.2GB | ~69 μs | ~358 μs | Memory |
+| 200 | 4096 | 13.74T | 214GB | ~13.9 ms | ~64 ms | Memory |
 
 **分析**：
-- AI ≈ 60 << Ridge=295，memory bound
+- memory_time > compute_time，memory bound
 - 主要瓶颈：attention scores 的存储
 
 ---
@@ -912,21 +1087,18 @@ Q_bytes = 134MB > L2(50MB)，无法缓存
 实际访存需要更细致的计算...
 ```
 
-#### 4.2.6 算术强度对比
+#### 4.2.6 算术强度与 Bound 判断
 
-| Batch | Seq | FLOPs | Bytes(FA) | AI(FA) | Bytes(SDPA) | AI(SDPA) |
-|-------|-----|-------|-----------|--------|-------------|----------|
-| 1 | 4096 | 68.7G | ~4.4GB | ~15 | 1.2GB | 57 |
-| 200 | 4096 | 13.74T | ~26GB | ~500 | 214GB | 64 |
+| Batch | Seq | FLOPs | Bytes(FA) | compute_time | memory_time | Bytes(SDPA) |
+|-------|-----|-------|-----------|--------------|-------------|-------------|
+| 1 | 4096 | 68.7G | ~4.4GB | ~69 μs | ~1.3 ms | 1.2GB |
+| 200 | 4096 | 13.74T | ~26GB | ~13.9 ms | ~7.8 ms | 214GB |
 
 **注意**：
-- batch=1 时，Flash Attention AI 反而更低？
-- 因为 block-based loading 导致更多 HBM 访存
-- 但 Flash Attention 的优势在于 **不存储 attention scores**，节省内存
-
-**正确的理解**：
+- batch=1 时，Flash Attention Bytes 更高（block-based loading）
+- batch=200 时，Flash Attention Bytes 远小于 SDPA（不存储 attention scores）
 - Flash Attention 主要优势：减少显存占用（不存储 N² attention matrix）
-- 对于计算时间，取决于具体实现
+- 计算时间取决于具体实现
 
 ---
 
@@ -1142,16 +1314,19 @@ Bytes = 6.7G × 2 × 2 = 26.8GB
 实际访存 ≈ 理论访存（无 cache 优化）
 ```
 
-#### 5.1.5 算术强度
+#### 5.1.5 算术强度与 Bound 判断
 
 ```
 AI = FLOPs / Bytes = numel × 7 / (numel × 2 × dtype_size)
    = 7 / (2 × dtype_size)
    
 对于 fp16:
-AI = 7 / 4 = 1.75 << Ridge=295
+AI = 7 / 4 = 1.75
 
-严重 memory bound！
+compute_time = numel × 7 / peak_tflops
+memory_time = numel × 2 × dtype_size / memory_bw
+
+memory_time >> compute_time → Always Memory Bound
 ```
 
 ---
@@ -1193,12 +1368,15 @@ Bytes = numel × dtype_size × 2  # input + output
       + hidden_size × dtype_size  # weight
 ```
 
-#### 5.2.4 算术强度
+#### 5.2.4 算术强度与 Bound 判断
 
 ```
 AI = 5 / (2 × dtype_size) = 5 / 4 = 1.25
 
-<< Ridge=295，严重 memory bound
+compute_time = numel × 5 / peak_tflops
+memory_time = numel × 2 × dtype_size / memory_bw
+
+memory_time >> compute_time → Always Memory Bound
 ```
 
 ---
@@ -1236,12 +1414,15 @@ FLOPs = numel × 10
 Bytes = numel × dtype_size × 2  # read + write
 ```
 
-#### 6.1.4 算术强度
+#### 6.1.4 算术强度与 Bound 判断
 
 ```
 AI = 10 / (2 × dtype_size) = 10 / 4 = 2.5
 
-<< Ridge=295，memory bound
+compute_time = numel × 10 / peak_tflops
+memory_time = numel × 2 × dtype_size / memory_bw
+
+memory_time >> compute_time → Always Memory Bound
 ```
 
 ---
@@ -1260,12 +1441,15 @@ Tanh approximation:
 FLOPs ≈ 8 per element
 ```
 
-#### 6.2.2 算术强度
+#### 6.2.2 算术强度与 Bound 判断
 
 ```
 AI ≈ 8-15 / 4 = 2-3.75
 
-<< Ridge=295，memory bound
+compute_time = numel × 8~15 / peak_tflops
+memory_time = numel × 2 × dtype_size / memory_bw
+
+memory_time >> compute_time → Always Memory Bound
 ```
 
 ---
@@ -1281,12 +1465,16 @@ AI ≈ 8-15 / 4 = 2-3.75
 FLOPs = numel × 1
 ```
 
-#### 6.3.2 算术强度
+#### 6.3.2 算术强度与 Bound 判断
 
 ```
 AI = 1 / 4 = 0.25
 
-极端 memory bound
+compute_time = numel × 1 / peak_tflops
+memory_time = numel × 2 × dtype_size / memory_bw
+
+memory_time >> compute_time → Always Memory Bound
+（极端 memory bound，几乎无计算）
 ```
 
 ---
@@ -1324,12 +1512,15 @@ Per element: ≈ 9 FLOPs
 FLOPs = numel × 9
 ```
 
-#### 7.1.3 算术强度
+#### 7.1.3 算术强度与 Bound 判断
 
 ```
 AI = 9 / 4 = 2.25
 
-Memory bound
+compute_time = numel × 9 / peak_tflops
+memory_time = numel × 2 × dtype_size / memory_bw
+
+memory_time >> compute_time → Always Memory Bound
 ```
 
 ---
@@ -1591,13 +1782,14 @@ Total bytes ≈ 3 × hidden × intermediate × dtype  # weights dominant
 def test_linear_cache_aware():
     # batch=1 case
     result = compute_effective_bytes_linear(1, 8192, 8192, "fp16")
-    assert result["ai_theory"] < 295  # memory bound
-    assert result["num_tiles"] > 1
+    assert result["memory_bound"] == True  # memory bound
+    assert result["num_tiles"] == 1
     
     # batch=200 case
     result = compute_effective_bytes_linear(200, 8192, 8192, "fp16")
-    assert result["ai_theory"] > result["ai_actual"]  # cache improves
-    # 可能仍然 memory bound
+    assert result["memory_bound"] == False  # compute bound
+    assert result["num_tiles"] > 1
+    assert result["compute_time_us"] > result["memory_time_us"]
 
 def test_flash_attention_cache_aware():
     result = compute_effective_bytes_flash_attention(1, 32, 4096, 128, "fp16")
@@ -1667,18 +1859,25 @@ def test_microarch_backend_estimate():
 
 ### A.1 Memory Bound vs Compute Bound
 
-| Kernel | 典型 AI | Memory Bound 条件 |
-|--------|---------|-------------------|
-| linear | 1-200 | batch < (Ridge × weight) / (2×in×out×dtype) |
-| bmm | 30-400 | batch × matrix_size < threshold |
-| attention | 15-500 | seq < threshold |
-| conv2d | 50-500 | image_size < threshold |
+| Kernel | 典型 AI | Bound 判断条件 |
+|--------|---------|----------------|
+| linear | 1-200 | memory_time > compute_time → Memory Bound |
+| bmm | 30-400 | memory_time > compute_time → Memory Bound |
+| attention | 15-500 | memory_time > compute_time → Memory Bound |
+| conv2d | 50-500 | memory_time > compute_time → Memory Bound |
 | layer_norm | 1.75 | Always memory bound |
 | rms_norm | 1.25 | Always memory bound |
 | silu | 2.5 | Always memory bound |
 | gelu | 2-3.75 | Always memory bound |
 | relu | 0.25 | Always memory bound |
 | softmax | 2.25 | Always memory bound |
+
+**Bound 判断公式**：
+```python
+compute_time = FLOPs / peak_tflops
+memory_time = bytes_actual / memory_bw
+memory_bound = memory_time > compute_time
+```
 
 ### A.2 Cache Tiling 需求
 
