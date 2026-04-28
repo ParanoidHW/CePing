@@ -347,34 +347,9 @@ instance_infer = model.bind(ctx_infer)
 
 ---
 
-## 4. 子模块评估规范
+## 4. 推荐开发实践样例
 
-详见第2节各规范：
-- **依赖 kernel 创建层**：参见 [2.2 模型开销建模必须依赖已有基础能力](#22-模型开销建模必须依赖已有基础能力)
-- **Norm 合并入父模块**：参见 [2.3 Norm 类子模块合并入后续子模块](#23-norm-类子模块合并入后续子模块)
-- **通用命名**：参见 [2.4 新增类型子模块评估必须用通用命名和表达](#24-新增类型子模块评估必须用通用命名和表达)
-
----
-
-## 5. Bind 建模规范
-
-详见 [2.5 必须依赖 bind 建模](#25-必须依赖-bind-建模)。
-
----
-
-## 6. 文档刷新规范
-
-详见 [2.6 详细建模过程刷新到 docs wiki](#26-详细建模过程刷新到-docs-wiki)。
-
-**额外要求**：
-- **数据源刷新**：外部检索到的信息刷新到 `docs/data_sources_wiki.md`
-- **DEVELOP_LOG 刷新**：记录开发摘要、关键决策、测试结果
-
----
-
-## 7. 推荐开发实践样例
-
-### 7.1 Llama 模型实现示例
+### 4.1 Llama 模型实现示例
 
 ```python
 from llm_perf.modeling.module import ShardedModule
@@ -438,7 +413,7 @@ class LlamaModel(ShardedModule):
         return logits
 ```
 
-### 7.2 DeepSeek MoE 模型示例
+### 4.2 DeepSeek MoE 模型示例
 
 ```python
 class DeepSeekModel(ShardedModule):
@@ -468,7 +443,7 @@ class DeepSeekModel(ShardedModule):
         
         self.lm_head = ShardedLMHead(...)
 
-### 7.3 架构修正示例
+### 4.3 架构修正示例
 
 当发现模型架构与官方实现不一致需修正时：
 
@@ -495,9 +470,9 @@ num_modulation = 6 * cfg.hidden_size
 
 ---
 
-## 8. 开发规范
+## 5. 开发规范
 
-### 8.1 测试覆盖
+### 5.1 测试覆盖
 
 **必须测试**：
 - 参数量与官方一致
@@ -519,7 +494,7 @@ def test_llama_flops():
     # 验证 FLOPs 计算正确
 ```
 
-### 8.2 Commit 格式
+### 5.2 Commit 格式
 
 ```bash
 feat(modeling): add ModelName model support
@@ -533,7 +508,7 @@ Tests: ModelName params and FLOPs verified against official
 Docs: Updated docs/model_evaluation_wiki.md
 ```
 
-### 8.3 检查清单
+### 5.3 检查清单
 
 **开发前**：
 - [ ] 检索官方模型配置（HuggingFace）
@@ -555,9 +530,9 @@ Docs: Updated docs/model_evaluation_wiki.md
 
 ---
 
-## 9. 特别注意事项
+## 6. 特别注意事项
 
-### 9.1 FFN intermediate size 与激活函数
+### 6.1 FFN intermediate size 与激活函数
 
 **激活函数类型**：
 - SwiGLU / GeGLU: `intermediate_size × 2`（gated activation）
@@ -570,19 +545,19 @@ Docs: Updated docs/model_evaluation_wiki.md
    - 是否在 down 前进行 `act * gate` 操作
 3. 如未使用 gated 激活，则 `intermediate_size` 不需乘以 2
 
-### 9.2 GQA vs MHA
+### 6.2 GQA vs MHA
 
 - MHA: `num_kv_heads = num_heads`
 - GQA: `num_kv_heads < num_heads`（显式指定）
 - MQA: `num_kv_heads = 1`
 
-### 9.3 MoE shared experts
+### 6.3 MoE shared experts
 
 DeepSeek MoE 有 routed experts + shared experts，两者都需要评估。
 
 ---
 
-## 10. 工具命令速查
+## 7. 工具命令速查
 
 ```bash
 # 运行模型测试
