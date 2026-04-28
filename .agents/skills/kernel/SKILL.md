@@ -187,12 +187,15 @@ activation_bytes = result.activation_bytes
 | Backend | 文件 | 说明 |
 |---------|------|------|
 | 理论 Roofline | `theory.py` | 理论性能模型，不考虑 cache |
-| Cache-aware | `microarch.py` | 考虑 L2 cache tiling 的实际访存 |
+| Microarch | `microarch.py` | 考虑 L2 cache tiling 的实际访存 |
 | 实测 Profiling | `profiling.py` | 基于 profiler 的实测数据（如有） |
 
 **实施要求**：
 - 每个 kernel 需在 3 个 backend 中都有对应实现
-- 测试时需验证 3 个 backend 的结果一致性
+- 测试时需验证 3 个 backend 的趋势一致性：
+  - 大规格 kernel 耗时 > 小规格 kernel 耗时
+  - 按某一维度（batch、seq、hidden）近似线性或略超过线性
+  - 不同 backend 的收益来源不同，但趋势相同
 - 分析报告需同时展示 3 种计算结果
 
 ### 3.3 Cache-aware 计算的正确模型
@@ -835,7 +838,7 @@ feat(kernels): add <kernel_name> kernel
 - [ ] 编写基础功能测试
 - [ ] 编写 cache-aware 测试
 - [ ] 编写边界情况测试
-- [ ] 验证 3 个 backend 结果一致性
+- [ ] 验证 3 个 backend 趋势一致性
 - [ ] 运行存量测试确保兼容
 
 ### 提交阶段
