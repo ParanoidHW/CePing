@@ -1,6 +1,6 @@
 ---
 name: kernel
-description: Kernel 开发规范，包含开发流程、cache-aware 计算模型、实践样例和注意事项
+description: Kernel 开发规范（API + cache-aware + 3 backend）
 ---
 
 ## 概述
@@ -86,9 +86,76 @@ description: Kernel 开发规范，包含开发流程、cache-aware 计算模型
 
 ---
 
-## 2. 注意事项
+## 2. Kernel API 开发规范
 
-### 2.1 分层解耦原则
+### 2.1 Kernel 注册方式
+
+kernel 的注册方式需尽量对齐 torch 原生对应接口，入参数量和形式保持和 torch 接口一致。参考的 torch 版本为 **2.10**。
+
+### 2.2 强制使用 Kernel API
+
+**所有模型的 `activation_bytes`/`params`/`FLOPs`/内存开销等特征，必须通过 kernel API 获取**，禁止 kernel 外手动计算。通信开销也应该通过 kernel 表达来独立处理通信量和不同拓扑下的开销。
+
+#### 正确做法
+
+```python
+from ..kernels import linear, rms_norm
+from ..kernels.utils import kernel_result_to_layer
+
+result = linear(
+    input=(seq_len, hidden_size),
+    weight=(out_dim, hidden_size),
+    bias=None,
+    dtype=cfg.dtype
+)
+
+layers.append(kernel_result_to_layer(
+    name="layer_name",
+    result=result,
+))
+```
+
+#### 错误做法
+
+```python
+layers.append(LayerConfig(
+    name="layer_name",
+    input_shape=(1, seq_len, hidden_size),
+    output_shape=(1, seq_len, out_dim),
+    params_count=hidden_size * out_dim,
+    flops=result.flops,
+    activation_bytes=seq_len * out_dim * dtype_size,
+))
+```
+
+### 2.3 计算类 Kernel 函数签名规范
+
+```python
+def kernel_name(
+    input: Tuple[int, ...],
+    weight: Optional[Tuple[int, ...]] = None,
+    bias: Optional[Tuple[int, ...]] = None,
+    dtype: str = "fp16"
+) -> KernelResult:
+    """Kernel 文档字符串.
+    
+    Args:
+        input: 输入形状
+        weight: 权重形状（如果有）
+        bias: 偏置形状（如果有）
+        dtype: 数据类型
+    
+    Returns:
+        KernelResult 包含 output, flops, bytes_accessed
+    """
+    pass
+```
+
+---
+
+## 3. 注意事项
+
+### 3.1 分层解耦原则
 
 **核心原则**：kernel 层修改不影响上层（model 层、analyzer 层）
 
@@ -105,16 +172,30 @@ description: Kernel 开发规范，包含开发流程、cache-aware 计算模型
 ```
 
 **违反解耦的例子**：
+
 ```python
-# 错误：model 层手动计算（违反解耦）
 activation_bytes = seq_len * hidden_size * dtype_size
 
-# 正确：model 层调用 kernel API
 result = linear(input=(seq_len, hidden_size), ...)
 activation_bytes = result.activation_bytes
 ```
 
-### 2.2 Cache-aware 计算的正确模型
+### 3.2 三 Backend 同时考虑
+
+实施 kernel 时，需要同时考虑 3 个 backend 的计算结果：
+
+| Backend | 文件 | 说明 |
+|---------|------|------|
+| 理论 Roofline | `theory.py` | 理论性能模型，不考虑 cache |
+| Cache-aware | `microarch.py` | 考虑 L2 cache tiling 的实际访存 |
+| 实测 Profiling | `profiling.py` | 基于 profiler 的实测数据（如有） |
+
+**实施要求**：
+- 每个 kernel 需在 3 个 backend 中都有对应实现
+- 测试时需验证 3 个 backend 的结果一致性
+- 分析报告需同时展示 3 种计算结果
+
+### 3.3 Cache-aware 计算的正确模型
 
 #### 核心：矩阵乘法的 Tiling 访存分析
 
@@ -133,6 +214,7 @@ for A_tile_i in [0, num_tiles_M):      # 外层：激活 tile 步进
 - 权重 B 重复加载 num_tiles 次
 
 **访存公式**：
+
 ```
 actual_bytes = batch_input_bytes               # A（加载一次）
              + weight_bytes × num_tiles        # B（重复加载）
@@ -147,6 +229,7 @@ actual_bytes = batch_input_bytes               # A（加载一次）
 - y（输出）：写入一次
 
 **公式**：
+
 ```
 num_tiles = ceil(batch / tile_M)
 tile_M = floor(L2_capacity / batch_input_bytes)
@@ -154,7 +237,7 @@ tile_M = floor(L2_capacity / batch_input_bytes)
 权重重复加载开销 = (num_tiles - 1) × weight_bytes
 ```
 
-### 2.3 时间对比方式判断 Memory/Compute Bound
+### 3.4 时间对比方式判断 Memory/Compute Bound
 
 **正确方式**：使用时间对比，而非 ridge point
 
@@ -162,7 +245,6 @@ tile_M = floor(L2_capacity / batch_input_bytes)
 compute_time = FLOPs / peak_tflops
 memory_time = bytes_actual / memory_bw
 
-# Bound 判断
 if memory_time > compute_time:
     bound = "memory"
 else:
@@ -170,6 +252,7 @@ else:
 ```
 
 **数值示例（H100, fp16）**：
+
 ```
 batch=1:
   FLOPs = 134.2M
@@ -186,25 +269,21 @@ batch=200:
   compute_time > memory_time → Compute Bound
 ```
 
-### 2.4 避免常见错误
+### 3.5 避免常见错误
 
 #### 错误1：混淆理论访存和实际访存
 
 ```python
-# 错误：只计算理论访存
 bytes_theory = batch_input + weight + batch_output
 
-# 正确：计算实际访存（考虑 tiling）
 bytes_actual = batch_input + weight × num_tiles + batch_output
 ```
 
 #### 错误2：忽略权重重复加载开销
 
 ```python
-# 错误：假设权重只加载一次
 bytes_actual = batch_input + weight + batch_output
 
-# 正确：考虑权重重复加载
 weight_reload_overhead = (num_tiles - 1) × weight_bytes
 bytes_actual = bytes_theory + weight_reload_overhead
 ```
@@ -212,12 +291,10 @@ bytes_actual = bytes_theory + weight_reload_overhead
 #### 错误3：使用 ridge point 判断 bound
 
 ```python
-# 错误：使用 ridge point（不直观）
 ridge_point = peak_tflops / memory_bw
 ai_actual = FLOPs / bytes_actual
 bound = "memory" if ai_actual < ridge_point else "compute"
 
-# 正确：使用时间对比（直观）
 compute_time = FLOPs / peak_tflops
 memory_time = bytes_actual / memory_bw
 bound = "memory" if memory_time > compute_time else "compute"
@@ -226,19 +303,15 @@ bound = "memory" if memory_time > compute_time else "compute"
 #### 错误4：Flash Attention 的 hidden 访存
 
 ```python
-# 错误：忽略 Flash Attention 不存储 attention scores
-bytes_sdpa = Q + K + V + Output + attention_scores  # 标准 SDPA
-bytes_flash = Q + K + V + Output  # Flash Attention
-
-# 正确：理解 Flash Attention 通过 tiling 避免存储 attention scores
-# Flash Attention 在 SRAM 中计算，不写入 HBM
+bytes_sdpa = Q + K + V + Output + attention_scores
+bytes_flash = Q + K + V + Output
 ```
 
 ---
 
-## 3. 推荐开发实践样例
+## 4. 推荐开发实践样例
 
-### 3.1 Linear Kernel 完整实现
+### 4.1 Linear Kernel 完整实现
 
 #### kernel 函数（`llm_perf/kernels/functional.py`）
 
@@ -420,7 +493,7 @@ class TestLinearKernel:
         assert result["compute_time_us"] > result["memory_time_us"]
 ```
 
-### 3.2 Flash Attention 实现示例
+### 4.2 Flash Attention 实现示例
 
 #### kernel 函数
 
@@ -552,7 +625,7 @@ def compute_effective_bytes_flash_attention(
     }
 ```
 
-### 3.3 伪代码模板
+### 4.3 伪代码模板
 
 #### 通用 kernel 函数模板
 
@@ -583,19 +656,10 @@ def kernel_name(
     """
     dtype_size = DTYPE_SIZES.get(dtype, 2)
     
-    # 1. 计算输出形状
     output_shape = [...]
-    
-    # 2. 计算 FLOPs
     flops = ...
-    
-    # 3. 计算访存
     bytes_accessed = ...
-    
-    # 4. 计算参数量
     params_count = ...
-    
-    # 5. 计算激活内存
     activation_bytes = ...
     
     return KernelResult(
@@ -640,27 +704,20 @@ def compute_effective_bytes_kernel(
     """
     dtype_size = DTYPE_SIZES.get(dtype, 2)
     
-    # 1. 计算理论访存
     bytes_theory = ...
-    
-    # 2. 计算 FLOPs
     flops = ...
     
-    # 3. 计算 tile 数量
     if ... < l2_capacity_bytes:
         tile_M = ...
         num_tiles = ceil(batch_size / tile_M)
     else:
         num_tiles = batch_size
     
-    # 4. 计算实际访存
     bytes_actual = bytes_theory + ...
     
-    # 5. 计算时间
     compute_time_us = (flops / (peak_tflops * 1e12)) * 1e6
     memory_time_us = (bytes_actual / (memory_bw_gbps * 1e9)) * 1e6
     
-    # 6. 判断 bound
     memory_bound = memory_time_us > compute_time_us
     
     return {
@@ -676,18 +733,18 @@ def compute_effective_bytes_kernel(
 
 ---
 
-## 4. 开发规范
+## 5. 开发规范
 
-### 4.1 遵循 architecture skill 设计原则
+### 5.1 遵循 architecture skill 设计原则
 
 - **模块职责清晰**：kernel 层只负责计算，不依赖上层
 - **层次分明**：kernel → model → analyzer 单向依赖
 - **避免循环依赖**：禁止 kernel 依赖 model/analyzer
 - **设计审视**：新增 kernel 需审视现有模型兼容性
 
-详见：[architecture skill](../skills/architecture/SKILL.md)
+详见：[architecture skill](../architecture/SKILL.md)
 
-### 4.2 遵循 coder skill 代码规范
+### 5.2 遵循 project-code skill 代码规范
 
 - **代码风格**：使用 ruff 格式化，行长度限制 100 字符
 - **类型安全**：使用类型注解
@@ -695,9 +752,9 @@ def compute_effective_bytes_kernel(
 - **测试覆盖**：新增 kernel 必须添加测试用例
 - **小步提交**：每个 kernel 完成后立即提交一个 commit
 
-详见：[coder skill](../skills/coder/SKILL.md)
+详见：[project-code skill](../project-code/SKILL.md)
 
-### 4.3 测试覆盖要求
+### 5.3 测试覆盖要求
 
 #### 必须覆盖的测试场景
 
@@ -720,61 +777,53 @@ def compute_effective_bytes_kernel(
 #### 测试命令
 
 ```bash
-# 单元测试
 python -m pytest tests/test_kernels.py -v -n 4
-
-# 全量测试
 python -m pytest tests/ -v -n 4
-
-# 代码检查
 ruff check llm_perf/kernels/*.py --select=F401,F841,E741
 ```
 
-### 4.4 Commit 信息格式
+### 5.4 Commit 信息格式
 
 ```bash
-# 格式：feat(kernels): add <kernel_name> kernel
+feat(kernels): add <kernel_name> kernel
 
-# 示例
-feat(kernels): add linear kernel with cache-aware calculation
-
-- Add linear() function in functional.py
-- Add compute_effective_bytes_linear() in cache_aware.py
+- Add <kernel_name>() function in functional.py
+- Add compute_effective_bytes_<kernel_name>() in cache_aware.py
 - Support batch tiling model for memory/compute bound
-- Tests: 5 passed (3 new tests added)
+- Tests: X passed (Y new tests added)
 ```
 
 ---
 
-## 5. 参考文档
+## 6. 参考文档
 
-### 5.1 设计文档
+### 6.1 设计文档
 
 - [cache_aware_kernel_design.md](../../../docs/cache_aware_kernel_design.md): Cache-aware kernel 详细设计
 - [kernel_modeling.md](../../../docs/kernel_modeling.md): Kernel 建模基础
 
-### 5.2 相关 skill
+### 6.2 相关 skill
 
-- [architecture skill](../skills/architecture/SKILL.md): 架构设计准则
-- [coder skill](../skills/coder/SKILL.md): 开发规范
-- [new-kernel skill](../skills/new-kernel/SKILL.md): 新增 kernel 评估支持
-- [reviewer skill](../skills/reviewer/SKILL.md): 代码检视
+- [architecture skill](../architecture/SKILL.md): 架构设计准则
+- [project-code skill](../project-code/SKILL.md): 开发规范
+- [reviewer skill](../reviewer/SKILL.md): 代码检视
 
-### 5.3 外部参考
+### 6.3 外部参考
 
 - Flash Attention Paper: https://arxiv.org/abs/2205.14135
 - Roofline Model Paper: https://doi.org/10.1109/MC.2009.143
 - MLA Paper (DeepSeek-V2): https://arxiv.org/abs/2405.04434
+- PyTorch 2.10 Documentation: https://pytorch.org/docs/2.10/
 
 ---
 
-## 6. 检查清单
+## 7. 检查清单
 
 ### 设计阶段
 - [ ] 分析 kernel 需求合理性
 - [ ] 参考 torch 2.10 API
 - [ ] 设计 cache-aware 计算模型
-- [ ] 输出设计文档
+- [ ] 考虑 3 个 backend 的实现
 
 ### 实现阶段
 - [ ] 实现 kernel 函数
@@ -786,6 +835,7 @@ feat(kernels): add linear kernel with cache-aware calculation
 - [ ] 编写基础功能测试
 - [ ] 编写 cache-aware 测试
 - [ ] 编写边界情况测试
+- [ ] 验证 3 个 backend 结果一致性
 - [ ] 运行存量测试确保兼容
 
 ### 提交阶段
@@ -797,6 +847,7 @@ feat(kernels): add linear kernel with cache-aware calculation
 
 ---
 
-*文档版本: 1.0*
+*文档版本: 2.0*
 *创建日期: 2026-04-28*
-*参考: docs/cache_aware_kernel_design.md*
+*整合自: kernel skill + new-kernel skill*
+*参考: docs/cache_aware_kernel_design.md, docs/kernel_modeling.md*
