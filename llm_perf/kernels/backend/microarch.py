@@ -6,25 +6,26 @@ This backend provides performance estimates based on:
 3. Cache/memory hierarchy modeling
 4. Instruction-level parallelism analysis
 
-NOTE: This is a placeholder implementation. The full implementation
-will require detailed hardware microarchitecture knowledge and
-simulation models.
+Implementation now includes:
+- L1/L2 cache hit/miss analysis (via cache_aware module)
+- Effective bandwidth calculation considering cache hierarchy
+- Kernel-specific memory access patterns
 
 Future implementation will support:
 - device/NPU pipeline simulation
-- L1/L2 cache hit/miss analysis
 - Memory coalescing efficiency
 - Warp/wavefront scheduling
 - Tensor Core utilization estimation
 """
 
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 import math
 
 from .base import KernelBackend, BackendConfig
 from ..functional import KernelResult
 from ...hardware.device import Device, ComputeUnitType
 from ...utils.constants import DTYPE_SIZES
+from .cache_aware import get_calculator, CacheAwareResult
 
 
 class MicroarchConfig:
@@ -65,18 +66,18 @@ class MicroarchConfig:
 class MicroarchBackend(KernelBackend):
     """Backend using microarchitecture simulation.
 
-    NOTE: This is a placeholder implementation. The full implementation
-    will provide detailed microarchitecture-based performance modeling.
+    This backend provides detailed microarchitecture-based performance modeling.
 
     Current implementation provides:
-    - Basic roofline model (similar to TheoryBackend)
-    - Placeholder for future microarchitecture simulation
+    - Cache-aware memory access estimation (L1/L2/HBM breakdown)
+    - Effective bandwidth calculation
+    - Roofline model with cache hierarchy
 
-    Future capabilities:
-    - Pipeline simulation
-    - Cache hierarchy modeling
-    - Memory coalescing analysis
-    - Warp scheduling optimization
+    Capabilities:
+    - Pipeline simulation (placeholder)
+    - Cache hierarchy modeling (implemented via cache_aware)
+    - Memory access pattern analysis
+    - Warp scheduling optimization (placeholder)
     """
 
     MICROARCH_PRESETS = {
@@ -107,10 +108,11 @@ class MicroarchBackend(KernelBackend):
         ),
     }
 
-    def __init__(self, config: BackendConfig):
+    def __init__(self, config: BackendConfig, use_cache_aware: bool = True):
         super().__init__(config)
         self._microarch_configs: Dict[str, MicroarchConfig] = {}
         self._load_microarch_presets()
+        self.use_cache_aware = use_cache_aware
 
     def _load_microarch_presets(self) -> None:
         for name, preset in self.MICROARCH_PRESETS.items():
@@ -144,12 +146,18 @@ class MicroarchBackend(KernelBackend):
         microarch = self.get_microarch_config(device.config.name)
 
         peak_flops = device.get_compute_tflops(dtype, ComputeUnitType.CUBE_TENSOR_CORE) * 1e12
-        mem_bw = device.get_memory_bw_gbps() * 1e9
+        
+        if self.use_cache_aware:
+            cache_result = self._compute_cache_aware_access(result, device, **kwargs)
+            if cache_result is not None:
+                effective_bw = cache_result.effective_bandwidth_gbps * 1e9
+            else:
+                effective_bw = self._estimate_effective_bw_with_static_cache(microarch)
+        else:
+            effective_bw = self._estimate_effective_bw_with_static_cache(microarch)
 
         ai = flops / bytes_accessed if bytes_accessed > 0 else float("inf")
-        ridge = peak_flops / mem_bw
-
-        effective_bw = mem_bw * (microarch.cache_hit_rate_l1 * 0.7 + microarch.cache_hit_rate_l2 * 0.2 + 0.1)
+        ridge = peak_flops / effective_bw
 
         if ai < ridge:
             effective_flops = ai * effective_bw
@@ -163,6 +171,78 @@ class MicroarchBackend(KernelBackend):
         latency_time = latency_cycles / (clock_freq_ghz * 1e9)
 
         return base_time + latency_time
+
+    def _compute_cache_aware_access(
+        self,
+        result: KernelResult,
+        device: Device,
+        **kwargs,
+    ) -> Optional[CacheAwareResult]:
+        """Compute cache-aware memory access using cache_aware module.
+
+        Args:
+            result: KernelResult from functional API
+            device: Target device
+            **kwargs: batch_size, seq_len, etc.
+
+        Returns:
+            CacheAwareResult if calculator available, None otherwise
+        """
+        batch_size = kwargs.get("batch_size", 1)
+        
+        kernel_name = kwargs.get("kernel_name", "")
+        if not kernel_name:
+            kernel_name = self._infer_kernel_name_from_result(result)
+        
+        calculator = get_calculator(kernel_name, device)
+        if calculator is None:
+            return None
+        
+        try:
+            return calculator.calculate(result, batch_size, **kwargs)
+        except Exception:
+            return None
+
+    def _infer_kernel_name_from_result(self, result: KernelResult) -> str:
+        """Infer kernel name from KernelResult.
+
+        Args:
+            result: KernelResult from functional API
+
+        Returns:
+            Kernel name string
+        """
+        input_shapes = result.input_shapes
+        
+        if len(input_shapes) >= 2:
+            if len(input_shapes[0]) == 4 and len(input_shapes[1]) == 4:
+                if input_shapes[0][2] == input_shapes[1][2]:
+                    return "flash_attention"
+                else:
+                    return "linear"
+            elif len(input_shapes[0]) >= 2 and len(input_shapes[1]) >= 2:
+                return "linear"
+        
+        return ""
+
+    def _estimate_effective_bw_with_static_cache(self, microarch: MicroarchConfig) -> float:
+        """Estimate effective bandwidth using static cache hit rates.
+
+        Args:
+            microarch: Microarchitecture configuration
+
+        Returns:
+            Effective bandwidth in bytes/sec
+        """
+        hbm_bw = self.config.device.get_memory_bw_gbps() * 1e9 if self.config.device else 3e12
+        
+        effective_bw = hbm_bw * (
+            microarch.cache_hit_rate_l1 * 0.7
+            + microarch.cache_hit_rate_l2 * 0.2
+            + 0.1
+        )
+        
+        return effective_bw
 
     def estimate_comm_time(
         self, comm_type: str, data_size_bytes: int, num_ranks: int, bandwidth_gbps: float, **kwargs
