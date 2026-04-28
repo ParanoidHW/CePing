@@ -1,87 +1,53 @@
-# CePing 项目上下文
+# CePing 项目系统提示词
 
 ---
 
-## Goal
+## 项目定位
 
-修复 HunyuanImage 3.0 diffusion 激活内存计算问题并开发 cache-aware kernel 评估模块。
+CePing 是 **LLM Performance Evaluator**，用于评估大语言模型的性能表现。
 
----
+### 核心能力
 
-## Constraints & Preferences
+- **性能评估**：评估模型在不同硬件配置下的性能（MFU、QPS、TTFT、TPOT等）
+- **策略搜索**：搜索最优并行策略（TP/PP/DP/EP/SP）
+- **混布分析**：分析多模型混布场景的资源分配
 
-- 所有设计和开发通过 subagent 执行
-- 分层解耦：kernel 层修改不影响 analyzer/modeling/web
-- 小步快跑，每个特性单独 commit
-- 新增特性必须有测试覆盖，存量测试必须全部通过
-- 遵循 architecture skill 和 coder skill
+### 架构层次
 
----
-
-## Progress
-
-### Done
-
-- 修复激活内存计算（45GB → 0.57GB）：timestep shape 错误 + forward 静默失败
-- 引入 Handler 机制：`llm_perf/analyzer/handlers/` (LLM/Diffusion/Vision 三类处理器)
-- 新增 WorkloadType.DIFFUSION：显式类型而非 inference 子类
-- 精简测试用例 47%：删除低价值测试，保留核心覆盖
-- 新增 xlsx 导出功能：通信分解、子模块详情、配置信息 sheet
-- 创建 cache-aware kernel 设计文档：`docs/cache_aware_kernel_design.md`（策略1唯一正确模型）
-- 实现 cache-aware kernel 模块：`llm_perf/kernels/backend/cache_aware/` (linear/attention)
-- 创建 kernel skill：`.agents/skills/kernel/SKILL.md`（API + cache-aware + 3 backend）
-- 创建 model skill：`.agents/skills/model/SKILL.md`（解耦、依赖 kernel、bind 建模）
-- 创建 reviewer skill：`.agents/skills/reviewer/SKILL.md`（架构符合性 + 边界测试）
-- 创建 project skill：`.agents/skills/project/SKILL.md`（设计-开发-验证流程编排）
-
-### In Progress
-
-- (none)
-
-### Blocked
-
-- (none)
+```
+Application Layer (Evaluator, Optimizer, ColocateAnalyzer)
+  ↓
+Workload Layer (YAML配置，training/inference/diffusion/rl)
+  ↓
+Unified Modeling Layer (ShardedModule, bind机制)
+  ↓
+Analyzer Layer (UnifiedAnalyzer, MFU/QPS计算)
+  ↓
+Kernel Layer (可插拔Backend, functional API)
+  ↓
+Hardware Layer (Device, Cluster, NetworkTopology)
+  ↓
+Preset Layer (YAML配置，model/workload presets)
+```
 
 ---
 
-## Key Decisions
+## 开发原则
 
-- **矩阵乘法 Tiling 策略**：采用策略1（激活加载一次，权重重复加载 num_tiles_M 次）
-- **Memory/Compute Bound 判断**：时间对比 `max(compute_time, memory_time)`，不用 ridge_point
-- **3 Backend 要求**：趋势一致性而非结果一致性（大规格 > 小规格，近似线性）
-- **Backend 命名**：Microarch（而非 Cache-aware）
-- **开发流程编排**：设计 → 开发 → 验证测试，必须由 subagent 发起
+### 必须遵循
 
----
+- **所有设计和开发通过 subagent 执行**
+- **分层解耦**：kernel 层修改不影响 analyzer/modeling/web
+- **小步快跑**：每个特性单独 commit
+- **测试先行**：新增特性必须有测试覆盖，存量测试必须全部通过
+- **禁止参考 legacy 目录**
 
-## Next Steps
+### 代码规范
 
-- P1: 添加更多 kernel 的 cache-aware 计算（conv2d, norm）
-- P2: 完善 analyzer 层使用 cache-aware 结果
-
----
-
-## Critical Context
-
-- 激活内存 45GB 根因：timestep shape `(batch, 256)` 与模型期望 `(batch,)` 不匹配，forward 静默失败
-- 198 倍 TTFT 差异原因：bs=1 memory bound (21.9μs) vs bs=200 compute bound (3474μs)
-- 策略1 核心公式：`weight_bytes_actual = K × N × num_tiles_M`
-- 3 backend：Theory Roofline、Microarch、Profiling（趋势一致，结果不可能一致）
-
----
-
-## Relevant Files
-
-- `llm_perf/analyzer/handlers/` - Handler 机制（显式 model type dispatch）
-- `llm_perf/analyzer/unified.py` - 替换静默失败为明确报错
-- `llm_perf/kernels/backend/cache_aware/` - Cache-aware 计算模块
-- `docs/cache_aware_kernel_design.md` - Kernel 设计文档（策略1）
-- `.agents/skills/project/SKILL.md` - 项目开发流程（设计-开发-验证）
-- `.agents/skills/kernel/SKILL.md` - Kernel 开发规范（611 行）
-- `.agents/skills/model/SKILL.md` - Model 开发规范（594 行）
-- `.agents/skills/reviewer/SKILL.md` - Reviewer 规范（245 行）
-- `tests/test_diffusion_activation.py` - Diffusion 激活内存测试
-- `tests/test_cache_aware_linear.py` - Cache-aware linear 测试
+- 使用 ruff 格式化，行长度 100 字符
+- 使用类型注解
+- 公开函数必须有 docstring
+- commit 格式：`<type>(<scope>): <subject>`
 
 ---
 
@@ -102,30 +68,107 @@
 
 所有设计和开发必须遵循 project skill 的流程编排：
 
+### 阶段1：设计
+
+**由 architecture subagent 发起**
+
+- 分析需求合理性
+- 参考外部实践
+- 输出设计方案
+- **特殊场景提示用户讨论和决策**
+
+### 阶段2：开发
+
+**由 coder subagent 发起**
+
+- 遵循 coder skill 规范
+- 小步快跑
+- 测试先行
+
+### 阶段3：验证测试
+
+**由 reviewer subagent 发起**
+
+- 架构符合性检视
+- 新增代码测试
+- 边界用例测试
+- 输出到 review.log
+
+### 迭代循环
+
 ```
-阶段1：设计（architecture subagent）
-  → 需求分析合理性
-  → 参考外部实践
-  → 输出设计方案
-  → 特殊场景提示用户
-
-阶段2：开发（coder subagent）
-  → 遵循 coder skill 规范
-  → 小步快跑
-  → 测试先行
-
-阶段3：验证测试（reviewer subagent）
-  → 架构符合性检视
-  → 新增代码测试
-  → 边界用例测试
-  → 输出到 review.log
-
-迭代循环：开发 → 验证 → 修复 → 重新验证 → ...
+开发 → 验证 → 发现问题 → 修复 → 重新验证 → ...
 ```
 
 **必须由 subagent 发起调用，禁止直接启动全流程开发。**
 
 ---
 
-*文档版本: 1.0*
-*创建日期: 2026-04-28*
+## 特殊场景提示
+
+以下场景需提示用户进行讨论和决策：
+
+1. 需求不明确或存在歧义
+2. 多个方案选择，需要权衡
+3. 影响范围大，需要评估风险
+4. 新架构设计，需要确认方案
+5. 发现设计缺陷，需要讨论修复方案
+6. 兼容性无法覆盖所有现有组件
+
+---
+
+## 架构设计要点
+
+### 解耦原则
+
+- **后端数据结构**：使用字典结构，新增类别自动出现
+- **前端渲染**：使用 `Object.keys()` 自动发现字段
+- **模型定义**：`_submodule_name` 属性 + 自动注册
+
+### 核心机制
+
+- **bind 机制**：`model.bind(ctx)` → `ModuleInstance`
+- **kernel API**：所有层特征必须通过 kernel API 获取
+- **workload 解耦**：模型结构和计算模式分离
+- **Handler 机制**：模型类型显式分发（LLM/Diffusion/Vision）
+
+---
+
+## 工具命令速查
+
+### 代码检查
+
+```bash
+ruff check llm_perf/modeling/*.py --select=F401,F841,E741
+ruff check llm_perf/kernels/*.py --select=F401,F841,E741
+```
+
+### 测试运行
+
+```bash
+# 模型测试
+python -m pytest tests/test_models.py -v -n 4
+
+# 全量测试
+python -m pytest tests/ -v -n 4
+
+# 禁用分布式（调试）
+python -m pytest tests/ -n 0
+```
+
+### Git 操作
+
+```bash
+git status
+git diff --stat
+git log --oneline -5
+git add <files>
+git commit -m "<message>"
+git push origin main
+```
+
+---
+
+*文档版本: 2.0*
+*更新日期: 2026-04-28*
+*说明: 通用系统提示词，长期适用*
