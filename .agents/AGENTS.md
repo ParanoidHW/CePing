@@ -41,6 +41,7 @@ Preset Layer (YAML配置，model/workload presets)
 - **小步快跑**：每个特性单独 commit
 - **测试先行**：新增特性必须有测试覆盖，存量测试必须全部通过
 - **禁止参考 legacy 目录**
+- **进度刷新到 session.log**：开发进度、关键决策、问题记录刷新到本地 session.log（不提交）
 
 ### 代码规范
 
