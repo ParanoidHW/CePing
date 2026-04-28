@@ -68,7 +68,7 @@ class LlamaModel(ShardedModule):
 
 ### 2.2 模型开销建模必须依赖已有基础能力
 
-**核心原则**：所有层特征必须通过 kernel API 获取，禁止手动计算 `activation_bytes`。
+**核心原则**：所有层特征必须通过 kernel API 获取，禁止手动计算。
 
 **正确做法**：
 
@@ -108,7 +108,7 @@ flops = 2 * batch * seq * hidden_size * intermediate_size  # 禁止！
 ```
 
 **例外情况**：如果 kernel API 缺失，必须：
-1. 先添加 kernel 到 `llm_perf/kernels/functional.py`
+1. 先调用.agent/skills/kernel skill添加 kernel 到 `llm_perf/kernels/functional.py`
 2. 使用 NOTE 注释说明临时处理
 
 ---
@@ -308,18 +308,7 @@ instance = model.bind(ctx)
 
 ### 3.1 模型和 Workload 的对应关系
 
-模型通过 `supported_workloads` 属性声明支持的 workload 类型：
-
-```python
-class LlamaModel(ShardedModule):
-    supported_workloads = ["training", "inference"]
-
-class WanModel(ShardedModule):
-    supported_workloads = ["training", "inference", "diffusion"]
-
-class DeepSeekModel(ShardedModule):
-    supported_workloads = ["training", "inference"]
-```
+模型通过 `supported_workloads` 属性声明支持的 workload 类型（示例见第2.1节）。
 
 ### 3.2 Workload 参数位置
 
@@ -360,152 +349,26 @@ instance_infer = model.bind(ctx_infer)
 
 ## 4. 子模块评估规范
 
-### 4.1 依赖 kernel 创建层
-
-所有子模块必须使用 kernel API 创建：
-
-```python
-from llm_perf.kernels.functional import linear, flash_attention, rms_norm, silu, moe_expert
-
-class ShardedAttention(ShardedModule):
-    def forward(self, hidden):
-        # 使用 linear kernel
-        q_proj = hidden @ self.q_weight  # MatmulOp 自动使用 linear kernel
-        
-        # 使用 flash_attention
-        attn_out = flash_attention(q, k, v)
-        
-        # 使用 linear kernel (o_proj)
-        output = attn_flat @ self.o_weight
-        
-        return output
-```
-
-### 4.2 Norm 合并入父模块
-
-```python
-class ShardedTransformerBlock(ShardedModule):
-    _submodule_name = "transformer_block"  # 子模块类型名
-    
-    def forward(self, hidden):
-        # Norm 作为 block 内部计算，不单独呈现
-        norm1 = self._rms_norm(hidden, self.input_norm_weight)
-        attn_out = self.attention(norm1)
-        hidden = hidden + attn_out
-        
-        norm2 = self._rms_norm(hidden, self.post_attn_norm_weight)
-        ffn_out = self.ffn(norm2)
-        return hidden + ffn_out
-```
-
-### 4.3 通用命名示例
-
-| 子模块 | 通用 kernel | 禁止命名 |
-|--------|-------------|----------|
-| Attention | `flash_attention`, `linear` | `llama_attn`, `gpt_attn` |
-| MLA | `mla_attention` | `deepseek_mla` |
-| Linear Attention | `linear_attention` | `qwen_linear_attn` |
-| MoE | `moe_expert` | `deepseek_moe` |
-| FFN | `linear`, `silu` | `llama_ffn` |
+详见第2节各规范：
+- **依赖 kernel 创建层**：参见 [2.2 模型开销建模必须依赖已有基础能力](#22-模型开销建模必须依赖已有基础能力)
+- **Norm 合并入父模块**：参见 [2.3 Norm 类子模块合并入后续子模块](#23-norm-类子模块合并入后续子模块)
+- **通用命名**：参见 [2.4 新增类型子模块评估必须用通用命名和表达](#24-新增类型子模块评估必须用通用命名和表达)
 
 ---
 
 ## 5. Bind 建模规范
 
-### 5.1 bind 机制使用
-
-```python
-from llm_perf.modeling.module import ShardedModule
-from llm_perf.strategy.parallel_context import ParallelContext
-
-class MyModel(ShardedModule):
-    def __init__(self, config):
-        super().__init__()
-        # 定义子模块和权重...
-
-# 创建并行上下文
-ctx = ParallelContext(
-    tp_degree=8,
-    pp_degree=2,
-    dp_degree=1,
-    ep_degree=1,  # MoE
-    sp_degree=1,  # Sequence Parallel
-    dtype="fp16",
-    mode="forward_backward",
-    zero_stage=0,
-)
-
-# bind 获取物理切分后的指标
-model = MyModel(config)
-instance = model.bind(ctx)
-
-# 使用 instance 进行性能分析
-print(f"Params per device: {instance.params_count_physical / 1e9:.2f}B")
-print(f"Forward FLOPs: {instance.flops_forward_physical / 1e12:.2f}T")
-print(f"Activation memory: {instance.activation_memory_physical / 1e9:.2f}GB")
-```
-
-### 5.2 并行切分分析
-
-使用 bind 分析不同切分策略：
-
-```python
-# TP-only
-ctx_tp = ParallelContext(tp_degree=8, mode="forward_backward")
-instance_tp = model.bind(ctx_tp)
-
-# TP + PP
-ctx_tp_pp = ParallelContext(tp_degree=4, pp_degree=2, mode="forward_backward")
-instance_tp_pp = model.bind(ctx_tp_pp)
-
-# TP + EP (MoE)
-ctx_tp_ep = ParallelContext(tp_degree=8, ep_degree=8, mode="forward_backward")
-instance_tp_ep = model.bind(ctx_tp_ep)
-```
+详见 [2.5 必须依赖 bind 建模](#25-必须依赖-bind-建模)。
 
 ---
 
 ## 6. 文档刷新规范
 
-### 6.1 docs wiki 刷新
+详见 [2.6 详细建模过程刷新到 docs wiki](#26-详细建模过程刷新到-docs-wiki)。
 
-新增模型后必须更新 `docs/model_evaluation_wiki.md`：
-
-1. 添加模型章节（按编号顺序）
-2. 包含架构概述、子模块分解、权重计算、FLOPs、内存、bind 流程
-3. 参考已有模型章节格式
-
-### 6.2 数据源刷新
-
-外部检索到的信息刷新到 `docs/data_sources_wiki.md`：
-
-```markdown
-## 变更日志
-
-### YYYY-MM-DD: ModelName 模型信息
-- 来源: [HuggingFace](https://huggingface.co/xxx) / [Paper](https://arxiv.org/xxx)
-- 关键参数: hidden_size, num_layers, ...
-- 架构特点: ...
-```
-
-### 6.3 DEVELOP_LOG 刷新
-
-```markdown
-### YYYY-MM-DD: ModelName 模型评估支持
-
-**新增内容**:
-- ModelName 模型类实现
-- ModelConfig 配置类
-- 测试用例
-
-**关键决策**:
-- 使用 xxx kernel 替代手动计算
-- Norm 合并入 TransformerBlock
-
-**测试结果**:
-- 参数量与官方一致
-- FLOPs 与理论计算一致
-```
+**额外要求**：
+- **数据源刷新**：外部检索到的信息刷新到 `docs/data_sources_wiki.md`
+- **DEVELOP_LOG 刷新**：记录开发摘要、关键决策、测试结果
 
 ---
 
