@@ -534,16 +534,23 @@ Docs: Updated docs/model_evaluation_wiki.md
 
 ### 6.1 FFN intermediate size 与激活函数
 
-**激活函数类型**：
-- SwiGLU / GeGLU: `intermediate_size × 2`（gated activation）
-- 标准 FFN: `intermediate_size`
+**激活函数类型判断**：
+- **Gated (SwiGLU / GeGLU)**: `intermediate_size × 2`
+- **Non-gated (ReLU / GELU)**: `intermediate_size`
 
-**验证方法**：
-1. 检查 HuggingFace config.json 的 `intermediate_size` 字段
-2. 检查实际代码实现：
-   - 是否调用带 gated 的融合算子（如 `F.silu` + gate projection）
-   - 是否在 down 前进行 `act * gate` 操作
-3. 如未使用 gated 激活，则 `intermediate_size` 不需乘以 2
+**重要：必须查看 modeling 文件代码，不能仅依赖 config.json**
+
+config.json 可能只显示 `hidden_act: "silu"`，但实际实现可能有额外的 gate 分支。
+
+**示例**：HunyuanImage 3.0
+- config.json: `hidden_act: "silu"`
+- 实际代码: [modeling_hunyuan_image_3.py#L1068](https://github.com/Tencent-Hunyuan/HunyuanImage-3.0/blob/main/hunyuan_image_3/modeling_hunyuan_image_3.py#L1068)
+- 代码实现有 gate 分支，实际是 gated activation
+
+**验证步骤**：
+1. 查看 modeling 文件中 FFN/gate_proj/up_proj/down_proj 的定义
+2. 检查是否存在 gate 分支：`act * gate` 或 `gate * up`
+3. 如果存在 gate 分支，则 `intermediate_size × 2`
 
 ### 6.2 GQA vs MHA
 
