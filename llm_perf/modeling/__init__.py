@@ -23,13 +23,27 @@ from llm_perf.kernels.op import (
     GroupNormOp,
 )
 
-from .layers import (
+from .base import (
     ShardedEmbedding,
+    ShardedRMSNorm,
     ShardedAttention,
-    ShardedLinearAttention,
     ShardedFFN,
     ShardedLMHead,
     ShardedMoE,
+    ShardedLinearAttention,
+    ShardedConv2d,
+    ShardedConv3d,
+    ShardedGroupNorm,
+    ShardedResNetBlock2d,
+    ShardedResNetBlock3d,
+    ShardedAttentionBlock2d,
+    ShardedAttentionBlock3d,
+    ShardedResNet,
+    ShardedModulateDiT,
+    ShardedPatchEmbed3D,
+    ShardedTimestepEmbedder,
+    ShardedMMDoubleStreamBlock,
+    ShardedMMSingleStreamBlock,
     silu,
     gelu,
     relu,
@@ -44,42 +58,18 @@ from .models import (
     ShardedMoEBlock,
     LlamaModel,
     DeepSeekModel,
-)
-
-from .vision import (
-    ShardedConv2d,
-    ShardedConv3d,
-    ShardedGroupNorm,
-    ShardedResNetBlock2d,
-    ShardedResNetBlock3d,
-    ShardedAttentionBlock2d,
-    ShardedAttentionBlock3d,
-    ShardedResNet,
-)
-from .encoder import (
-    ShardedVAEEncoder,
-    ShardedVAEDecoder,
-    ShardedVAE,
-    ShardedViTEncoder,
-)
-
-from .wan import (
     ShardedLayerNorm,
     ShardedT5Block,
     ShardedWanTextEncoder,
     ShardedWanDiTBlock,
     ShardedWanDiT,
-)
-
-from .qwen3_5 import (
+    ShardedWanVAE,
+    ShardedHYVideoDiT,
     Qwen3_5MoEModel,
     Qwen3_5Model,
     ShardedQwen3_5MoEBlock,
     ShardedQwen3_5DenseBlock,
     generate_layer_types,
-)
-
-from .hunyuan_image import (
     HunyuanImage3TextModel,
     HunyuanImage3DiffusionModel,
     ShardedHunyuanMoEBlock,
@@ -87,6 +77,9 @@ from .hunyuan_image import (
 )
 
 from .encoder import (
+    ShardedVAEEncoder,
+    ShardedVAEDecoder,
+    ShardedVAE,
     ShardedViTEncoder,
     ShardedViTBlock,
     ShardedPatchEmbedding,
@@ -139,11 +132,12 @@ __all__ = [
     "Conv3dOp",
     "GroupNormOp",
     "ShardedEmbedding",
+    "ShardedRMSNorm",
     "ShardedAttention",
-    "ShardedLinearAttention",
     "ShardedFFN",
     "ShardedLMHead",
     "ShardedMoE",
+    "ShardedLinearAttention",
     "ShardedTransformerBlock",
     "ShardedMoEBlock",
     "ShardedMLA",
@@ -186,6 +180,12 @@ __all__ = [
     "ShardedPositionalEmbedding",
     "ShardedSpatialMerge",
     "ShardedOutputProjection",
+    "ShardedHYVideoDiT",
+    "ShardedModulateDiT",
+    "ShardedPatchEmbed3D",
+    "ShardedTimestepEmbedder",
+    "ShardedMMDoubleStreamBlock",
+    "ShardedMMSingleStreamBlock",
     "ParallelContext",
     "SPType",
     "CommDomain",

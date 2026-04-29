@@ -1,14 +1,18 @@
-"""HunyuanVideo modeling modules."""
+"""HunyuanVideo models (backward compatibility).
 
-from llm_perf.modeling.hunyuan_video.dit import ShardedHYVideoDiT
-from llm_perf.modeling.hunyuan_video.dit_blocks import (
-    ShardedMMDoubleStreamBlock,
-    ShardedMMSingleStreamBlock,
-)
-from llm_perf.modeling.hunyuan_video.layers import (
+DEPRECATED: Use llm_perf.modeling.models.hunyuan_video and llm_perf.modeling.base instead.
+This module re-exports from the new location for backward compatibility.
+"""
+
+from llm_perf.modeling.models.hunyuan_video import ShardedHYVideoDiT
+from llm_perf.modeling.base.dit_layers import (
     ShardedModulateDiT,
     ShardedPatchEmbed3D,
     ShardedTimestepEmbedder,
+)
+from llm_perf.modeling.base.dit_blocks import (
+    ShardedMMDoubleStreamBlock,
+    ShardedMMSingleStreamBlock,
 )
 
 __all__ = [

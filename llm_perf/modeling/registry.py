@@ -12,14 +12,20 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 
 import yaml
 
-from llm_perf.modeling.models import LlamaModel, DeepSeekModel
-from llm_perf.modeling.vision import ShardedResNet
-from llm_perf.modeling.encoder import ShardedVAE
-from llm_perf.modeling.wan import ShardedWanTextEncoder, ShardedWanDiT, ShardedWanVAE
-from llm_perf.modeling.qwen3_5 import Qwen3_5MoEModel, Qwen3_5Model
-from llm_perf.modeling.hunyuan_image import (
+from llm_perf.modeling.models import (
+    LlamaModel,
+    DeepSeekModel,
+    ShardedWanTextEncoder,
+    ShardedWanDiT,
+    ShardedWanVAE,
+    Qwen3_5MoEModel,
+    Qwen3_5Model,
     HunyuanImage3TextModel,
     HunyuanImage3DiffusionModel,
+)
+from llm_perf.modeling.base import ShardedResNet
+from llm_perf.modeling.encoder import ShardedVAE
+from llm_perf.modeling.models.hunyuan_image import (
     HunyuanT5Encoder,
     HunyuanVAEEncoder,
     HunyuanVAEDecoder,
