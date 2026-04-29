@@ -140,6 +140,29 @@ grep -n "# NOTE" llm_perf/modeling/*.py
 
 ---
 
+## 检视触发规范
+
+### 必须由 subagent 发起调用 reviewer skill
+
+**禁止事项**：
+- ❌ 直接运行 pytest/ruff（违反 Workflow 规定）
+- ❌ 直接输出检视结果（必须由 subagent 发起调用 reviewer skill）
+
+### 检视时机
+
+| 场景 | 检视时机 |
+|------|---------|
+| 单步开发 | 每步完成后由 subagent 发起调用 reviewer skill |
+| 多步开发 | 用户指定时机（如"完成全部5步后由 subagent 发起检视"） |
+| 发现问题 | 立即由 subagent 发起调用 reviewer skill |
+
+### 检视输出位置
+
+- `review.log`：检视报告（不提交）
+- `session.log`：进度记录（不提交）
+
+---
+
 ## 输出规范
 
 将检视意见和打分输出到本地 `review.log` 中，优先将本次检视意见更新到文件开头。检视和测试过程可能重复多次，按最新-最老的顺序，逐步刷新 `review.log` 文件。

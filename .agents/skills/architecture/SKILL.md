@@ -494,3 +494,49 @@ python -m pytest tests/ -n 0
 - [ ] 小步提交（每个特性一个commit）
 - [ ] commit message清晰
 - [ ] 推送到远程
+
+---
+
+## Modeling 分层结构规范
+
+### 目录结构
+
+modeling 必须分层组织：
+
+```
+llm_perf/modeling/
+├── base/                    # 基础通用层（可复用、无模型特定逻辑）
+│   ├── layers.py            # Transformer基础层
+│   ├── vision.py            # 视觉层
+│   ├── dit_layers.py        # DiT基础层
+│   ├── dit_blocks.py        # DiT块
+│   ├── vae_3d.py            # 3D VAE
+│
+├── models/                  # 模型层（具体模型定义）
+│   ├── llama.py
+│   ├── deepseek.py
+│   ├── hunyuan_video.py
+│   ├── wan_video.py
+│   ...
+│
+├── module.py                # 基类（不动）
+├── tensor.py                # 张量定义（不动）
+```
+
+### 强制要求
+
+| 要求 | 说明 |
+|------|------|
+| 基础层放 base/ | 可被多个模型使用的层必须放 base/ |
+| 模型层放 models/ | 具体模型定义放 models/ |
+| 禁止单独模型目录 | ❌ 不允许 `hunyuan_video/layers.py` 这样的单独目录 |
+| 禁止重复定义 | ❌ ModulateDiT、PatchEmbed3D 应是通用层 |
+| 禁止模型特定逻辑 | ❌ base/ 目录禁止包含任何模型特定的命名或逻辑 |
+
+### 检查清单
+
+设计阶段必须检查：
+- [ ] 新增层是否可被多个模型使用（通用性）
+- [ ] 是否已有类似的基础层（复用）
+- [ ] 是否放入正确的分层位置（base vs models）
+- [ ] 是否避免单独模型目录

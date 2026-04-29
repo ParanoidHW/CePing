@@ -304,6 +304,43 @@ instance = model.bind(ctx)
 
 ---
 
+### 2.7 使用通用基础层
+
+**核心原则**：新增模型必须使用 base/ 中的通用基础层，禁止重复定义。
+
+### 正确做法
+
+```python
+# 正确：使用 base/dit_layers.py 中的通用层
+from llm_perf.modeling.base.dit_layers import ShardedModulateDiT, ShardedPatchEmbed3D
+
+class ShardedHYVideoDiT(ShardedModule):
+    def __init__(self, ...):
+        # 使用通用基础层
+        self.modulate = ShardedModulateDiT(hidden_size, dtype)
+        self.patch_embed = ShardedPatchEmbed3D(...)
+```
+
+### 禁止做法
+
+```python
+# 错误：在模型目录重复定义基础层
+class ShardedModulateDiT:  # ❌ 应在 base/dit_layers.py
+    ...
+
+# 错误：单独模型目录
+llm_perf/modeling/hunyuan_video/layers.py  # ❌ 应在 base/dit_layers.py
+```
+
+### 检查清单
+
+- [ ] 是否使用 base/ 中已有的通用层
+- [ ] 是否避免重复定义基础层
+- [ ] 模型文件是否放在 models/ 目录
+- [ ] 基础层是否可被其他模型复用
+
+---
+
 ## 3. Workload 解耦设计
 
 ### 3.1 模型和 Workload 的对应关系
