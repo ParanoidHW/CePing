@@ -1,6 +1,6 @@
 """Tests for HunyuanVideo DiT blocks."""
 
-from llm_perf.modeling.hunyuan_video.dit_blocks import (
+from llm_perf.modeling.base.dit_blocks import (
     ShardedMMDoubleStreamBlock,
     ShardedMMSingleStreamBlock,
 )
@@ -240,7 +240,7 @@ def test_all_blocks_creation():
 
 def test_import_from_module():
     """Test that blocks can be imported from hunyuan_video module."""
-    from llm_perf.modeling.hunyuan_video import (
+    from llm_perf.modeling.base.dit_blocks import (
         ShardedMMDoubleStreamBlock,
         ShardedMMSingleStreamBlock,
     )

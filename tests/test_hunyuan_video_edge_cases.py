@@ -1,11 +1,11 @@
 """Edge case tests for HunyuanVideo layers and DiT blocks."""
 
-from llm_perf.modeling.hunyuan_video.layers import (
+from llm_perf.modeling.base.dit_layers import (
     ShardedModulateDiT,
     ShardedPatchEmbed3D,
     ShardedTimestepEmbedder,
 )
-from llm_perf.modeling.hunyuan_video.dit_blocks import (
+from llm_perf.modeling.base.dit_blocks import (
     ShardedMMDoubleStreamBlock,
     ShardedMMSingleStreamBlock,
 )

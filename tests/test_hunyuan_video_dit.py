@@ -1,6 +1,6 @@
 """Tests for HunyuanVideo complete DiT model."""
 
-from llm_perf.modeling.hunyuan_video.dit import ShardedHYVideoDiT
+from llm_perf.modeling.models.hunyuan_video import ShardedHYVideoDiT
 from llm_perf.modeling.tensor import ShardedTensor
 
 
@@ -256,7 +256,7 @@ class TestShardedHYVideoDiT:
 
 def test_import_from_module():
     """Test that model can be imported from hunyuan_video module."""
-    from llm_perf.modeling.hunyuan_video import ShardedHYVideoDiT
+    from llm_perf.modeling.models.hunyuan_video import ShardedHYVideoDiT
 
     model = ShardedHYVideoDiT(hidden_size=3072, dtype="bf16")
     assert model is not None
