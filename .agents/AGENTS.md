@@ -2,6 +2,27 @@
 
 ---
 
+## 强制约束
+
+**违反以下规则将导致工作流程失败，无例外：**
+
+1. **所有代码修改必须通过 subagent 发起**
+   - 禁止直接修改代码文件
+   - 禁止直接删除文件或目录
+   - 禁止直接运行 pytest/ruff 等测试/检查命令
+   - 禁止直接执行 git commit/push
+
+2. **禁止判断"小任务"而绕过 subagent**
+   - 没有例外情况
+   - 任何代码相关操作都必须通过 subagent
+
+3. **Workflow 各阶段必须由 subagent 调用对应 skill**
+   - 设计阶段：subagent 调用 architecture skill
+   - 开发阶段：subagent 调用 coder skill
+   - 验证阶段：subagent 调用 reviewer skill
+
+---
+
 ## 项目定位
 
 CePing 是 **LLM Performance Evaluator**，用于评估大语言模型的性能表现。
@@ -54,14 +75,16 @@ Preset Layer (YAML配置，model/workload presets)
 
 ## Skills
 
-| Skill        | 位置                                   | 主要内容                           |
-| ------------ | -------------------------------------- | ---------------------------------- |
-| project      | `.agents/skills/project/SKILL.md`      | 设计-开发-验证流程编排             |
-| architecture | `.agents/skills/architecture/SKILL.md` | 架构设计原则、解耦规范             |
-| coder        | `.agents/skills/coder/SKILL.md`        | 代码风格、开发流程、测试规范       |
-| kernel       | `.agents/skills/kernel/SKILL.md`       | Kernel API、cache-aware、3 backend |
-| model        | `.agents/skills/model/SKILL.md`        | 模型建模、workload解耦、bind建模   |
-| reviewer     | `.agents/skills/reviewer/SKILL.md`     | 架构符合性、泛化测试、边界测试     |
+| Skill        | 位置                                   | 主要内容                           | 调用方式                  |
+| ------------ | -------------------------------------- | ---------------------------------- | ------------------------- |
+| project      | `.agents/skills/project/SKILL.md`      | 设计-开发-验证流程编排             | **subagent 调用**         |
+| architecture | `.agents/skills/architecture/SKILL.md` | 架构设计原则、解耦规范             | **subagent 在设计阶段调用** |
+| coder        | `.agents/skills/coder/SKILL.md`        | 代码风格、开发流程、测试规范       | **subagent 在开发阶段调用** |
+| kernel       | `.agents/skills/kernel/SKILL.md`       | Kernel API、cache-aware、3 backend | **subagent 调用**         |
+| model        | `.agents/skills/model/SKILL.md`        | 模型建模、workload解耦、bind建模   | **subagent 调用**         |
+| reviewer     | `.agents/skills/reviewer/SKILL.md`     | 架构符合性、泛化测试、边界测试     | **subagent 在验证阶段调用** |
+
+**注意：禁止直接加载和使用任何 skill，必须通过 subagent 间接调用。**
 
 ---
 
