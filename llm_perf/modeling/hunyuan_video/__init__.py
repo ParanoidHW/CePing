@@ -14,6 +14,11 @@ from llm_perf.modeling.base.dit_blocks import (
     ShardedMMDoubleStreamBlock,
     ShardedMMSingleStreamBlock,
 )
+from llm_perf.modeling.base.vae_3d import (
+    ShardedVideoVAEEncoder,
+    ShardedVideoVAEDecoder,
+    ShardedVideoVAE,
+)
 
 __all__ = [
     "ShardedHYVideoDiT",
@@ -22,4 +27,7 @@ __all__ = [
     "ShardedTimestepEmbedder",
     "ShardedMMDoubleStreamBlock",
     "ShardedMMSingleStreamBlock",
+    "ShardedVideoVAEEncoder",
+    "ShardedVideoVAEDecoder",
+    "ShardedVideoVAE",
 ]

@@ -422,3 +422,54 @@ class LinearAttentionOp(Op):
         if self.value:
             tensors.append(self.value)
         return tensors
+
+
+@dataclass
+class RotaryPositionalEmbedding3DOp(Op):
+    """3D Rotary Positional Embedding operation.
+
+    Applies 3D RoPE to query and key tensors for video generation models.
+    Supports separate frequencies for temporal and spatial dimensions.
+
+    3D RoPE extends standard RoPE to handle:
+    - Temporal dimension: time position encoding
+    - Spatial dimensions: height and width position encoding
+
+    For HunyuanVideo:
+    - freqs_cis shape: (seq_len, head_dim//2) complex frequencies
+    - Applied to Q and K before attention
+
+    Reference: "RoFormer: Enhanced Transformer with Rotary Position Embedding"
+    https://arxiv.org/abs/2104.09864
+
+    Attributes:
+        query: Query tensor to apply RoPE
+        key: Key tensor to apply RoPE
+        freqs_cis: Precomputed complex frequencies for RoPE
+        output: Output tensor after RoPE application
+    """
+
+    kernel_name: str = "rotary_embedding_3d"
+    dtype: str = "fp16"
+    query: Any = None
+    key: Any = None
+    freqs_cis: Any = None
+    output: Any = None
+    inputs: List[Any] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.inputs:
+            self.inputs = [self.query, self.key, self.freqs_cis]
+
+    def get_saved_tensors(self) -> List[Any]:
+        """Get tensors to save for backward.
+
+        RoPE backward:
+        - RoPE is element-wise operation, gradient passes directly
+        - No intermediate tensors need to be saved
+        - freqs_cis is constant (not learnable)
+
+        Returns:
+            [] - RoPE backward doesn't need saved tensors
+        """
+        return []

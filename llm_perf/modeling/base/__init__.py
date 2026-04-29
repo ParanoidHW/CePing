@@ -5,6 +5,7 @@ This package contains fundamental building blocks:
 - vision: Vision layers (convolutions, norms, blocks)
 - dit_layers: DiT-specific layers (modulation, patch embed, timestep embedder)
 - dit_blocks: DiT blocks (double stream, single stream)
+- vae_3d: 3D Video VAE (encoder, decoder, complete VAE)
 """
 
 from .layers import (
@@ -44,6 +45,12 @@ from .dit_blocks import (
     ShardedMMSingleStreamBlock,
 )
 
+from .vae_3d import (
+    ShardedVideoVAEEncoder,
+    ShardedVideoVAEDecoder,
+    ShardedVideoVAE,
+)
+
 __all__ = [
     "ShardedEmbedding",
     "ShardedRMSNorm",
@@ -70,4 +77,7 @@ __all__ = [
     "ShardedTimestepEmbedder",
     "ShardedMMDoubleStreamBlock",
     "ShardedMMSingleStreamBlock",
+    "ShardedVideoVAEEncoder",
+    "ShardedVideoVAEDecoder",
+    "ShardedVideoVAE",
 ]

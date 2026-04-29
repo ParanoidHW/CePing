@@ -1664,3 +1664,86 @@ def linear_attention(
         bytes_accessed_backward=bytes_accessed_backward,
         saved_inputs=["query", "key", "value"],
     )
+
+
+def rotary_embedding_3d(
+    query: Tuple[int, ...],
+    key: Tuple[int, ...],
+    freqs_cis: Tuple[int, ...],
+    dtype: str = "fp16",
+) -> KernelResult:
+    """3D Rotary Positional Embedding for video generation models.
+
+    Applies 3D RoPE to query and key tensors, supporting separate
+    temporal and spatial position encoding.
+
+    For HunyuanVideo:
+    - freqs_cis shape: (seq_len, head_dim//2) complex frequencies
+    - Applied to both Q and K before attention computation
+
+    RoPE applies rotation to pairs of dimensions:
+    - For each pair (x_2i, x_2i+1), apply rotation by angle θ_i
+    - θ_i = i / (head_dim/2) * position
+    - In complex form: x_rotated = x * e^(iθ)
+
+    Reference: "RoFormer: Enhanced Transformer with Rotary Position Embedding"
+    https://arxiv.org/abs/2104.09864
+
+    Args:
+        query: Shape (batch, num_heads, seq_len, head_dim)
+        key: Shape (batch, num_kv_heads, seq_len, head_dim)
+        freqs_cis: Shape (seq_len, head_dim//2) - precomputed complex frequencies
+        dtype: Data type string
+
+    Returns:
+        KernelResult with performance metrics
+    """
+    dtype_size = _compute_dtype_size(dtype)
+
+    batch, num_heads, seq_len, head_dim = query
+    _, num_kv_heads, kv_seq_len, kv_head_dim = key
+    freq_seq_len, freq_dim = freqs_cis
+
+    assert seq_len == kv_seq_len == freq_seq_len, f"Sequence length mismatch"
+    assert head_dim == kv_head_dim, f"Head dimension mismatch: {head_dim} vs {kv_head_dim}"
+
+    output_shape = (batch, num_heads, seq_len, head_dim)
+
+    q_pairwise_ops = num_heads * seq_len * (head_dim // 2) * 8
+    k_pairwise_ops = num_kv_heads * seq_len * (head_dim // 2) * 8
+
+    flops = batch * (q_pairwise_ops + k_pairwise_ops)
+
+    bytes_accessed = (
+        batch * num_heads * seq_len * head_dim * dtype_size
+        + batch * num_kv_heads * seq_len * head_dim * dtype_size
+        + seq_len * (head_dim // 2) * dtype_size * 2
+        + batch * num_heads * seq_len * head_dim * dtype_size
+    )
+
+    params = 0
+    param_bytes = 0
+
+    flops_backward = batch * (q_pairwise_ops + k_pairwise_ops) * 2
+
+    bytes_accessed_backward = (
+        batch * num_heads * seq_len * head_dim * dtype_size * 2
+        + batch * num_kv_heads * seq_len * head_dim * dtype_size * 2
+        + seq_len * (head_dim // 2) * dtype_size * 2
+    )
+
+    return KernelResult(
+        output=output_shape,
+        flops=flops,
+        bytes_accessed=bytes_accessed,
+        arithmetic_intensity=flops / bytes_accessed if bytes_accessed > 0 else float("inf"),
+        memory_bound=False,
+        input_shapes=[query, key, freqs_cis],
+        params=params,
+        param_bytes=param_bytes,
+        unit_type="vector",
+        dtype=dtype,
+        flops_backward=flops_backward,
+        bytes_accessed_backward=bytes_accessed_backward,
+        saved_inputs=[],
+    )
