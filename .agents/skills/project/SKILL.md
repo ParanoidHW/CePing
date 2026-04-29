@@ -367,6 +367,90 @@ git push origin main
 
 ---
 
-*文档版本: 1.0*
-*创建日期: 2026-04-28*
+## §10 项目架构参考
+
+### 10.1 架构分层介绍
+
+项目采用分层架构，从底层到顶层依次为：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Web Layer (web/)                           │
+│              Web 可视化界面，Flask API                           │
+├─────────────────────────────────────────────────────────────────┤
+│                  Application Layer (app/)                        │
+│          Evaluator, StrategyOptimizer, BatchOptimizer           │
+├─────────────────────────────────────────────────────────────────┤
+│                    Analyzer Layer (analyzer/)                    │
+│      TrainingAnalyzer, InferenceAnalyzer, UnifiedAnalyzer        │
+├─────────────────────────────────────────────────────────────────┤
+│                   Modeling Layer (modeling/)                     │
+│   ShardedModule, ShardedTensor, LLMHandler, DiffusionHandler    │
+├─────────────────────────────────────────────────────────────────┤
+│                    Strategy Layer (strategy/)                    │
+│              TP/PP/DP/EP/SP 并行策略配置                          │
+├─────────────────────────────────────────────────────────────────┤
+│                     Kernel Layer (kernels/)                      │
+│       Compute Kernels, Communication Kernels, Backend API        │
+├─────────────────────────────────────────────────────────────────┤
+│                    Hardware Layer (hardware/)                    │
+│           Device, Cluster, NetworkTopology                      │
+├─────────────────────────────────────────────────────────────────┤
+│                     Reporter Layer (reporter/)                   │
+│                 报告生成，Excel 导出                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.2 各层职责和依赖关系
+
+| 层级 | 目录 | 职责 | 依赖 |
+|------|------|------|------|
+| **Web Layer** | `web/` | Web UI、Flask API、可视化交互 | Application Layer |
+| **Application Layer** | `app/` | Evaluator（一行代码评估）、Optimizer（策略搜索） | Analyzer, Modeling, Strategy |
+| **Analyzer Layer** | `analyzer/` | 性能分析：MFU、QPS、TTFT、TPOT 计算 | Modeling, Kernel, Strategy |
+| **Modeling Layer** | `modeling/` | 模型建模：ShardedModule、bind 机制、Handler 分发 | Kernel, Hardware |
+| **Strategy Layer** | `strategy/` | 并行策略配置：TP/PP/DP/EP/SP | - |
+| **Kernel Layer** | `kernels/` | Kernel 评估：GEMM、Attention、AllReduce 等 | Hardware |
+| **Hardware Layer** | `hardware/` | 硬件抽象：Device（GPU/NPU）、Cluster、NetworkTopology | - |
+| **Reporter Layer** | `reporter/` | 报告生成：控制台输出、Excel 导出 | Analyzer |
+
+### 10.3 核心模块说明
+
+#### Modeling Layer（模型建模层）
+
+- **models.py**: Llama, DeepSeek, Mixtral, Qwen 等模型定义
+- **layers.py**: ShardedAttention, ShardedFFN, ShardedMoE 等层定义
+- **mla.py**: Multi-head Latent Attention 实现
+- **vision_models.py**: ResNet, VAE 等视觉模型
+- **registry.py**: 模型 preset 注册与创建
+
+#### Kernel Layer（内核评估层）
+
+- **compute.py**: 计算 kernel（GEMM, Attention, Activation）
+- **communication.py**: 通信 kernel（AllReduce, AllToAll）
+- 支持 3 种 backend：NVIDIA、AMD、Huawei
+
+#### Hardware Layer（硬件抽象层）
+
+- **device.py**: GPU/NPU 设备配置（H100/H200/MI300X/Ascend）
+- **cluster.py**: 集群拓扑管理
+- **topology.py**: 网络层级建模（2-Tier/3-Tier/Fat-Tree/CloudMatrix）
+
+### 10.4 文档链接
+
+| 文档类型 | 位置 | 内容 |
+|----------|------|------|
+| **项目主文档** | `README.md` | 项目介绍、快速开始、API 示例 |
+| **架构文档** | `docs/architecture.md` | 详细架构设计 |
+| **解耦规范** | `docs/architecture_decoupling.md` | 分层解耦原则 |
+| **架构 Skill** | `.agents/skills/architecture/SKILL.md` | 架构设计准则 |
+| **Coder Skill** | `.agents/skills/coder/SKILL.md` | 开发流程规范 |
+| **Kernel Skill** | `.agents/skills/kernel/SKILL.md` | Kernel 评估规范 |
+| **Model Skill** | `.agents/skills/model/SKILL.md` | 模型建模规范 |
+| **Reviewer Skill** | `.agents/skills/reviewer/SKILL.md` | 代码检视规范 |
+
+---
+
+*文档版本: 1.1*
+*更新日期: 2026-04-29*
 *整合自: architecture + coder + kernel + model + reviewer skills*
