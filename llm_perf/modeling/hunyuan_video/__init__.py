@@ -5,9 +5,15 @@ from llm_perf.modeling.hunyuan_video.layers import (
     ShardedPatchEmbed3D,
     ShardedTimestepEmbedder,
 )
+from llm_perf.modeling.hunyuan_video.dit_blocks import (
+    ShardedMMDoubleStreamBlock,
+    ShardedMMSingleStreamBlock,
+)
 
 __all__ = [
     "ShardedModulateDiT",
     "ShardedPatchEmbed3D",
     "ShardedTimestepEmbedder",
+    "ShardedMMDoubleStreamBlock",
+    "ShardedMMSingleStreamBlock",
 ]
