@@ -1,6 +1,7 @@
 name: conv-decoder
 description: 卷积解码（VAE Decoder等）
 workload_type: inference
+compute_mode: conv
 
 phases:
   - name: decode

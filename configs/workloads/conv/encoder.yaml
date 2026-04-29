@@ -1,6 +1,7 @@
 name: conv-encoder
 description: 卷积编码（VAE Encoder等）
 workload_type: inference
+compute_mode: conv
 
 phases:
   - name: encode

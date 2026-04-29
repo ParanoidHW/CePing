@@ -771,10 +771,11 @@ class MyModel(ShardedModule):
 ### 添加新Workload
 
 ```yaml
-# configs/workloads/autoregressive/my-workload.yaml
+# configs/workloads/custom/my-workload.yaml
 name: my-workload
 description: My Custom Workload
 workload_type: training
+compute_mode: base
 
 phases:
   - name: forward

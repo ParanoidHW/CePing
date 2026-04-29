@@ -1,9 +1,11 @@
-name: rl-grpo
-description: GRPO训练（Group Relative Policy Optimization）
+name: rl-ppo
+description: RL PPO训练（policy + value + reference多模型协作）
 workload_type: mixed
+compute_mode: autoregressive
 
 component_mapping:
   policy: policy
+  value: value
   reference: reference
 
 phases:
@@ -30,6 +32,23 @@ phases:
     component: policy
     repeat: 1
     
+  - name: value_forward
+    compute_type: forward
+    component: value
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: value_backward
+    compute_type: backward
+    component: value
+    compute_pattern: transformer_block
+    repeat: 1
+    
+  - name: value_optimizer
+    compute_type: optimizer
+    component: value
+    repeat: 1
+    
   - name: reference_forward
     compute_type: forward
     component: reference
@@ -40,7 +59,6 @@ default_params:
   batch_size: 16
   seq_len: 512
   num_rollout_steps: 100
-  group_size: 4
 
 optimizer_factor: 1.5
 throughput_metric: samples_per_sec

@@ -1,6 +1,7 @@
 name: autoregressive-inference
 description: 自回归生成（prefill + decode）
 workload_type: inference
+compute_mode: autoregressive
 
 phases:
   - name: prefill

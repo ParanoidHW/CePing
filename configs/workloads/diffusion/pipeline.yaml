@@ -1,6 +1,7 @@
 name: diffusion-pipeline
 description: 扩散模型完整Pipeline（encoder + backbone去噪 + decoder）
 workload_type: diffusion
+compute_mode: iterative
 
 component_mapping:
   encoder: encoder

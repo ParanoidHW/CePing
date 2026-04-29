@@ -2,32 +2,56 @@
 
 本目录包含负载特征配置文件，用于描述计算流程，而非模型类型。
 
+## Workload 划分方式
+
+采用**应用场景 + compute_mode 属性**的双重划分方式：
+
+- **目录划分**：按应用场景划分（training、inference、rl_training 等）
+- **compute_mode 属性**：描述底层计算特征（base、autoregressive、iterative、conv）
+
 ## 目录结构
 
 ```
 configs/workloads/
-├── base/                  # 基础负载
-│   ├── training.yaml      # 通用训练流程
-│   └── inference.yaml     # 通用单次推理
+├── training/             # compute_mode: base
+│   ├── training.yaml     # 通用训练流程
+│   └── denoise.yaml      # 去噪训练
 │
-├── autoregressive/        # 自回归生成类负载
-│   ├── inference.yaml     # 自回归生成（prefill + decode）
-│   ├── speculative-decoding.yaml  # 投机解码
-│   ├── rl-ppo.yaml        # PPO训练
-│   └── rl-grpo.yaml       # GRPO训练
+├── rl_training/          # compute_mode: autoregressive
+│   ├── rl_ppo.yaml       # PPO训练
+│   └── rl_grpo.yaml      # GRPO训练
 │
-├── iterative/             # 迭代去噪类负载
-│   ├── denoise-training.yaml   # 单步去噪训练
-│   ├── denoise-inference.yaml  # 多步去噪推理
-│   └── diffusion-pipeline.yaml # 完整Pipeline
+├── inference/            # compute_mode: autoregressive
+│   ├── inference.yaml    # 通用单次推理
+│   ├── autoregressive.yaml  # 自回归生成（prefill + decode）
+│   └── speculative_decoding.yaml  # 投机解码
 │
-├── conv/                  # 卷积类负载
-│   ├── encoder.yaml       # 卷积编码
-│   ├── decoder.yaml       # 卷积解码
-│   └── resnet.yaml        # ResNet分类
+├── pd_disagg/            # compute_mode: autoregressive
+│   # Prefill-Decode分离推理（待添加）
 │
-└── custom/                # 用户自定义（可在此添加）
+├── multimodal/           # compute_mode: autoregressive
+│   # 多模态推理（待添加）
+│
+├── diffusion/            # compute_mode: iterative
+│   ├── denoise.yaml      # 多步去噪推理
+│   └── pipeline.yaml     # 完整Pipeline（encoder + backbone + decoder）
+│
+├── conv/                 # compute_mode: conv
+│   ├── encoder.yaml      # 卷积编码
+│   ├── decoder.yaml      # 卷积解码
+│   └── resnet.yaml       # ResNet分类
+│
+└── custom/               # 用户自定义（可在此添加）
 ```
+
+## compute_mode 属性说明
+
+| compute_mode | 描述 | 典型应用 |
+|--------------|------|----------|
+| `base` | 基础计算（单次 forward/backward） | 通用训练、单步推理 |
+| `autoregressive` | 自回归生成（prefill + decode） | LLM推理、RL训练 |
+| `iterative` | 迭代去噪（多步迭代） | 扩散模型推理 |
+| `conv` | 卷积计算（2D/3D 卷积） | VAE、ResNet |
 
 ## YAML格式说明
 
@@ -35,6 +59,7 @@ configs/workloads/
 name: <负载特征名>           # 如 training, autoregressive-inference
 description: <描述>
 workload_type: <training/inference/mixed>
+compute_mode: <base/autoregressive/iterative/conv>  # 新增属性
 
 component_mapping:         # 可选，用于多组件Pipeline
   <通用标识>: <用户组件名>

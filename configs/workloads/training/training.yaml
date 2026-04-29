@@ -1,6 +1,7 @@
 name: training
 description: 通用训练流程（forward + backward + optimizer）
 workload_type: training
+compute_mode: base
 
 phases:
   - name: forward

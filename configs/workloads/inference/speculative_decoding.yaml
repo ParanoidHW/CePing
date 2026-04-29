@@ -1,6 +1,7 @@
 name: speculative-decoding
 description: 投机解码（draft + target协作）
 workload_type: inference
+compute_mode: autoregressive
 
 component_mapping:
   draft: draft
