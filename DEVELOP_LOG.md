@@ -1,5 +1,53 @@
 # 开发日志
 
+## 2026-04-29: HunyuanVideo DiT块定义开发
+
+### 开发内容
+实现HunyuanVideo的DiT块定义，包括双流和单流两种架构。
+
+### 实现的类
+1. **ShardedMMDoubleStreamBlock**: 双流DiT块
+   - 处理独立的图像和文本两个分支
+   - 使用已实现的ShardedModulateDiT进行调制
+   - 支持QK-Norm和ROPE（仅图像部分）
+   - SwiGLU MLP结构
+
+2. **ShardedMMSingleStreamBlock**: 单流DiT块
+   - 合并图像和文本后的单流处理
+   - 并行结构（attention和MLP并行）
+   - 使用ShardedModulateDiT和kernel API
+
+### 关键实现要点
+1. 使用kernel API: flash_attention、rms_norm、silu
+2. 调制参数broadcast: 从(batch, hidden)到(batch, seq, hidden)
+3. QKV split和reshape辅助方法
+4. 切片和拼接辅助方法（ShardedTensor不支持切片）
+
+### 测试验证
+- 测试权重shape和shardable属性
+- 测试forward输出shape
+- 测试qk_norm=False的情况
+- 所有测试通过（8个测试）
+- ruff检查clean
+
+### 提交信息
+```
+feat(modeling): add HunyuanVideo DiT blocks
+
+- Add ShardedMMDoubleStreamBlock for image+text dual-branch processing
+- Add ShardedMMSingleStreamBlock for merged single-stream processing  
+- Use ShardedModulateDiT for modulation logic
+- Use kernel API (flash_attention, rms_norm, silu)
+- Support QK-Norm and ROPE (image-only)
+- Implement SwiGLU MLP architecture
+- Add comprehensive test coverage (8 tests)
+- All tests pass, ruff check clean
+
+Tests: 8 passed (weights shapes + forward output shapes)
+```
+
+---
+
 ## 2026-04-27: Handler 机制 + 激活内存修复
 
 ### 问题背景
