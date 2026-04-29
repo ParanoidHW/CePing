@@ -27,19 +27,19 @@ _workload_cache: Dict[str, WorkloadConfig] = {}
 
 BACKWARD_COMPAT_MAP: Dict[str, str] = {
     "llm-training": "training",
-    "llm-inference": "autoregressive-inference",
-    "llm-speculative-decoding": "speculative-decoding",
-    "llm-rl-ppo": "rl-ppo",
-    "llm-rl-grpo": "rl-grpo",
-    "diffusion-training": "denoise-training",
-    "diffusion-inference": "diffusion-pipeline",
-    "diffusion-video-inference": "diffusion-pipeline",
+    "llm-inference": "autoregressive",
+    "llm-speculative-decoding": "speculative_decoding",
+    "llm-rl-ppo": "rl_ppo",
+    "llm-rl-grpo": "rl_grpo",
+    "diffusion-training": "training/denoise",
+    "diffusion-inference": "diffusion/denoise",
+    "diffusion-video-inference": "diffusion/pipeline",
     "moe-training": "training",
-    "moe-inference": "autoregressive-inference",
+    "moe-inference": "autoregressive",
     "resnet-training": "training",
-    "resnet-inference": "resnet",
-    "vae-encode": "conv-encoder",
-    "vae-decode": "conv-decoder",
+    "resnet-inference": "conv/resnet",
+    "vae-encode": "conv/encoder",
+    "vae-decode": "conv/decoder",
 }
 
 
@@ -197,18 +197,34 @@ def get_workload(name: str) -> WorkloadConfig:
 def _find_workload_yaml(name: str) -> Optional[Path]:
     """Find workload YAML file by name.
 
+    Supports:
+    - Full path format: "inference/autoregressive" -> configs/workloads/inference/autoregressive.yaml
+    - Simple name: "training" -> search all directories
+
     Searches in:
-    - configs/workloads/base/
-    - configs/workloads/autoregressive/
-    - configs/workloads/iterative/
+    - configs/workloads/training/
+    - configs/workloads/inference/
+    - configs/workloads/diffusion/
     - configs/workloads/conv/
+    - configs/workloads/rl_training/
+    - configs/workloads/pd_disagg/
+    - configs/workloads/multimodal/
     - configs/workloads/custom/
     """
+    if "/" in name:
+        yaml_path = CONFIG_DIR / f"{name}.yaml"
+        if yaml_path.exists():
+            return yaml_path
+        return None
+
     search_dirs = [
-        CONFIG_DIR / "base",
-        CONFIG_DIR / "autoregressive",
-        CONFIG_DIR / "iterative",
+        CONFIG_DIR / "training",
+        CONFIG_DIR / "inference",
+        CONFIG_DIR / "diffusion",
         CONFIG_DIR / "conv",
+        CONFIG_DIR / "rl_training",
+        CONFIG_DIR / "pd_disagg",
+        CONFIG_DIR / "multimodal",
         CONFIG_DIR / "custom",
     ]
 
@@ -239,10 +255,13 @@ def list_workloads() -> Dict[str, Dict[str, str]]:
             }
 
     for search_dir in [
-        CONFIG_DIR / "base",
-        CONFIG_DIR / "autoregressive",
-        CONFIG_DIR / "iterative",
+        CONFIG_DIR / "training",
+        CONFIG_DIR / "inference",
+        CONFIG_DIR / "diffusion",
         CONFIG_DIR / "conv",
+        CONFIG_DIR / "rl_training",
+        CONFIG_DIR / "pd_disagg",
+        CONFIG_DIR / "multimodal",
     ]:
         if search_dir.exists():
             for yaml_file in search_dir.glob("*.yaml"):
@@ -268,10 +287,13 @@ def register_workload(config: WorkloadConfig) -> None:
 def load_all_builtin_workloads() -> None:
     """Pre-load all built-in workload configurations."""
     for search_dir in [
-        CONFIG_DIR / "base",
-        CONFIG_DIR / "autoregressive",
-        CONFIG_DIR / "iterative",
+        CONFIG_DIR / "training",
+        CONFIG_DIR / "inference",
+        CONFIG_DIR / "diffusion",
         CONFIG_DIR / "conv",
+        CONFIG_DIR / "rl_training",
+        CONFIG_DIR / "pd_disagg",
+        CONFIG_DIR / "multimodal",
     ]:
         if search_dir.exists():
             for yaml_file in search_dir.glob("*.yaml"):
