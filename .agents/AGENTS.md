@@ -36,7 +36,7 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 必须遵循
 
-- **所有设计和开发通过 subagent 执行**
+- **需求支持和问题处理通过 subagent 执行**
 - **分层解耦**：kernel 层修改不影响 analyzer/modeling/web
 - **小步快跑**：每个特性单独 commit
 - **测试先行**：新增特性必须有测试覆盖，存量测试必须全部通过
@@ -54,14 +54,14 @@ Preset Layer (YAML配置，model/workload presets)
 
 ## Skills
 
-| Skill | 位置 | 主要内容 |
-|-------|------|----------|
-| project | `.agents/skills/project/SKILL.md` | 设计-开发-验证流程编排 |
-| architecture | `.agents/skills/architecture/SKILL.md` | 架构设计原则、解耦规范 |
-| coder | `.agents/skills/coder/SKILL.md` | 代码风格、开发流程、测试规范 |
-| kernel | `.agents/skills/kernel/SKILL.md` | Kernel API、cache-aware、3 backend |
-| model | `.agents/skills/model/SKILL.md` | 模型建模、workload解耦、bind建模 |
-| reviewer | `.agents/skills/reviewer/SKILL.md` | 架构符合性、泛化测试、边界测试 |
+| Skill        | 位置                                   | 主要内容                           |
+| ------------ | -------------------------------------- | ---------------------------------- |
+| project      | `.agents/skills/project/SKILL.md`      | 设计-开发-验证流程编排             |
+| architecture | `.agents/skills/architecture/SKILL.md` | 架构设计原则、解耦规范             |
+| coder        | `.agents/skills/coder/SKILL.md`        | 代码风格、开发流程、测试规范       |
+| kernel       | `.agents/skills/kernel/SKILL.md`       | Kernel API、cache-aware、3 backend |
+| model        | `.agents/skills/model/SKILL.md`        | 模型建模、workload解耦、bind建模   |
+| reviewer     | `.agents/skills/reviewer/SKILL.md`     | 架构符合性、泛化测试、边界测试     |
 
 ---
 
@@ -71,7 +71,7 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 阶段1：设计
 
-**由 architecture subagent 发起**
+**由 subagent 发起，调用architecture skill**
 
 - 分析需求合理性
 - 参考外部实践
@@ -80,7 +80,7 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 阶段2：开发
 
-**由 coder subagent 发起**
+**由 subagent 发起，调用coder skill**
 
 - 遵循 coder skill 规范
 - 小步快跑
@@ -88,7 +88,7 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 阶段3：验证测试
 
-**由 reviewer subagent 发起**
+**由 subagent 发起，调用reviewer skill**
 
 - 架构符合性检视
 - 新增代码测试
@@ -167,6 +167,10 @@ git add <files>
 git commit -m "<message>"
 git push origin main
 ```
+
+### GitCode平台内容获取
+
+如果碰到需要从[GitCode平台](gitcode.com)获取文档、代码，通过私钥从GitCode拉取对应文件/代码到临时目录下进行分析
 
 ---
 

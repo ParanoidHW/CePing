@@ -43,11 +43,11 @@ Preset Layer (YAML配置，model/workload presets)
 
 ## §2 开发流程（常规）
 
-按照"设计-开发-验证测试"三阶段编排。
+按照"设计-开发-验证测试"三阶段编排，每个阶段都由一个subagent发起，调用对应的skill进行处理
 
 ### 阶段1：设计
 
-**由 architecture subagent 发起**
+**由 subagent 发起，调用architecture skill**
 
 #### 1.1 需求分析合理性
 
@@ -81,7 +81,7 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 阶段2：开发
 
-**由 coder subagent 发起**
+**由 subagent 发起，调用coder skill**
 
 #### 2.1 遵循 coder skill 规范
 
@@ -104,7 +104,7 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 阶段3：验证测试
 
-**由 reviewer subagent 发起**
+**由 subagent 发起，调用reviewer skill**
 
 #### 3.1 架构符合性检视
 
@@ -180,6 +180,11 @@ Preset Layer (YAML配置，model/workload presets)
 6. **兼容性无法覆盖**
    - 新特性无法保证所有现有组件兼容
    - 提示：新特性对...组件可能有影响，请决策
+
+
+### 设计问题记录
+
+识别到以往设计方案存在比较大的漏洞时，需要固化为经验增加到architecture skill中作为指导和约束。
 
 ---
 
