@@ -803,9 +803,128 @@ default_params:
 
 ---
 
+## Web2 前后端解耦架构
+
+### 设计目标
+
+| 目标 | 说明 |
+|------|------|
+| **前端零硬编码** | 所有表单、渲染逻辑由后端 schema 驱动 |
+| **后端 schema-driven** | 所有配置项、验证逻辑由 schema 定义 |
+| **Workload 驱动** | Workload 作为配置核心，驱动模型选择和参数配置 |
+| **动态可扩展** | 新增 workload/模型无需修改前端代码 |
+| **llm_perf 核心复用** | Web 服务和 CLI 工具共享核心能力 |
+
+### 架构分层
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Application Layer (Web + CLI)                             │
+│  ┌────────────────────────────┐  ┌───────────────────────────────────────┐ │
+│  │  Web Layer                 │  │  CLI Layer                            │ │
+│  │  ├── web2/ (Frontend)      │  │  ├── bin/eval-cli                    │ │
+│  │  ├── web2_api/ (HTTP API)  │  │  ├── llm_perf/workload/cli/          │ │
+│  │  只做 HTTP 适配             │  │  统一 CLI + 配置文件                  │ │
+│  └────────────────────────────┘  └───────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                         Core Layer (llm_perf)                                │
+│  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │ llm_perf/workload/ (核心层)                                               ││
+│  │ ├── loader.py        加载 configs/workloads/*.yaml + configs/models/*.yaml│
+│  │ ├── validator.py     校验配置合法性                                        ││
+│  │ ├── schema.py        Workload/Model 数据结构定义                           ││
+│  │ ├── engine.py        评估引擎，调用 UnifiedAnalyzer                        ││
+│  │ ├── breakdown.py     分解计算模块                                          ││
+│  │ └─────────────────────────────────────────────────────────────────────────┐│
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### API 端点
+
+| 端点 | 说明 | 返回 |
+|------|------|------|
+| `GET /api/workloads` | 列出所有 workload | `{categories: {...}, total: N}` |
+| `GET /api/models` | 列出所有模型 | `{models: [...], total: N}` |
+| `GET /api/hardware` | 列出硬件 preset | `{devices: [...], topologies: [...]}` |
+| `GET /api/schema/workload/{name}` | 获取 workload 表单 schema | `{parameters: {...}, stages: [...]}` |
+| `GET /api/schema/model/{name}` | 获取模型参数 schema | `{config: {...}, param_schema: [...]}` |
+| `POST /api/evaluate` | 执行评估 | `{success, result: {...}}` |
+
+### 前端组件
+
+| 组件 | 职责 | 数据来源 |
+|------|------|----------|
+| `WorkloadSelector` | 选择 workload | `/api/workloads` |
+| `ModelSelector` | 选择模型 | `/api/models` |
+| `DynamicForm` | 参数表单 | `/api/schema/workload/{name}` |
+| `HardwareForm` | 硬件配置 | `/api/hardware` |
+| `StrategyForm` | 并行策略 | 本地状态 |
+| `ResultViewer` | 结果渲染 | `/api/evaluate` |
+| `BreakdownTree` | 分解层级展示 | `/api/evaluate` |
+
+### CLI 工具
+
+```bash
+# 命令行参数模式
+eval-cli --workload inference/autoregressive --model llama-7b --hardware H100:8
+
+# 配置文件模式
+eval-cli --config configs/eval/llama7b_training.yaml
+
+# 交互式模式（7 步 wizard）
+eval-cli --interactive
+```
+
+### 配置文件复用
+
+**llm_perf/workload/loader.py** 加载现有配置，避免重复定义：
+
+```python
+loader = get_loader()
+workloads = loader.list_workloads()          # 从 configs/workloads/*.yaml
+models = loader.list_models()                # 从 configs/models/*.yaml
+workload_config = loader.load_workload("inference/autoregressive")
+model_config = loader.load_model("llama-7b")
+```
+
+### 数据流
+
+```
+┌─────────────┐    1. GET /api/schema/workload     ┌─────────────┐
+│   Frontend  │ ───────────────────────────────→  │  API Layer  │
+│  (web2/)    │                                    │ (web2_api/) │
+│             │ ←──────────────────────────────    │             │
+│  动态渲染   │    WorkloadSchema                  │  HTTP适配   │
+│             │                                    │             │
+│             │    2. POST /api/evaluate           │             │
+│             │ ───────────────────────────────→  │             │
+│             │                                    │             │
+│             │ ←──────────────────────────────    │             │
+│             │    EvaluationResult                │             │
+└─────────────┘                                    └─────────────┘
+                                                          │
+                                                          │ 调用
+                                                          ↓
+                                                   ┌─────────────┐
+                                                   │ llm_perf    │
+                                                   │ workload/   │
+                                                   │ ├── loader  │
+                                                   │ ├── engine  │
+                                                   │ └───────────┘
+```
+
+---
+
 ## 版本历史
 
-### v5.2 (当前)
+### v5.3 (当前)
+- **Web2 前后端解耦**: Schema-driven 前端，新增 workload/模型无需修改前端代码
+- **统一 CLI 工具**: `bin/eval-cli` 支持所有 workload 类型，交互式模式
+- **Workload API**: `/api/workloads`, `/api/models`, `/api/schema/*` 端点
+- **动态表单渲染**: 前端从 API 获取 schema，自动渲染参数表单
+- **YAML 配置加载**: 复用 `configs/models/*.yaml` 和 `configs/workloads/*.yaml`
+
+### v5.2
 - **Handler机制**: 模型类型显式分发，替代隐式hasattr检查
 - **WorkloadType.DIFFUSION**: 新增扩散模型类型标识
 - **显式优于隐性**: forward失败抛出RuntimeError而非静默失败

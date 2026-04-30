@@ -294,7 +294,111 @@ result = optimizer.find_max_tps(
 print(f"最优配置: {result['best_strategy']}, batch={result['best_batch_size']}")
 ```
 
-### 方式四：CLI 命令行
+### 方式四：Web2 前后端解耦界面（新）
+
+Web2 采用前后端解耦架构，所有表单和渲染逻辑由后端 schema 驱动，新增 workload/模型无需修改前端代码。
+
+**启动方式**：
+
+```bash
+# 启动 web2_api 后端服务
+python -m web2_api.app
+# 或使用 Flask
+cd web2_api && flask run --port 5001
+
+# 启动 web2 前端（开发模式）
+cd web2 && npm install && npm run dev
+# 访问 http://localhost:5173
+
+# 生产部署：前端静态文件由 web2_api 代理
+python -m web2_api.app --static-dir web2/dist
+```
+
+**API 端点**：
+
+| 端点 | 说明 |
+|------|------|
+| `/api/workloads` | 列出所有 workload（按 category 分组） |
+| `/api/models` | 列出所有模型 |
+| `/api/hardware` | 列出硬件 preset |
+| `/api/schema/workload/{name}` | 获取 workload 表单 schema |
+| `/api/schema/model/{name}` | 获取模型参数 schema |
+| `/api/evaluate` | 执行评估 |
+
+**前端特性**：
+
+- **Workload 选择器**：动态加载 workload 类别和列表
+- **模型选择器**：动态加载模型列表（支持 workload 过滤）
+- **动态参数表单**：从 schema 自动渲染 number/string/boolean/select 字段
+- **并行策略表单**：TP/PP/DP/SP 配置 + 总并行度验证
+- **结果渲染**：metrics + stages + breakdown 层级展示
+
+### 方式五：CLI 命令行（eval-cli）
+
+统一 CLI 工具 `bin/eval-cli` 支持所有 workload 类型，加载 `configs/models/` 和 `configs/workloads/`。
+
+```bash
+# 基本用法
+eval-cli --workload <WORKLOAD> --model <MODEL> [OPTIONS]
+
+# 列出所有 workload
+eval-cli --list-workloads
+
+# 列出所有模型
+eval-cli --list-models
+
+# 训练评估
+eval-cli \
+    --workload training/training \
+    --model llama-7b \
+    --hardware 910B:8 \
+    --strategy tp=8,pp=1 \
+    --params batch_size=32,seq_len=4096 \
+    --output table
+
+# 推理评估（自回归生成）
+eval-cli \
+    --workload inference/autoregressive \
+    --model deepseek-v3 \
+    --hardware H100:8 \
+    --strategy tp=8 \
+    --params batch_size=8,prompt_len=1024,generation_len=128 \
+    --output json
+
+# 扩散推理
+eval-cli \
+    --workload diffusion/pipeline \
+    --model wan-dit \
+    --hardware H100:4 \
+    --strategy tp=4 \
+    --output yaml
+
+# 使用配置文件
+eval-cli --config configs/eval/llama7b_training.yaml
+
+# 仅显示配置（不执行评估）
+eval-cli --workload training/training --model llama-7b --dry-run
+
+# 交互式模式（7 步 wizard）
+eval-cli --interactive
+```
+
+**参数说明**：
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `--workload` / `-w` | Workload 名称 | `inference/autoregressive` |
+| `--model` / `-m` | Model 名称 | `llama-7b` |
+| `--hardware` | 硬件规格 | `910B:8`（设备:卡数） |
+| `--strategy` | 并行策略 | `tp=8,pp=1` |
+| `--params` | 参数 | `batch_size=32,seq_len=4096` |
+| `--output` / `-o` | 输出格式 | `json`/`yaml`/`table` |
+| `--breakdown-level` | 分解层级 | `stage`/`phase`/`submodule`/`memory` |
+| `--verbose` / `-v` | 详细输出 | |
+| `--interactive` / `-i` | 交互式模式 | |
+| `--dry-run` | 仅显示配置 | |
+
+### 方式六：旧版 CLI（兼容）
 
 ```bash
 # 训练评估
