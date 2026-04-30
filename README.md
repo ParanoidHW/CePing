@@ -298,20 +298,24 @@ print(f"最优配置: {result['best_strategy']}, batch={result['best_batch_size'
 
 Web2 采用前后端解耦架构，所有表单和渲染逻辑由后端 schema 驱动，新增 workload/模型无需修改前端代码。
 
-**启动方式**：
+**启动步骤**：
 
 ```bash
-# 启动 web2_api 后端服务
-python -m web2_api.app
-# 或使用 Flask
-cd web2_api && flask run --port 5001
+# 1. 启动后端（端口 5000）
+cd web2_api && flask run --port 5000
 
-# 启动 web2 前端（开发模式）
+# 2. 启动前端（新终端）
 cd web2 && npm install && npm run dev
-# 访问 http://localhost:5173
 
-# 生产部署：前端静态文件由 web2_api 代理
-python -m web2_api.app --static-dir web2/dist
+# 3. 访问 http://localhost:5173
+```
+
+**生产部署**：
+
+```bash
+cd web2 && npm run build
+cd ../web2_api && flask run --port 5000
+# 访问 http://localhost:5000
 ```
 
 **API 端点**：
