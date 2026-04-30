@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "LLM Performance Evaluator Web UI (schema-driven)",
   "scripts": {
+    "start": "vite",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
