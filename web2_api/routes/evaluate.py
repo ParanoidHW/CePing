@@ -163,11 +163,12 @@ def evaluate() -> Dict[str, Any]:
 
         loader = get_loader()
         model_config = loader.load_model_yaml(model_name)
+        model_config["preset"] = model_name
 
         workload_config = loader.load_workload_yaml(workload_name)
         workload_type = workload_config.get("workload_type", "inference")
 
-        model = create_model_from_config(model_config.get("config", {}))
+        model = create_model_from_config(model_config, workload_type=workload_type)
 
         engine = EvaluationEngine()
         result = engine.evaluate(request_obj, model)
