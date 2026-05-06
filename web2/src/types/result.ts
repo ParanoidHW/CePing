@@ -1,29 +1,16 @@
 export interface EvaluationRequest {
-  workload: {
-    name: string
-    parameters: Record<string, number | string | boolean>
-  }
-  model: {
-    name: string
-    config?: Record<string, number>
-  }
-  hardware: {
-    device: string
-    num_devices: number
-    topology?: string
-  }
-  strategy: {
-    tp_degree: number
-    pp_degree: number
-    dp_degree: number
-    sp_degree?: number
-  }
+  workload_name: string
+  model_name: string
+  hardware: HardwareSchema
+  strategy: StrategySchema
+  params: Record<string, unknown>
 }
 
 export interface EvaluationResult {
   success: boolean
   validation?: ValidationResult
   result?: PerformanceResult
+  error?: string
 }
 
 export interface ValidationResult {

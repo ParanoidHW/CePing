@@ -1,5 +1,5 @@
 import client from './client'
-import type { WorkloadCategory, WorkloadSchema } from '@/types'
+import type { WorkloadSchema } from '@/types'
 
 export async function listWorkloads(): Promise<Record<string, string[]>> {
   const response = await client.get('/workloads')

@@ -3,6 +3,7 @@ export interface ModelInfo {
   display_name: string
   architecture: string
   sparse_type: string
+  supported_workloads: string[]
 }
 
 export interface ModelSchema {
@@ -13,7 +14,7 @@ export interface ModelSchema {
   attention_features: string[]
   supported_workloads: string[]
   config: ModelConfig
-  param_schema: Record<string, ParamField[]>
+  param_schema: Record<string, ParamSchema[]>
 }
 
 export interface ModelConfig {
@@ -26,13 +27,13 @@ export interface ModelConfig {
   max_position_embeddings?: number
 }
 
-export interface ParamField {
-  key: string
-  type: 'number' | 'string' | 'boolean' | 'select'
-  default: number | string | boolean
+export interface ParamSchema {
+  name: string
   label: string
-  description?: string
+  type: 'number' | 'string' | 'boolean'
+  default: number | string | boolean | null
   min?: number
   max?: number
-  options?: string[]
+  required: boolean
+  description: string
 }

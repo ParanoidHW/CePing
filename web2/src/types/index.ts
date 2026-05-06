@@ -13,16 +13,20 @@ export interface TopologyInfo {
 }
 
 export interface HardwareSchema {
-  device: string
+  device_preset: string
   num_devices: number
-  topology?: string
+  topology_type: string
+  custom_topology?: Record<string, unknown>
 }
 
 export interface StrategySchema {
   tp_degree: number
   pp_degree: number
   dp_degree: number
-  sp_degree?: number
+  ep_degree: number
+  sp_degree: number
+  activation_checkpointing: boolean
+  zero_stage: number
 }
 
 export * from './workload'
