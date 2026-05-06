@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
-import { Layout, Typography, Button, Space, message, Steps, Divider, Card, Alert } from 'antd'
-import { PlayCircleOutlined, ResetOutlined } from '@ant-design/icons'
+import { useState } from 'react'
+import { Layout, Typography, Button, Space, message, Steps, Divider, Alert } from 'antd'
+import { PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
   WorkloadSelector,
   ModelSelector,
@@ -10,7 +10,7 @@ import {
   ResultViewer
 } from '@/components'
 import { useEvaluate } from '@/hooks'
-import type { WorkloadSchema, ModelSchema, HardwareSchema, StrategySchema, EvaluationRequest } from '@/types'
+import type { WorkloadSchema, HardwareSchema, StrategySchema, EvaluationRequest } from '@/types'
 
 const { Header, Content, Sider } = Layout
 const { Title } = Typography
@@ -20,18 +20,20 @@ export default function App() {
   const [workload, setWorkload] = useState<string | null>(null)
   const [workloadSchema, setWorkloadSchema] = useState<WorkloadSchema | null>(null)
   const [model, setModel] = useState<string | null>(null)
-  const [modelSchema, setModelSchema] = useState<ModelSchema | null>(null)
   const [params, setParams] = useState<Record<string, number | string | boolean>>({})
   const [hardware, setHardware] = useState<HardwareSchema>({
-    device: '',
+    device_preset: '',
     num_devices: 8,
-    topology: undefined
+    topology_type: 'mesh'
   })
   const [strategy, setStrategy] = useState<StrategySchema>({
     tp_degree: 1,
     pp_degree: 1,
     dp_degree: 1,
-    sp_degree: 1
+    ep_degree: 1,
+    sp_degree: 1,
+    activation_checkpointing: false,
+    zero_stage: 0
   })
 
   const { result, loading, error, runEvaluate, reset } = useEvaluate()
@@ -41,15 +43,14 @@ export default function App() {
     setWorkloadSchema(schema)
     const defaultParams: Record<string, number | string | boolean> = {}
     Object.entries(schema.parameters).forEach(([key, field]) => {
-      defaultParams[key] = field.default
+      defaultParams[key] = field.default ?? ''
     })
     setParams(defaultParams)
     setCurrentStep(1)
   }
 
-  const handleModelChange = (name: string, schema: ModelSchema) => {
+  const handleModelChange = (name: string) => {
     setModel(name)
-    setModelSchema(schema)
     setCurrentStep(2)
   }
 
@@ -58,21 +59,17 @@ export default function App() {
   }
 
   const handleEvaluate = async () => {
-    if (!workload || !model || !hardware.device) {
+    if (!workload || !model || !hardware.device_preset) {
       message.error('Please complete all required fields')
       return
     }
 
     const request: EvaluationRequest = {
-      workload: {
-        name: workload,
-        parameters: params
-      },
-      model: {
-        name: model
-      },
+      workload_name: workload,
+      model_name: model,
       hardware,
-      strategy
+      strategy,
+      params
     }
 
     try {
@@ -89,10 +86,17 @@ export default function App() {
     setWorkload(null)
     setWorkloadSchema(null)
     setModel(null)
-    setModelSchema(null)
     setParams({})
-    setHardware({ device: '', num_devices: 8, topology: undefined })
-    setStrategy({ tp_degree: 1, pp_degree: 1, dp_degree: 1, sp_degree: 1 })
+    setHardware({ device_preset: '', num_devices: 8, topology_type: 'mesh' })
+    setStrategy({
+      tp_degree: 1,
+      pp_degree: 1,
+      dp_degree: 1,
+      ep_degree: 1,
+      sp_degree: 1,
+      activation_checkpointing: false,
+      zero_stage: 0
+    })
     reset()
   }
 
@@ -124,13 +128,13 @@ export default function App() {
               icon={<PlayCircleOutlined />}
               onClick={handleEvaluate}
               loading={loading}
-              disabled={!workload || !model || !hardware.device}
+              disabled={!workload || !model || !hardware.device_preset}
               block
             >
               Run Evaluation
             </Button>
             <Button
-              icon={<ResetOutlined />}
+              icon={<ReloadOutlined />}
               onClick={handleReset}
               block
             >

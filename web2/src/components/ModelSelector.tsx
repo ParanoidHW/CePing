@@ -1,4 +1,4 @@
-import React from 'react'
+import { useEffect } from 'react'
 import { Card, Select, Spin, Alert, Typography, Tag } from 'antd'
 import { useModels, useModelSchema } from '@/hooks'
 import type { ModelSchema } from '@/types'
@@ -15,7 +15,7 @@ export default function ModelSelector({ workload, value, onChange }: Props) {
   const { models, loading, error } = useModels(workload?.split('/')[0])
   const { schema, loading: schemaLoading } = useModelSchema(value)
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (schema && value) {
       onChange(value, schema)
     }

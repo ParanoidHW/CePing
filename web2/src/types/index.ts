@@ -29,6 +29,18 @@ export interface StrategySchema {
   zero_stage: number
 }
 
-export * from './workload'
-export * from './model'
-export * from './result'
+export type { WorkloadCategory, WorkloadInfo, WorkloadSchema, StageSchema } from './workload'
+export type { ModelInfo, ModelSchema, ModelConfig, ParamSchema } from './model'
+export type {
+  EvaluationRequest,
+  EvaluationResult,
+  ValidationResult,
+  PerformanceResult,
+  StageResult,
+  BreakdownResult,
+  StageBreakdown,
+  PhaseBreakdown,
+  SubmoduleBreakdown,
+  MemoryBreakdown,
+  CommunicationBreakdown
+} from './result'

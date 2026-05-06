@@ -1,9 +1,6 @@
-import React from 'react'
-import { Card, Form, Select, InputNumber, Spin, Alert, Typography } from 'antd'
+import { Card, Form, Select, InputNumber, Spin, Alert } from 'antd'
 import { useHardware, useTopologies } from '@/hooks'
 import type { HardwareSchema } from '@/types'
-
-const { Text } = Typography
 
 interface Props {
   value: HardwareSchema
@@ -38,8 +35,8 @@ export default function HardwareForm({ value, onChange }: Props) {
           <Form.Item label="Device Type" required>
             <Select
               style={{ width: '100%' }}
-              value={value.device}
-              onChange={(v) => onChange({ ...value, device: v })}
+              value={value.device_preset}
+              onChange={(v) => onChange({ ...value, device_preset: v })}
               options={deviceOptions}
               showSearch
               placeholder="Select device type"
@@ -59,8 +56,8 @@ export default function HardwareForm({ value, onChange }: Props) {
           <Form.Item label="Topology" help="Inter-device communication topology">
             <Select
               style={{ width: '100%' }}
-              value={value.topology}
-              onChange={(v) => onChange({ ...value, topology: v })}
+              value={value.topology_type}
+              onChange={(v) => onChange({ ...value, topology_type: v })}
               options={topologyOptions}
               allowClear
               placeholder="Select topology (optional)"

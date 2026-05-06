@@ -1,4 +1,4 @@
-import React from 'react'
+import { useEffect } from 'react'
 import { Card, Select, Spin, Alert, Typography } from 'antd'
 import { useWorkloads, useWorkloadSchema } from '@/hooks'
 import type { WorkloadSchema } from '@/types'
@@ -14,7 +14,7 @@ export default function WorkloadSelector({ value, onChange }: Props) {
   const { categories, loading, error } = useWorkloads()
   const { schema, loading: schemaLoading } = useWorkloadSchema(value)
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (schema && value) {
       onChange(value, schema)
     }

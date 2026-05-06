@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { listWorkloads, getWorkloadSchema } from '@/api'
-import type { WorkloadCategory, WorkloadSchema } from '@/types'
+import type { WorkloadSchema } from '@/types'
 
 export function useWorkloads() {
   const [categories, setCategories] = useState<Record<string, string[]>>({})

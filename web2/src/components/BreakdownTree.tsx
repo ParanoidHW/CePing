@@ -1,8 +1,5 @@
-import React from 'react'
-import { Card, Collapse, Table, Typography, Descriptions, Tag } from 'antd'
+import { Card, Collapse, Table, Descriptions, Tag } from 'antd'
 import type { BreakdownResult, MemoryBreakdown, CommunicationBreakdown } from '@/types'
-
-const { Text } = Typography
 
 interface Props {
   breakdown: BreakdownResult

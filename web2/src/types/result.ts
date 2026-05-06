@@ -1,3 +1,5 @@
+import type { HardwareSchema, StrategySchema } from './index'
+
 export interface EvaluationRequest {
   workload_name: string
   model_name: string

@@ -1,8 +1,5 @@
-import React from 'react'
-import { Card, Form, InputNumber, Input, Select, Switch, Typography } from 'antd'
+import { Card, Form, InputNumber, Input, Switch } from 'antd'
 import type { ParamSchema } from '@/types'
-
-const { Text } = Typography
 
 interface Props {
   title: string
@@ -13,7 +10,7 @@ interface Props {
 
 export default function DynamicForm({ title, parameters, values, onChange }: Props) {
   const renderField = (key: string, schema: ParamSchema) => {
-    const value = values[key] ?? schema.default
+    const value = values[key] ?? (schema.default ?? '')
 
     switch (schema.type) {
       case 'number':
@@ -21,7 +18,7 @@ export default function DynamicForm({ title, parameters, values, onChange }: Pro
           <InputNumber
             style={{ width: '100%' }}
             value={value as number}
-            onChange={(v) => onChange(key, v ?? schema.default)}
+            onChange={(v) => onChange(key, v ?? (schema.default ?? 0))}
             min={schema.min}
             max={schema.max}
             placeholder={schema.description}
@@ -42,16 +39,6 @@ export default function DynamicForm({ title, parameters, values, onChange }: Pro
           <Switch
             checked={value as boolean}
             onChange={(v) => onChange(key, v)}
-          />
-        )
-      
-      case 'select':
-        return (
-          <Select
-            style={{ width: '100%' }}
-            value={value as string}
-            onChange={(v) => onChange(key, v)}
-            options={schema.options?.map((o) => ({ value: o, label: o }))}
           />
         )
       

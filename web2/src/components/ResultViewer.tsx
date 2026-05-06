@@ -1,9 +1,8 @@
-import React from 'react'
-import { Card, Table, Statistic, Row, Col, Alert, Typography, Descriptions, Divider, Progress, Tag } from 'antd'
-import type { EvaluationResult, PerformanceResult, BreakdownResult } from '@/types'
+import { Card, Table, Statistic, Row, Col, Alert, Typography, Descriptions, Progress } from 'antd'
+import type { EvaluationResult } from '@/types'
 import BreakdownTree from './BreakdownTree'
 
-const { Title, Text } = Typography
+const { Title } = Typography
 
 interface Props {
   result: EvaluationResult | null
@@ -24,8 +23,7 @@ export default function ResultViewer({ result, loading }: Props) {
       <Card style={{ marginTop: 16 }}>
         <Alert
           type="error"
-          title="Evaluation Failed"
-          message="Validation errors occurred"
+          message="Evaluation Failed - Validation errors occurred"
           description={
             <ul>
               {result.validation?.errors.map((e, i) => (
@@ -34,7 +32,7 @@ export default function ResultViewer({ result, loading }: Props) {
             </ul>
           }
         />
-        {result.validation?.warnings.length > 0 && (
+        {result.validation?.warnings && result.validation.warnings.length > 0 && (
           <Alert
             type="warning"
             style={{ marginTop: 16 }}
