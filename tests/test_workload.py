@@ -269,7 +269,8 @@ class TestWorkloadLoader:
         """Test get_workload_schema."""
         loader = WorkloadLoader()
         schema = loader.get_workload_schema("inference/autoregressive")
-        assert schema.name == "autoregressive-inference"
+        assert schema.name == "autoregressive"
+        assert schema.workload_name == "inference/autoregressive"
         assert schema.category == WorkloadCategory.INFERENCE
         assert len(schema.stages) > 0
 
@@ -306,7 +307,8 @@ class TestWorkloadRegistry:
         """Test get_workload_schema."""
         registry = WorkloadRegistry()
         schema = registry.get_workload_schema("inference/autoregressive")
-        assert schema.name == "autoregressive-inference"
+        assert schema.name == "autoregressive"
+        assert schema.workload_name == "inference/autoregressive"
 
     def test_is_valid_workload(self):
         """Test is_valid_workload."""

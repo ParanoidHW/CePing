@@ -169,11 +169,12 @@ class TestHardwareAPI:
 
         data = response.get_json()
         assert "topologies" in data
-        assert "topology_methods" in data
 
         topologies = data["topologies"]
-        assert "2-Tier Simple" in topologies
-        assert "3-Tier Clos" in topologies
+        assert isinstance(topologies, list)
+        assert len(topologies) == 4
+        assert topologies[0]["name"] == "2-Tier Simple"
+        assert topologies[1]["name"] == "3-Tier Clos"
 
 
 class TestResourcesAPI:
