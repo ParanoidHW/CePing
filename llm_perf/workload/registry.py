@@ -40,17 +40,17 @@ class ModelInfo:
     """Model information for listing."""
 
     name: str
+    display_name: str
     architecture: str
     sparse_type: str
-    description: str
     supported_workloads: List[str]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
+            "display_name": self.display_name,
             "architecture": self.architecture,
             "sparse_type": self.sparse_type,
-            "description": self.description,
             "supported_workloads": self.supported_workloads,
         }
 
@@ -190,9 +190,9 @@ class ModelRegistry:
                 result.append(
                     ModelInfo(
                         name=model_name,
+                        display_name=yaml_config.get("description", model_name),
                         architecture=yaml_config.get("architecture", ""),
                         sparse_type=yaml_config.get("sparse_type", "dense"),
-                        description=yaml_config.get("description", ""),
                         supported_workloads=yaml_config.get("supported_workloads", []),
                     )
                 )
@@ -230,9 +230,9 @@ class ModelRegistry:
             yaml_config = self.loader.load_model_yaml(model_name)
             return ModelInfo(
                 name=model_name,
+                display_name=yaml_config.get("description", model_name),
                 architecture=yaml_config.get("architecture", ""),
                 sparse_type=yaml_config.get("sparse_type", "dense"),
-                description=yaml_config.get("description", ""),
                 supported_workloads=yaml_config.get("supported_workloads", []),
             )
         except FileNotFoundError:

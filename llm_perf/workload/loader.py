@@ -183,11 +183,12 @@ class WorkloadLoader:
         Returns:
             WorkloadSchema instance
         """
+        workload_name_short = workload_name.split("/")[-1] if "/" in workload_name else workload_name
         yaml_config = self.load_workload_yaml(workload_name)
-        return self._yaml_to_workload_schema(workload_name, yaml_config)
+        return self._yaml_to_workload_schema(workload_name, workload_name_short, yaml_config)
 
     def _yaml_to_workload_schema(
-        self, workload_name: str, yaml_config: Dict[str, Any]
+        self, workload_name: str, workload_name_short: str, yaml_config: Dict[str, Any]
     ) -> WorkloadSchema:
         """Convert YAML config to WorkloadSchema."""
         category_str = workload_name.split("/")[0] if "/" in workload_name else "inference"
@@ -222,11 +223,13 @@ class WorkloadLoader:
         models = self.list_models()
 
         return WorkloadSchema(
-            name=yaml_config.get("name", workload_name),
+            name=workload_name_short,
+            display_name=yaml_config.get("description", workload_name_short),
             workload_name=workload_name,
             description=yaml_config.get("description", ""),
             category=category,
             workload_type=yaml_config.get("workload_type", "inference"),
+            compute_mode=yaml_config.get("compute_mode", ""),
             stages=stages,
             parameters=parameters,
             throughput_metric=yaml_config.get("throughput_metric", "tokens_per_sec"),

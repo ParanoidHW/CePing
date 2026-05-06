@@ -223,10 +223,12 @@ class WorkloadSchema:
 
     Attributes:
         name: Workload name (e.g., "autoregressive-inference")
+        display_name: User-friendly display name
         workload_name: Internal workload identifier (e.g., "inference/autoregressive")
         description: Workload description
         category: Workload category (for frontend grouping)
         workload_type: Workload type (training/inference/diffusion)
+        compute_mode: Compute mode description
         stages: List of stage schemas
         parameters: Parameter schema dict
         throughput_metric: Primary throughput metric
@@ -234,10 +236,12 @@ class WorkloadSchema:
     """
 
     name: str
-    workload_name: str
+    display_name: str = ""
+    workload_name: str = ""
     description: str = ""
     category: WorkloadCategory = WorkloadCategory.INFERENCE
     workload_type: str = "inference"
+    compute_mode: str = ""
     stages: List[StageSchema] = field(default_factory=list)
     parameters: Dict[str, ParamSchemaItem] = field(default_factory=dict)
     throughput_metric: str = "tokens_per_sec"
@@ -246,10 +250,12 @@ class WorkloadSchema:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
+            "display_name": self.display_name or self.description,
             "workload_name": self.workload_name,
             "description": self.description,
             "category": self.category.value,
             "workload_type": self.workload_type,
+            "compute_mode": self.compute_mode,
             "stages": [s.to_dict() for s in self.stages],
             "parameters": {k: v.to_dict() for k, v in self.parameters.items()},
             "throughput_metric": self.throughput_metric,
