@@ -393,7 +393,46 @@ self.layer_types = ["double_stream"] * 20 + ["single_stream"] * 40
 
 模型通过 `supported_workloads` 属性声明支持的 workload 类型（示例见第2.1节）。
 
-### 3.2 Workload 参数位置
+### 3.2 Workload Type 分类
+
+Workload 按 **计算模式** 分类，反映不同的计算特征和性能关注点：
+
+| Workload Type | 计算模式 | 特征 | 示例 |
+|--------------|---------|------|------|
+| **autoregressive** | 自回归生成 | Prefill + Decode，KV Cache 增长，TTFT/TPOT 关注 | Llama推理、多模态推理、投机解码 |
+| **feedforward** | 单次前向传播 | 无状态推理，固定 FLOPs，吞吐优先 | ResNet分类、VAE编码/解码、单次推理 |
+| **diffusion** | 多步迭代去噪 | 重复去噪循环，步数可调，pixels/sec 关注 | DiT去噪、扩散Pipeline |
+| **training** | 训练流程 | Forward + Backward + Optimizer，MFU 关注 | 通用训练、扩散训练 |
+| **rl_training** | RL 训练 | 多模型协作（policy+value+reference），samples/sec 关注 | PPO、GRPO |
+
+**命名规范**：
+- `feedforward`：替代原 "inference" 单次前向的命名（用户确认）
+- 不使用 "compute_mode"：已删除该字段，简化为 workload_type 单层分类
+
+**目录结构**：
+```
+configs/workloads/
+├── autoregressive/       # 自回归生成类
+│   ├── inference.yaml
+│   ├── speculative_decoding.yaml
+│   └── multimodal_inference.yaml
+├── feedforward/          # 单次前向类
+│   ├── inference.yaml
+│   ├── resnet.yaml
+│   ├── encoder.yaml
+│   └── decoder.yaml
+├── diffusion/            # 扩散类
+│   ├── pipeline.yaml
+│   └── denoise.yaml
+├── training/             # 训练类
+│   ├── training.yaml
+│   └── denoise.yaml
+└── rl_training/          # RL训练类
+    ├── rl_ppo.yaml
+    └── rl_grpo.yaml
+```
+
+### 3.3 Workload 参数位置
 
 | 参数 | 定义位置 | 说明 |
 |------|----------|------|
@@ -405,7 +444,7 @@ self.layer_types = ["double_stream"] * 20 + ["single_stream"] * 40
 
 **禁止**：在模型类中硬编码这些参数。
 
-### 3.3 Workload 实例化
+### 3.4 Workload 实例化
 
 ```python
 # Training workload
