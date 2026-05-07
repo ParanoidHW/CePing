@@ -100,7 +100,7 @@ class ShardedHYVideoDiT(ShardedModule):
             name="vector_in_weight",
         )
 
-        self.double_blocks = [
+        self.layers = [
             ShardedMMDoubleStreamBlock(
                 hidden_size=hidden_size,
                 heads_num=heads_num,
@@ -110,16 +110,7 @@ class ShardedHYVideoDiT(ShardedModule):
                 dtype=dtype,
             )
             for _ in range(double_blocks_depth)
-        ]
-
-        self.merge_weight = ShardedParameter(
-            shape=(hidden_size, hidden_size),
-            shardable={0: "tp"},
-            dtype=dtype,
-            name="merge_weight",
-        )
-
-        self.single_blocks = [
+        ] + [
             ShardedMMSingleStreamBlock(
                 hidden_size=hidden_size,
                 heads_num=heads_num,
@@ -130,6 +121,18 @@ class ShardedHYVideoDiT(ShardedModule):
             )
             for _ in range(single_blocks_depth)
         ]
+
+        self.layer_types = (
+            ["double_stream"] * double_blocks_depth +
+            ["single_stream"] * single_blocks_depth
+        )
+
+        self.merge_weight = ShardedParameter(
+            shape=(hidden_size, hidden_size),
+            shardable={0: "tp"},
+            dtype=dtype,
+            name="merge_weight",
+        )
 
         self.final_layer_norm = ShardedParameter(
             shape=(hidden_size,),
@@ -198,14 +201,15 @@ class ShardedHYVideoDiT(ShardedModule):
 
         txt_seq_len = txt.shape[1] if len(txt.shape) >= 2 else 256
 
-        for block in self.double_blocks:
-            img, txt = block(img, txt, vec, freqs_cis)
-
-        img_merge = img @ self.merge_weight
-        merged = self._concat_tokens(img_merge, txt, batch)
-
-        for block in self.single_blocks:
-            merged = block(merged, vec, freqs_cis, txt_seq_len)
+        double_blocks_count = self.double_blocks_depth
+        for i, block in enumerate(self.layers):
+            if i < double_blocks_count:
+                img, txt = block(img, txt, vec, freqs_cis)
+            else:
+                if i == double_blocks_count:
+                    img_merge = img @ self.merge_weight
+                    merged = self._concat_tokens(img_merge, txt, batch)
+                merged = block(merged, vec, freqs_cis, txt_seq_len)
 
         img_out = self._slice_tokens(merged, batch, 0, merged.shape[1] - txt_seq_len)
 

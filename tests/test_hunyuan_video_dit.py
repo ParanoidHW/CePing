@@ -61,16 +61,18 @@ class TestShardedHYVideoDiT:
             dtype="bf16",
         )
 
-        assert len(model.double_blocks) == 20
-        assert len(model.single_blocks) == 40
+        assert len(model.layers) == 60
+        assert len(model.layer_types) == 60
+        assert model.layer_types == ["double_stream"] * 20 + ["single_stream"] * 40
 
-        for block in model.double_blocks:
+        for i, block in enumerate(model.layers):
             assert hasattr(block, "_submodule_name")
-            assert block._submodule_name == "double_stream_block"
-
-        for block in model.single_blocks:
-            assert hasattr(block, "_submodule_name")
-            assert block._submodule_name == "single_stream_block"
+            if i < 20:
+                assert block._submodule_name == "double_stream_block"
+                assert model.layer_types[i] == "double_stream"
+            else:
+                assert block._submodule_name == "single_stream_block"
+                assert model.layer_types[i] == "single_stream"
 
     def test_params_count_full_model(self):
         """Test parameter count for full model (~7.1B)."""
@@ -226,8 +228,8 @@ class TestShardedHYVideoDiT:
             dtype="bf16",
         )
 
-        assert len(model_small.double_blocks) == 4
-        assert len(model_small.single_blocks) == 8
+        assert len(model_small.layers) == 12
+        assert model_small.layer_types == ["double_stream"] * 4 + ["single_stream"] * 8
 
         params_small = model_small.params_count()
         assert params_small < 1e9
@@ -244,14 +246,10 @@ class TestShardedHYVideoDiT:
         assert "img_in" in model._submodules
         assert "time_in" in model._submodules
 
-        assert any("double_blocks" in name for name in model._submodules)
-        assert any("single_blocks" in name for name in model._submodules)
+        assert any("layers" in name for name in model._submodules)
 
-        double_block_count = sum(1 for name in model._submodules if "double_blocks" in name)
-        single_block_count = sum(1 for name in model._submodules if "single_blocks" in name)
-
-        assert double_block_count == 20
-        assert single_block_count == 40
+        layer_count = sum(1 for name in model._submodules if name.startswith("layers."))
+        assert layer_count == 60
 
 
 def test_import_from_module():
@@ -272,6 +270,8 @@ def test_model_creation_default():
     assert model.head_dim == 128
     assert model.double_blocks_depth == 20
     assert model.single_blocks_depth == 40
+    assert len(model.layers) == 60
+    assert model.layer_types == ["double_stream"] * 20 + ["single_stream"] * 40
     assert model.mlp_width_ratio == 4.0
     assert model.in_channels == 16
     assert model.out_channels == 16

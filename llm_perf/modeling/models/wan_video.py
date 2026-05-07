@@ -409,7 +409,7 @@ class ShardedWanDiT(ShardedModule):
             shape=(hidden_size, 6 * hidden_size), shardable={1: "tp"}, dtype=dtype, name="time_proj"
         )
 
-        self.blocks = [
+        self.layers = [
             ShardedWanDiTBlock(
                 hidden_size=hidden_size,
                 num_heads=num_heads,
@@ -457,7 +457,7 @@ class ShardedWanDiT(ShardedModule):
         time_hidden = time_hidden @ self.time_embedding_out.weight
         self._activations["time_hidden"] = time_hidden
 
-        for i, block in enumerate(self.blocks):
+        for i, block in enumerate(self.layers):
             hidden = block(hidden, text_embed, time_hidden)
             self._activations[f"block_{i}"] = hidden
 

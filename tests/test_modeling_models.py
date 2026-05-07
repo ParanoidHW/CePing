@@ -884,7 +884,7 @@ class TestWanDiTMemory:
 
         model = create_model_from_config({"type": "wan-dit"})
 
-        block = model._submodules["blocks.0"]
+        block = model._submodules["layers.0"]
         ffn = block.ffn
 
         assert ffn.ffn_act_type == FFNActType.GELU.value
@@ -903,7 +903,7 @@ class TestWanDiTMemory:
         model = create_model_from_config({"type": "wan-dit"})
 
         for name, block in model._submodules.items():
-            if name.startswith("blocks."):
+            if name.startswith("layers."):
                 ffn = block.ffn
                 assert ffn.ffn_act_type == FFNActType.GELU.value
 
@@ -946,7 +946,7 @@ class TestWanDiTMemory:
         from llm_perf.analyzer.handlers.diffusion_handler import DiffusionHandler
 
         model = create_model_from_config({"type": "wan-dit"})
-        block = model._submodules["blocks.0"]
+        block = model._submodules["layers.0"]
         handler = DiffusionHandler()
 
         batch_size = 1
