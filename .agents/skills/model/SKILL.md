@@ -341,6 +341,52 @@ llm_perf/modeling/hunyuan_video/layers.py  # ❌ 应在 base/dit_layers.py
 
 ---
 
+## §2.8 模型属性约束
+
+### 强制属性
+
+所有模型必须定义以下属性：
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `layers` | `List[ShardedModule]` | 每个 element 是一个 transformer block |
+| `num_layers` | `int` | layers 数量 |
+| `layer_types` | `List[str]`（可选） | layer 类型映射表，单一类型模型无需定义 |
+
+### layer 粒度定义
+
+- 每个 transformer block 为一个 layer
+- 不同模型可以有不同的 block 类型
+
+### layer_types 映射表格式
+
+| 类型标识 | 适用模型 |
+|----------|---------|
+| `"dense"` | Qwen3.5, Llama |
+| `"linear"` | Qwen3.5 |
+| `"moe"` | DeepSeek, HunyuanImage |
+| `"double_stream"` | HunyuanVideo |
+| `"single_stream"` | HunyuanVideo |
+
+### 示例
+
+```python
+# 单一类型模型
+self.layers = [TransformerBlock(...) for _ in range(num_layers)]
+
+# 多类型模型
+self.layers = [DoubleStreamBlock(...)] * 20 + [SingleStreamBlock(...)] * 40
+self.layer_types = ["double_stream"] * 20 + ["single_stream"] * 40
+```
+
+### 检查清单
+
+- [ ] 模型是否定义 `layers` 属性
+- [ ] `len(self.layers) == self.num_layers`
+- [ ] 多类型模型是否定义 `layer_types`
+
+---
+
 ## 3. Workload 解耦设计
 
 ### 3.1 模型和 Workload 的对应关系

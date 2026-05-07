@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, Select, Spin, Alert, Typography } from 'antd'
 import { useWorkloads, useWorkloadSchema } from '@/hooks'
 import type { WorkloadSchema } from '@/types'
@@ -14,12 +14,13 @@ interface Props {
 export default function WorkloadSelector({ value, onNameChange, onSchemaReady }: Props) {
   const { categories, loading, error } = useWorkloads()
   const { schema, loading: schemaLoading } = useWorkloadSchema(value)
+  const [internalValue, setInternalValue] = useState<string | null>(null)
 
   useEffect(() => {
-    if (schema && value) {
-      onSchemaReady(value, schema)
+    if (schema && internalValue) {
+      onSchemaReady(internalValue, schema)
     }
-  }, [schema, value])
+  }, [schema, internalValue])
 
   if (error) {
     return <Alert type="error" message="Failed to load workloads" description={error} />
@@ -40,7 +41,10 @@ export default function WorkloadSelector({ value, onNameChange, onSchemaReady }:
           style={{ width: '100%' }}
           placeholder="Select a workload type"
           value={value}
-          onChange={(v) => onNameChange(v)}
+          onChange={(v) => {
+            setInternalValue(v)
+            onNameChange(v)
+          }}
           options={options}
           showSearch
           filterOption={(input, option) =>

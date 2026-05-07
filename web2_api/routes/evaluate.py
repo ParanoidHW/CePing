@@ -223,9 +223,10 @@ def evaluate() -> Dict[str, Any]:
 
         model = create_model_from_config(model_config, workload_type=workload_type)
 
+        layers_count = len(model.layers) if hasattr(model, 'layers') else 0
         logger.info(
             "Model created successfully",
-            extra={"step": "model_created"}
+            extra={"step": "model_created", "data": {"layers_count": layers_count}}
         )
 
         engine = EvaluationEngine()
