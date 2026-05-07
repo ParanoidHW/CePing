@@ -1,5 +1,47 @@
 # 开发日志
 
+## 2026-05-07: 前端三个问题修复
+
+### 开发内容
+修复前端显示的三个问题：校验错误无具体原因、topology显示undefined、requestCapture未初始化。
+
+### 修复内容
+1. **校验错误显示** (`web2/src/components/ResultViewer.tsx`)
+   - 当 validation.errors 为空数组时，显示 result.error 字段
+   - 改进错误消息展示，避免空列表不显示任何内容
+   
+2. **Topology显示undefined** (`web2_api/routes/hardware.py`)
+   - 后端 API 返回完整 TopologyInfo 对象数组
+   - 包含 name, description, bandwidth_gb_s 字段
+   - 匹配前端类型定义 TopologyInfo
+   
+3. **RequestCapture初始化** (`web2/src/App.tsx`)
+   - 在 App.tsx 中导入 requestCapture
+   - 确保 axios interceptor 在应用启动时初始化
+   
+4. **代码质量改进**
+   - 清理 web2_api/routes/ 中未使用的导入
+   - 所有文件通过 ruff F401/F841/E741 检查
+
+### 测试验证
+- 所有 web2 API 测试通过 (14 passed, 1 skipped)
+- Ruff 代码质量检查通过
+- TypeScript 类型定义匹配
+
+### 提交信息
+```
+fix(web): resolve three frontend issues
+
+- Fix validation error display: show result.error when errors array is empty
+- Fix topology undefined: backend now returns full TopologyInfo objects
+- Fix requestCapture initialization: import in App.tsx to enable interception
+- Remove unused imports in backend routes
+
+Tests: 14 passed (test_web2_api.py)
+```
+
+---
+
 ## 2026-04-29: HunyuanVideo DiT块定义开发
 
 ### 开发内容
