@@ -9,7 +9,7 @@ Design: Routes only do HTTP adaptation, all logic is in llm_perf/hardware.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from flask import Blueprint, jsonify
 
@@ -108,11 +108,38 @@ def list_topologies() -> Dict[str, Any]:
 
     Returns:
         {
-            "topologies": ["2-Tier Simple", "3-Tier Clos", ...],
-            "topology_details": {...}
+            "topologies": [
+                {
+                    "name": "2-Tier Simple",
+                    "description": "Simple 2-tier topology with intra/inter node bandwidth",
+                    "bandwidth_gb_s": 900
+                },
+                ...
+            ]
         }
     """
+    topology_details = [
+        {
+            "name": "2-Tier Simple",
+            "description": "Simple 2-tier topology with intra/inter node bandwidth",
+            "bandwidth_gb_s": 900,
+        },
+        {
+            "name": "3-Tier Clos",
+            "description": "3-tier Clos topology with node/rack/cluster levels",
+            "bandwidth_gb_s": 900,
+        },
+        {
+            "name": "Fat-Tree",
+            "description": "Fat-tree topology with core/agg/edge layers",
+            "bandwidth_gb_s": 800,
+        },
+        {
+            "name": "CloudMatrix Supernode",
+            "description": "Huawei CloudMatrix supernode with UB+RDMA network",
+            "bandwidth_gb_s": 3136,
+        },
+    ]
     return jsonify({
-        "topologies": list(TOPOLOGY_TYPES.keys()),
-        "topology_methods": TOPOLOGY_TYPES,
+        "topologies": topology_details,
     })

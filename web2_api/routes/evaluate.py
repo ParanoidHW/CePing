@@ -7,7 +7,6 @@ Design: Routes parse HTTP request and call llm_perf/workload engine.
 All core logic is in EvaluationEngine.
 """
 
-import json
 import logging
 import traceback
 from typing import Any, Dict
@@ -17,17 +16,13 @@ from flask import Blueprint, jsonify, request
 from llm_perf.workload import (
     EvaluationEngine,
     EvaluationRequest,
-    EvaluationResult,
     HardwareSchema,
     StrategySchema,
     get_loader,
     get_workload_registry,
     get_model_registry,
 )
-from llm_perf.hardware.device import Device
-from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.topology import NetworkTopology
-from llm_perf.strategy.base import StrategyConfig
 from llm_perf.modeling import create_model_from_config
 
 logger = logging.getLogger(__name__)

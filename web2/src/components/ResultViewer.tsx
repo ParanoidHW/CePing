@@ -19,17 +19,25 @@ export default function ResultViewer({ result, loading }: Props) {
   }
 
   if (!result.success) {
+    const hasErrors = result.validation?.errors && result.validation.errors.length > 0
+    const errorMessage = result.error || (hasErrors ? undefined : 'Validation failed with no specific errors')
+    
     return (
       <Card style={{ marginTop: 16 }}>
         <Alert
           type="error"
-          message="Evaluation Failed - Validation errors occurred"
+          message="Evaluation Failed"
           description={
-            <ul>
-              {result.validation?.errors.map((e, i) => (
-                <li key={i}>{e}</li>
-              ))}
-            </ul>
+            <>
+              {errorMessage && <p style={{ marginBottom: hasErrors ? 12 : 0 }}>{errorMessage}</p>}
+              {hasErrors && (
+                <ul style={{ marginBottom: 0 }}>
+                  {result.validation!.errors.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              )}
+            </>
           }
         />
         {result.validation?.warnings && result.validation.warnings.length > 0 && (
@@ -38,8 +46,8 @@ export default function ResultViewer({ result, loading }: Props) {
             style={{ marginTop: 16 }}
             message="Warnings"
             description={
-              <ul>
-                {result.validation?.warnings.map((w, i) => (
+              <ul style={{ marginBottom: 0 }}>
+                {result.validation.warnings.map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}
               </ul>

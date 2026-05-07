@@ -12,6 +12,7 @@ import {
 import { DebugPanel } from '@/components/DebugPanel'
 import { useEvaluate } from '@/hooks'
 import type { WorkloadSchema, HardwareSchema, StrategySchema, EvaluationRequest } from '@/types'
+import '@/utils/requestCapture'
 
 const { Header, Content, Sider } = Layout
 const { Title } = Typography

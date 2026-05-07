@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
 
-from llm_perf.workload import get_model_registry, ModelRegistry
+from llm_perf.workload import get_model_registry
 
 logger = logging.getLogger(__name__)
 
