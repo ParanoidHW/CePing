@@ -1,7 +1,6 @@
 name: denoise-inference
 description: 扩散多步去噪推理
-workload_type: inference
-compute_mode: iterative
+workload_type: diffusion
 
 phases:
   - name: denoise

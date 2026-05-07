@@ -1,7 +1,6 @@
 name: denoise-training
 description: 扩散去噪单步训练
 workload_type: training
-compute_mode: base
 
 phases:
   - name: encode

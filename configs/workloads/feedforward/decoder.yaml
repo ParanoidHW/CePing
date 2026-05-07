@@ -1,13 +1,12 @@
-name: conv-encoder
-description: 卷积编码（VAE Encoder等）
-workload_type: inference
-compute_mode: conv
+name: conv-decoder
+description: 卷积解码（VAE Decoder等）
+workload_type: feedforward
 
 phases:
-  - name: encode
+  - name: decode
     compute_type: forward
     component: main
-    compute_pattern: conv_encoder
+    compute_pattern: conv_decoder
     repeat: 1
 
 default_params:

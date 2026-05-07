@@ -1,7 +1,6 @@
 name: inference
 description: 通用单次推理
-workload_type: inference
-compute_mode: autoregressive
+workload_type: feedforward
 
 phases:
   - name: forward

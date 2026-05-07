@@ -1,7 +1,6 @@
 name: resnet
 description: ResNet分类（卷积编码）
-workload_type: inference
-compute_mode: conv
+workload_type: feedforward
 
 phases:
   - name: forward

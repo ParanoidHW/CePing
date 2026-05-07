@@ -1,7 +1,6 @@
 name: rl-ppo
 description: RL PPO训练（policy + value + reference多模型协作）
-workload_type: mixed
-compute_mode: autoregressive
+workload_type: rl_training
 
 component_mapping:
   policy: policy
