@@ -225,7 +225,7 @@ def evaluate() -> Dict[str, Any]:
 
         logger.info(
             "Model created successfully",
-            extra={"step": "model_created", "data": {"layers_count": len(model.layers)}}
+            extra={"step": "model_created"}
         )
 
         engine = EvaluationEngine()

@@ -13,6 +13,8 @@ from typing import Any, Dict
 from flask import Flask, jsonify
 from flask_cors import CORS
 
+from .utils.logging_config import setup_logging
+
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> Flask:
     """Create Flask application instance."""
+    setup_logging()
     app = Flask(__name__)
     CORS(app)
 

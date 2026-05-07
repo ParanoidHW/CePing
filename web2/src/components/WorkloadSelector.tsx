@@ -7,16 +7,17 @@ const { Title, Text } = Typography
 
 interface Props {
   value: string | null
-  onChange: (workload: string, schema: WorkloadSchema) => void
+  onNameChange: (name: string) => void
+  onSchemaReady: (name: string, schema: WorkloadSchema) => void
 }
 
-export default function WorkloadSelector({ value, onChange }: Props) {
+export default function WorkloadSelector({ value, onNameChange, onSchemaReady }: Props) {
   const { categories, loading, error } = useWorkloads()
   const { schema, loading: schemaLoading } = useWorkloadSchema(value)
 
   useEffect(() => {
     if (schema && value) {
-      onChange(value, schema)
+      onSchemaReady(value, schema)
     }
   }, [schema, value])
 
@@ -39,7 +40,7 @@ export default function WorkloadSelector({ value, onChange }: Props) {
           style={{ width: '100%' }}
           placeholder="Select a workload type"
           value={value}
-          onChange={(v) => onChange(v, schema!)}
+          onChange={(v) => onNameChange(v)}
           options={options}
           showSearch
           filterOption={(input, option) =>

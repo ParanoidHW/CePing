@@ -52,8 +52,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleWorkloadChange = (name: string, schema: WorkloadSchema) => {
+  const handleWorkloadNameChange = (name: string) => {
     setWorkload(name)
+  }
+
+  const handleWorkloadSchemaReady = (name: string, schema: WorkloadSchema) => {
     setWorkloadSchema(schema)
     const defaultParams: Record<string, number | string | boolean> = {}
     Object.entries(schema.parameters).forEach(([key, field]) => {
@@ -169,7 +172,11 @@ export default function App() {
             <Alert type="error" message="Error" description={error} style={{ marginBottom: 16 }} />
           )}
           
-          <WorkloadSelector value={workload} onChange={handleWorkloadChange} />
+          <WorkloadSelector 
+            value={workload} 
+            onNameChange={handleWorkloadNameChange}
+            onSchemaReady={handleWorkloadSchemaReady}
+          />
           
           {workloadSchema && (
             <ModelSelector
