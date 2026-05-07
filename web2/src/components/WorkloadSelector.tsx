@@ -8,7 +8,7 @@ const { Title, Text } = Typography
 interface Props {
   value: string | null
   onNameChange: (name: string) => void
-  onSchemaReady: (name: string, schema: WorkloadSchema) => void
+  onSchemaReady: (schema: WorkloadSchema) => void
 }
 
 export default function WorkloadSelector({ value, onNameChange, onSchemaReady }: Props) {
@@ -18,7 +18,7 @@ export default function WorkloadSelector({ value, onNameChange, onSchemaReady }:
 
   useEffect(() => {
     if (schema && internalValue) {
-      onSchemaReady(internalValue, schema)
+      onSchemaReady(schema)
     }
   }, [schema, internalValue])
 

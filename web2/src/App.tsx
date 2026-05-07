@@ -56,7 +56,7 @@ export default function App() {
     setWorkload(name)
   }
 
-  const handleWorkloadSchemaReady = (name: string, schema: WorkloadSchema) => {
+  const handleWorkloadSchemaReady = (schema: WorkloadSchema) => {
     setWorkloadSchema(schema)
     const defaultParams: Record<string, number | string | boolean> = {}
     Object.entries(schema.parameters).forEach(([key, field]) => {
