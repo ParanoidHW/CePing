@@ -15,12 +15,12 @@ Pydantic provides:
 - Type coercion
 """
 
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, Optional, Any
 
 from pydantic import BaseModel, Field
 
 from llm_perf.analyzer.unified import UnifiedAnalyzer
-from llm_perf.analyzer.base import WorkloadConfig, WorkloadType
+from llm_perf.analyzer.base import WorkloadConfig
 from llm_perf.analyzer.workload_loader import get_workload
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.device import Device

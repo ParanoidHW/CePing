@@ -10,7 +10,7 @@ Registry is used by:
 3. Engine to resolve workload/model configurations
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 from .loader import get_loader, WorkloadLoader

@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional
 
 from llm_perf.analyzer.base import UnifiedResult, PhaseResult, SubmoduleResult
-from llm_perf.analyzer.breakdown import generate_module_breakdown, ModuleBreakdown
 
 
 @dataclass

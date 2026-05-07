@@ -11,10 +11,10 @@ All core analysis logic remains in UnifiedAnalyzer.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, Optional, Any
 
 from llm_perf.analyzer.unified import UnifiedAnalyzer
-from llm_perf.analyzer.base import WorkloadConfig, WorkloadType
+from llm_perf.analyzer.base import WorkloadConfig
 from llm_perf.analyzer.workload_loader import get_workload
 from llm_perf.hardware.cluster import Cluster
 from llm_perf.hardware.device import Device

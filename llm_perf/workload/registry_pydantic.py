@@ -14,7 +14,7 @@ Pydantic provides:
 - JSON serialization via model_dump()
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 

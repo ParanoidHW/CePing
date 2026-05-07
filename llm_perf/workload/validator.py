@@ -16,8 +16,6 @@ from llm_perf.hardware.device import Device
 from llm_perf.utils.constants import DTYPE_SIZES
 
 from .schema import (
-    WorkloadSchema,
-    ModelSchema,
     HardwareSchema,
     StrategySchema,
     ParamSchemaItem,
@@ -92,7 +90,7 @@ class WorkloadValidator:
         warnings = []
 
         workload_schema = self.loader.get_workload_schema(request.workload_name)
-        model_schema = self.loader.get_model_schema(request.model_name)
+        _model_schema = self.loader.get_model_schema(request.model_name)
 
         param_errors = self._validate_params(request.params, workload_schema.parameters)
         errors.extend(param_errors)
