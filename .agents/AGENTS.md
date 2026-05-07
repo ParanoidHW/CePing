@@ -6,17 +6,22 @@
 
 **违反以下规则将导致工作流程失败，无例外：**
 
-1. **所有代码修改必须通过 subagent 发起**
+1. **所有工作优先以 subagent 展开**
+   - 包括分析、设计、开发、验证等所有阶段
+   - 禁止直接执行任何实质性工作（读取文件分析除外）
+   - 我负责整理关键信息，保留精简的上下文传递给 subagent
+
+2. **所有代码修改必须通过 subagent 发起**
    - 禁止直接修改代码文件
    - 禁止直接删除文件或目录
    - 禁止直接运行 pytest/ruff 等测试/检查命令
    - 禁止直接执行 git commit/push
 
-2. **禁止判断"小任务"而绕过 subagent**
+3. **禁止判断"小任务"而绕过 subagent**
    - 没有例外情况
-   - 任何代码相关操作都必须通过 subagent
+   - 任何工作都必须通过 subagent
 
-3. **Workflow 各阶段必须由 subagent 调用对应 skill**
+4. **Workflow 各阶段必须由 subagent 调用对应 skill**
    - 设计阶段：subagent 调用 architecture skill
    - 开发阶段：subagent 调用 coder skill
    - 验证阶段：subagent 调用 reviewer skill
@@ -57,7 +62,6 @@ Preset Layer (YAML配置，model/workload presets)
 
 ### 必须遵循
 
-- **需求支持和问题处理通过 subagent 执行**
 - **分层解耦**：kernel 层修改不影响 analyzer/modeling/web
 - **小步快跑**：每个特性单独 commit
 - **测试先行**：新增特性必须有测试覆盖，存量测试必须全部通过
