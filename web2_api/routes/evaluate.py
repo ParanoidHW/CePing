@@ -7,7 +7,9 @@ Design: Routes parse HTTP request and call llm_perf/workload engine.
 All core logic is in EvaluationEngine.
 """
 
+import json
 import logging
+import traceback
 from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
@@ -110,7 +112,19 @@ def evaluate() -> Dict[str, Any]:
     """
     try:
         data = request.json
-        logger.info(f"Evaluate request: workload={data.get('workload_name')}, model={data.get('model_name')}")
+        logger.info(
+            "Received evaluation request",
+            extra={
+                "step": "request_received",
+                "data": {
+                    "workload": data.get("workload_name"),
+                    "model": data.get("model_name"),
+                    "hardware": data.get("hardware"),
+                    "strategy": data.get("strategy"),
+                    "params": data.get("params"),
+                }
+            }
+        )
 
         workload_name = data.get("workload_name")
         model_name = data.get("model_name")
@@ -119,6 +133,10 @@ def evaluate() -> Dict[str, Any]:
         model_registry = get_model_registry()
 
         if not workload_registry.is_valid_workload(workload_name):
+            logger.error(
+                f"Invalid workload: {workload_name}",
+                extra={"step": "validation", "data": {"workload_name": workload_name}}
+            )
             return jsonify({
                 "success": False,
                 "error": "Invalid workload",
@@ -126,6 +144,10 @@ def evaluate() -> Dict[str, Any]:
             }), 400
 
         if not model_registry.is_valid_model(model_name):
+            logger.error(
+                f"Invalid model: {model_name}",
+                extra={"step": "validation", "data": {"model_name": model_name}}
+            )
             return jsonify({
                 "success": False,
                 "error": "Invalid model",
@@ -135,6 +157,17 @@ def evaluate() -> Dict[str, Any]:
         hardware_data = data.get("hardware", {})
         strategy_data = data.get("strategy", {})
         params = data.get("params", {})
+
+        logger.info(
+            "Creating hardware and strategy configs",
+            extra={
+                "step": "create_configs",
+                "data": {
+                    "hardware": hardware_data,
+                    "strategy": strategy_data,
+                }
+            }
+        )
 
         hardware = HardwareSchema(
             device_preset=hardware_data.get("device_preset", "H100-SXM-80GB"),
@@ -161,6 +194,11 @@ def evaluate() -> Dict[str, Any]:
             params=params,
         )
 
+        logger.info(
+            "Loading workload and model configs",
+            extra={"step": "load_configs", "data": {"workload": workload_name, "model": model_name}}
+        )
+
         loader = get_loader()
         model_config = loader.load_model_yaml(model_name)
         model_config["preset"] = model_name
@@ -168,15 +206,64 @@ def evaluate() -> Dict[str, Any]:
         workload_config = loader.load_workload_yaml(workload_name)
         workload_type = workload_config.get("workload_type", "inference")
 
+        logger.info(
+            "Workload config loaded",
+            extra={"step": "workload_loaded", "data": {"workload_type": workload_type, "config": workload_config}}
+        )
+
+        logger.info(
+            "Model config loaded",
+            extra={"step": "model_loaded", "data": {"model_config": model_config}}
+        )
+
+        logger.info(
+            "Creating model instance",
+            extra={"step": "create_model", "data": {"workload_type": workload_type}}
+        )
+
         model = create_model_from_config(model_config, workload_type=workload_type)
 
+        logger.info(
+            "Model created successfully",
+            extra={"step": "model_created", "data": {"layers_count": len(model.layers)}}
+        )
+
         engine = EvaluationEngine()
+
+        logger.info(
+            "Starting evaluation",
+            extra={"step": "evaluate_start", "data": {"request": request_obj.to_dict()}}
+        )
+
         result = engine.evaluate(request_obj, model)
+
+        logger.info(
+            "Evaluation completed successfully",
+            extra={
+                "step": "evaluate_success",
+                "data": {
+                    "validation": result.validation,
+                    "result_keys": list(result.to_dict().keys()),
+                }
+            }
+        )
 
         return jsonify(result.to_dict())
 
     except Exception as e:
-        logger.error(f"Evaluation failed: {e}", exc_info=True)
+        logger.error(
+            f"Evaluation failed: {e}",
+            extra={
+                "step": "evaluate_error",
+                "data": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "traceback": traceback.format_exc(),
+                    "request_data": request.json if request.json else None,
+                }
+            },
+            exc_info=True
+        )
         return jsonify({
             "success": False,
             "error": str(e),
