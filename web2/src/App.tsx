@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Layout, Typography, Button, Space, message, Steps, Divider, Alert } from 'antd'
-import { PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, ReloadOutlined, BugOutlined } from '@ant-design/icons'
 import {
   WorkloadSelector,
   ModelSelector,
@@ -9,6 +9,7 @@ import {
   StrategyForm,
   ResultViewer
 } from '@/components'
+import { DebugPanel } from '@/components/DebugPanel'
 import { useEvaluate } from '@/hooks'
 import type { WorkloadSchema, HardwareSchema, StrategySchema, EvaluationRequest } from '@/types'
 
@@ -35,8 +36,21 @@ export default function App() {
     activation_checkpointing: false,
     zero_stage: 0
   })
+  const [debugPanelVisible, setDebugPanelVisible] = useState(false)
 
   const { result, loading, error, runEvaluate, reset } = useEvaluate()
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        e.preventDefault()
+        setDebugPanelVisible(true)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const handleWorkloadChange = (name: string, schema: WorkloadSchema) => {
     setWorkload(name)
@@ -110,10 +124,17 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#001529', padding: '0 24px' }}>
-        <Title level={3} style={{ color: '#fff', margin: '16px 0' }}>
+      <Header style={{ background: '#001529', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Title level={3} style={{ color: '#fff', margin: 0 }}>
           LLM Performance Evaluator
         </Title>
+        <Button
+          icon={<BugOutlined />}
+          onClick={() => setDebugPanelVisible(true)}
+          style={{ background: 'transparent', color: '#fff', border: '1px solid #fff' }}
+        >
+          🔧 Debug
+        </Button>
       </Header>
       
       <Layout>
@@ -181,6 +202,16 @@ export default function App() {
           <ResultViewer result={result} loading={loading} />
         </Content>
       </Layout>
+
+      <DebugPanel
+        visible={debugPanelVisible}
+        onClose={() => setDebugPanelVisible(false)}
+        workload={workload}
+        model={model}
+        hardware={hardware}
+        strategy={strategy}
+        params={params}
+      />
     </Layout>
   )
 }
