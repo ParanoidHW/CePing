@@ -185,7 +185,6 @@ class WorkloadSchema(BaseModel):
     description: str = ""
     category: WorkloadCategory = WorkloadCategory.INFERENCE
     workload_type: str = "inference"
-    compute_mode: str = ""
     stages: List[StageSchema] = Field(default_factory=list)
     parameters: Dict[str, ParamSchemaItem] = Field(default_factory=dict)
     throughput_metric: str = "tokens_per_sec"

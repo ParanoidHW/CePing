@@ -17,7 +17,6 @@ export interface WorkloadSchema {
   description: string
   category: string
   workload_type: string
-  compute_mode: string
   stages: StageSchema[]
   parameters: Record<string, ParamSchema>
   throughput_metric: string

@@ -60,8 +60,6 @@ export default function WorkloadSelector({ value, onNameChange, onSchemaReady }:
             <Text type="secondary">{schema.description}</Text>
             <div style={{ marginTop: 8 }}>
               <Text code>{schema.workload_type}</Text>
-              <Text type="secondary"> | </Text>
-              <Text code>{schema.compute_mode}</Text>
             </div>
             {schema.throughput_metric && (
               <Text type="secondary" style={{ marginTop: 4 }}>

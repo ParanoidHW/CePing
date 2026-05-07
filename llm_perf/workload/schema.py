@@ -241,7 +241,6 @@ class WorkloadSchema:
     description: str = ""
     category: WorkloadCategory = WorkloadCategory.INFERENCE
     workload_type: str = "inference"
-    compute_mode: str = ""
     stages: List[StageSchema] = field(default_factory=list)
     parameters: Dict[str, ParamSchemaItem] = field(default_factory=dict)
     throughput_metric: str = "tokens_per_sec"
@@ -255,7 +254,6 @@ class WorkloadSchema:
             "description": self.description,
             "category": self.category.value,
             "workload_type": self.workload_type,
-            "compute_mode": self.compute_mode,
             "stages": [s.to_dict() for s in self.stages],
             "parameters": {k: v.to_dict() for k, v in self.parameters.items()},
             "throughput_metric": self.throughput_metric,

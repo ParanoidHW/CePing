@@ -8,7 +8,7 @@ Core principle: Reuse existing configs, avoid redefinition.
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 import yaml
 
 from .schema import (
@@ -229,7 +229,6 @@ class WorkloadLoader:
             description=yaml_config.get("description", ""),
             category=category,
             workload_type=yaml_config.get("workload_type", "inference"),
-            compute_mode=yaml_config.get("compute_mode", ""),
             stages=stages,
             parameters=parameters,
             throughput_metric=yaml_config.get("throughput_metric", "tokens_per_sec"),
