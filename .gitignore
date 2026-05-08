@@ -215,3 +215,6 @@ tmp/
 session.log
 .coverage
 logs/
+
+# Node.js dependencies
+node_modules/
